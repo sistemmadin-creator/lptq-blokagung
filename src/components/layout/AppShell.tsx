@@ -20,6 +20,7 @@ import {
   Pin,
   PinOff,
   ChevronRight,
+  GraduationCap,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
@@ -36,6 +37,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", group: "Utama", icon: LayoutDashboard },
   { href: "/santri", label: "Data Santri Tahfidz", group: "Utama", icon: Users },
+  { href: "/halaqoh", label: "Halaqoh", group: "Utama", icon: GraduationCap },
   {
     href: "/tahfidz/umum/kegiatan",
     label: "Kegiatan (Absensi)",
