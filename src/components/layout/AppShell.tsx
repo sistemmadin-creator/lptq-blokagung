@@ -17,6 +17,9 @@ import {
   Moon,
   Search,
   ShieldCheck,
+  Pin,
+  PinOff,
+  ChevronRight,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
@@ -76,6 +79,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [darkMode, setDarkMode] = useState(false);
   const [quickSearch, setQuickSearch] = useState("");
 
+  // State untuk fitur Pin dan Auto-Collapse Sidebar Desktop
+  const [isPinned, setIsPinned] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
+
   const isLoginPage = pathname.startsWith("/login");
 
   useEffect(() => {
@@ -83,6 +90,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (savedTheme === "dark") {
       setDarkMode(true);
       document.documentElement.classList.add("dark");
+    }
+
+    const savedPin = localStorage.getItem("lptq_sidebar_pinned");
+    if (savedPin === "true") {
+      setIsPinned(true);
+      setIsExpanded(true);
     }
   }, []);
 
@@ -120,6 +133,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const togglePinSidebar = () => {
+    const nextPin = !isPinned;
+    setIsPinned(nextPin);
+    localStorage.setItem("lptq_sidebar_pinned", String(nextPin));
+    if (nextPin) {
+      setIsExpanded(true);
+    }
+  };
+
+  // Ketika menu diklik, sembunyikan sidebar ke mode ikon jika tidak di-pin
+  const handleDesktopNavClick = () => {
+    if (!isPinned) {
+      setIsExpanded(false);
+    }
+  };
+
   const handleLogout = async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -144,33 +173,91 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     .slice(0, 2)
     .toUpperCase();
 
+  const sidebarOpen = isPinned || isExpanded;
+
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row overflow-x-hidden bg-[#f8f9fc] dark:bg-slate-950">
-      {/* Sidebar Desktop Bergaya Koki dengan Identitas Pesantren */}
-      <aside className="no-print hidden lg:flex lg:w-64 bg-gradient-to-b from-brand to-brand-darker text-white flex-col justify-between p-6 shrink-0 min-h-screen sticky top-0 h-screen overflow-y-auto">
+    <div className="min-h-screen bg-[#f8f9fc] dark:bg-slate-950">
+      {/* Sidebar Desktop: Fixed penuh dari atas ke bawah layar (tidak pernah terputus saat scroll) */}
+      <aside
+        onMouseEnter={() => {
+          if (!isPinned) setIsExpanded(true);
+        }}
+        onMouseLeave={() => {
+          if (!isPinned) setIsExpanded(false);
+        }}
+        className={`no-print no-scrollbar hidden lg:flex fixed inset-y-0 left-0 z-30 h-screen bg-gradient-to-b from-brand to-brand-darker text-white flex-col justify-between py-5 overflow-y-auto overflow-x-hidden shadow-lg transition-all duration-300 ease-in-out ${
+          sidebarOpen ? "w-64 px-4" : "w-20 px-2.5"
+        }`}
+      >
         <div>
-          {/* Identitas Brand */}
-          <div className="flex items-center gap-3 mb-8 px-1">
-            <div className="w-10 h-10 rounded-xl bg-white text-brand-dark flex items-center justify-center font-extrabold text-sm shadow-sm shrink-0">
-              [LOGO]
+          {/* Header Brand + Tombol Pin Sidebar */}
+          <div
+            className={`flex items-center mb-6 ${
+              sidebarOpen ? "justify-between px-1" : "justify-center"
+            }`}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => setIsExpanded((prev) => !prev)}
+                title={sidebarOpen ? "Ciutkan sidebar" : "Lebarkan sidebar"}
+                aria-label={sidebarOpen ? "Ciutkan sidebar" : "Lebarkan sidebar"}
+                className="w-11 h-11 rounded-xl bg-white text-brand-dark flex items-center justify-center font-extrabold text-xs shadow-sm shrink-0"
+              >
+                [LOGO]
+              </button>
+              {sidebarOpen && (
+                <div className="min-w-0">
+                  <h2 className="text-base font-extrabold tracking-tight leading-none text-white truncate">
+                    Lptq Blokagung
+                  </h2>
+                  <span className="text-[10px] tracking-widest uppercase font-semibold text-emerald-100 block mt-1 truncate">
+                    Sistem Tahfidz
+                  </span>
+                </div>
+              )}
             </div>
-            <div>
-              <h2 className="text-lg font-extrabold tracking-tight leading-none text-white">
-                Lptq Blokagung
-              </h2>
-              <span className="text-[10px] tracking-widest uppercase font-semibold text-emerald-100 block mt-1">
-                Sistem Tahfidz
-              </span>
-            </div>
+
+            {sidebarOpen && (
+              <button
+                type="button"
+                onClick={togglePinSidebar}
+                title={
+                  isPinned
+                    ? "Lepas sematan agar sidebar otomatis bersembunyi"
+                    : "Sematkan (Pin) agar sidebar tetap terbuka"
+                }
+                aria-label={
+                  isPinned ? "Lepas sematan sidebar" : "Sematkan sidebar agar tetap terbuka"
+                }
+                aria-pressed={isPinned}
+                className={`min-h-[38px] min-w-[38px] inline-flex items-center justify-center rounded-xl border transition shrink-0 ${
+                  isPinned
+                    ? "bg-white text-brand-dark border-white shadow-sm"
+                    : "bg-white/10 text-emerald-100 border-white/15 hover:bg-white/20 hover:text-white"
+                }`}
+              >
+                {isPinned ? (
+                  <Pin className="w-4 h-4" aria-hidden="true" />
+                ) : (
+                  <PinOff className="w-4 h-4" aria-hidden="true" />
+                )}
+              </button>
+            )}
           </div>
 
           {/* Menu Navigasi */}
-          <nav className="space-y-4" aria-label="Navigasi Utama">
+          <nav className="space-y-3" aria-label="Navigasi Utama">
             {groups.map((grp) => (
               <div key={grp}>
-                <p className="px-3 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-emerald-100/90">
-                  {grp}
-                </p>
+                {sidebarOpen ? (
+                  <p className="px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-emerald-100/80 truncate">
+                    {grp}
+                  </p>
+                ) : (
+                  <div className="h-px bg-white/15 my-2 mx-2" aria-hidden="true" />
+                )}
+
                 <ul className="space-y-1">
                   {NAV_ITEMS.filter((i) => i.group === grp).map((item) => {
                     const Icon = item.icon;
@@ -180,19 +267,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       <li key={item.href}>
                         <Link
                           href={item.href}
-                          className={`flex min-h-[44px] items-center justify-between px-3.5 py-2.5 rounded-xl transition-colors text-sm ${
+                          onClick={handleDesktopNavClick}
+                          title={!sidebarOpen ? item.label : undefined}
+                          aria-label={item.label}
+                          className={`flex min-h-[44px] items-center rounded-xl transition-all duration-200 text-xs ${
+                            sidebarOpen
+                              ? "justify-between px-3 py-2.5"
+                              : "justify-center px-0 py-2.5"
+                          } ${
                             active
                               ? "bg-white text-brand-dark font-bold shadow-md"
                               : "text-emerald-50 hover:bg-white/10 hover:text-white font-medium"
                           }`}
                         >
-                          <span className="flex items-center gap-3">
-                            <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
-                            <span>{item.label}</span>
+                          <span
+                            className={`flex items-center min-w-0 ${
+                              sidebarOpen ? "gap-3" : "justify-center"
+                            }`}
+                          >
+                            <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
+                            {sidebarOpen && <span className="truncate">{item.label}</span>}
                           </span>
-                          {item.badge && (
+
+                          {sidebarOpen && item.badge && (
                             <span
-                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap shrink-0 ml-2 ${
                                 active
                                   ? "bg-emerald-100 text-brand-dark"
                                   : "bg-emerald-900/60 text-emerald-100"
@@ -211,28 +310,57 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
 
-        {/* Kartu Informasi Standar KKM & Role di Bawah Sidebar */}
-        <div className="bg-emerald-950/40 border border-white/15 rounded-2xl p-4 text-center mt-6">
-          <div className="w-9 h-9 mx-auto rounded-full bg-white/15 flex items-center justify-center text-white mb-2.5">
-            <ShieldCheck className="w-5 h-5 text-amber-300" aria-hidden="true" />
-          </div>
-          <p className="text-xs font-bold tracking-wider uppercase text-white mb-1">
-            Standar KKM: 85
-          </p>
-          <p className="text-[11px] text-emerald-100 mb-3 leading-relaxed">
-            Kelulusan Khotmil 15 & 30 Juz dihitung otomatis dari rata-rata seluruh juz dalam tahap.
-          </p>
-          <Link
-            href="/tahfidz/khotmil/15"
-            className="inline-flex min-h-[40px] w-full items-center justify-center py-2 bg-white text-brand-dark font-bold text-xs rounded-xl hover:bg-emerald-50 transition shadow-sm"
-          >
-            Buka Rekap Khotmil
-          </Link>
+        {/* Kartu Standar KKM di Bawah Sidebar (Menyesuaikan Mode Terbuka / Ikon) */}
+        <div className="mt-4">
+          {sidebarOpen ? (
+            <div className="bg-emerald-950/40 border border-white/15 rounded-2xl p-3.5 text-center">
+              <div className="w-8 h-8 mx-auto rounded-full bg-white/15 flex items-center justify-center text-white mb-2">
+                <ShieldCheck className="w-4 h-4 text-amber-300" aria-hidden="true" />
+              </div>
+              <p className="text-[11px] font-bold tracking-wider uppercase text-white mb-0.5">
+                Standar KKM: 85
+              </p>
+              <p className="text-[11px] text-emerald-100 mb-2.5 leading-snug">
+                Kelulusan Khotmil 15 & 30 Juz dihitung otomatis.
+              </p>
+              <Link
+                href="/tahfidz/khotmil/15"
+                onClick={handleDesktopNavClick}
+                className="inline-flex min-h-[38px] w-full items-center justify-center py-1.5 bg-white text-brand-dark font-bold text-xs rounded-xl hover:bg-emerald-50 transition shadow-sm"
+              >
+                Buka Rekap Khotmil
+              </Link>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2">
+              <Link
+                href="/tahfidz/khotmil/15"
+                title="Standar KKM 85 - Buka Rekap Khotmil"
+                aria-label="Standar KKM 85 - Buka Rekap Khotmil"
+                className="w-11 h-11 rounded-xl bg-emerald-950/50 border border-white/15 flex items-center justify-center text-amber-300 hover:bg-white/15 transition"
+              >
+                <ShieldCheck className="w-5 h-5" aria-hidden="true" />
+              </Link>
+              <button
+                type="button"
+                onClick={() => setIsExpanded(true)}
+                title="Lebarkan sidebar"
+                aria-label="Lebarkan sidebar"
+                className="w-11 h-11 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition"
+              >
+                <ChevronRight className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
-      {/* Area Konten Utama */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Area Konten Utama dengan animasi padding kiri mengikuti lebar sidebar */}
+      <div
+        className={`flex flex-col min-h-screen min-w-0 transition-all duration-300 ease-in-out ${
+          sidebarOpen ? "lg:pl-64" : "lg:pl-20"
+        }`}
+      >
         {/* Top Header Bar */}
         <header className="no-print bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-4 sm:px-8 py-3.5 flex items-center justify-between gap-4 sticky top-0 z-20">
           <div className="flex items-center gap-3 flex-1 max-w-md">
@@ -323,7 +451,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className="fixed inset-0 bg-slate-900/60"
               onClick={() => setMobileMenuOpen(false)}
             />
-            <div className="relative z-50 flex w-72 max-w-[85vw] flex-col bg-gradient-to-b from-brand to-brand-darker text-white h-full shadow-xl p-5">
+            <div className="no-scrollbar relative z-50 flex w-72 max-w-[85vw] flex-col bg-gradient-to-b from-brand to-brand-darker text-white h-full shadow-xl p-5 overflow-y-auto">
               <div className="flex items-center justify-between pb-4 border-b border-white/15">
                 <div className="flex items-center gap-2.5">
                   <span className="px-2 py-1 rounded-lg bg-white text-brand-dark text-xs font-extrabold">
@@ -341,7 +469,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </button>
               </div>
 
-              <nav className="flex-1 overflow-y-auto py-4 space-y-4">
+              <nav className="flex-1 py-4 space-y-4">
                 {groups.map((grp) => (
                   <div key={grp}>
                     <p className="px-3 mb-1 text-[11px] font-bold uppercase tracking-wider text-emerald-100">
@@ -381,7 +509,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Konten Halaman */}
         <main className="flex-1 p-4 sm:p-8 max-w-7xl mx-auto w-full">{children}</main>
 
-        {/* Global Footer dengan Tautan Modul Nyata */}
+        {/* Global Footer */}
         <footer className="no-print mt-auto border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 sm:px-8 py-4 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 dark:text-slate-400 gap-3">
           <div>
             &copy; {new Date().getFullYear()} LPTQ Pondok Pesantren Darussalam Blokagung. Sistem
