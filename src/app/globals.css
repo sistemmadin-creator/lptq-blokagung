@@ -3,14 +3,38 @@
 @tailwind utilities;
 
 @layer base {
+  html,
   body {
     @apply bg-[#f8f9fc] text-slate-800 dark:bg-slate-950 dark:text-slate-100 antialiased;
+    /* Menyembunyikan gagang scrollbar utama di Firefox dan IE/Edge lama */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  /* Menyembunyikan gagang scrollbar utama di Chrome, Safari, dan Edge Chromium */
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   /* Indikator fokus keyboard kontras tinggi minimal 3:1 (R-32) */
   *:focus-visible {
     @apply outline outline-2 outline-offset-2 outline-brand-dark dark:outline-emerald-400;
   }
+}
+
+/* Utilitas untuk menyembunyikan gagang scrollbar pada elemen internal seperti sidebar */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 @media print {
