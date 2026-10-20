@@ -20,6 +20,8 @@ import {
   fetchAllSantriFiltered,
   fetchSetoranBulananMerged,
   insertSetoranLog,
+  deleteSetoranBatch,
+  deleteAllSetoran,
 } from "@/lib/services/tahfidz-service";
 import {
   HALAQOH_BAGIAN_LIST,
@@ -31,8 +33,14 @@ import {
 import { DataTable } from "@/components/ui/DataTable";
 import { HalaqohBadge } from "@/components/ui/Badges";
 import { exportJsonToExcel } from "@/lib/utils/excel";
-import { toLocalIsoDate } from "@/lib/utils/date";
 import { useToast } from "@/components/ui/Toast";
+
+function toLocalIsoDate(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 const setoranSchema = z.object({
   santri_id: z.string().uuid("Pilih santri terlebih dahulu"),
@@ -246,6 +254,45 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     },
   ];
 
+  const handleDeleteSelected = async (selectedIds: string[]) => {
+    try {
+      await deleteSetoranBatch({
+        santri_ids: selectedIds,
+        tipe,
+        tahun,
+      });
+      showToast(
+        "success",
+        `Catatan setoran untuk ${selectedIds.length} santri terpilih pada tahun ${tahun} telah berhasil dihapus.`
+      );
+      loadData();
+    } catch (err: any) {
+      showToast(
+        "error",
+        err.message || "Terjadi kesalahan saat menghapus data setoran."
+      );
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    try {
+      await deleteAllSetoran({
+        tipe,
+        tahun,
+      });
+      showToast(
+        "success",
+        `Seluruh riwayat setoran (${judul}) pada tahun ${tahun} telah berhasil dikosongkan.`
+      );
+      loadData();
+    } catch (err: any) {
+      showToast(
+        "error",
+        err.message || "Terjadi kesalahan saat mengosongkan data setoran."
+      );
+    }
+  };
+
   return (
     <div className="space-y-5">
       {/* Header Halaman */}
@@ -404,6 +451,9 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
           loading={loading}
           error={error}
           onRetry={loadData}
+          getRowId={(row) => row.santri_id}
+          onDeleteSelected={handleDeleteSelected}
+          onDeleteAll={handleDeleteAll}
         />
       </div>
 
