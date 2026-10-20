@@ -122,7 +122,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
     formula: `IF(C2="","",TRIM(MID(SUBSTITUTE(C2,">",REPT(" ",100)),201,100)))`,
     result: sampleParts1[2] || "AB",
   };
-  r2.getCell(7).value = "01";
+  r2.getCell(7).value = "1";
   r2.getCell(8).value = 1;
   r2.getCell(9).value = "A";
 
@@ -144,7 +144,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
     formula: `IF(C3="","",TRIM(MID(SUBSTITUTE(C3,">",REPT(" ",100)),201,100)))`,
     result: sampleParts2[2] || "HA",
   };
-  r3.getCell(7).value = "02";
+  r3.getCell(7).value = "2";
   r3.getCell(8).value = 2;
   r3.getCell(9).value = "B";
 
@@ -274,6 +274,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       allowBlank: true,
       formulae: [`Referensi_Enum!$G$2:$G$${routes.length + 1}`],
       showErrorMessage: true,
+      errorStyle: "warning",
       errorTitle: "Rute Penempatan Kamar Tidak Valid",
       error: "Silakan pilih salah satu rute hierarki (Blok > Asrama > Kode) dari daftar opsi yang tersedia.",
     };
@@ -284,6 +285,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       allowBlank: true,
       formulae: [`Referensi_Enum!$A$2:$A$${bloks.length + 1}`],
       showErrorMessage: true,
+      errorStyle: "warning",
       errorTitle: "Pilihan Blok Tidak Valid",
       error: "Silakan ketik atau pilih nama Blok dari daftar opsi yang tersedia.",
     };
@@ -294,6 +296,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       allowBlank: true,
       formulae: [`Referensi_Enum!$B$2:$B$${asramas.length + 1}`],
       showErrorMessage: true,
+      errorStyle: "warning",
       errorTitle: "Pilihan Asrama Tidak Valid",
       error: "Silakan ketik atau pilih nama Asrama dari daftar opsi yang tersedia.",
     };
@@ -304,6 +307,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       allowBlank: true,
       formulae: [`Referensi_Enum!$C$2:$C$${kodes.length + 1}`],
       showErrorMessage: true,
+      errorStyle: "warning",
       errorTitle: "Pilihan Kode Tidak Valid",
       error: "Silakan ketik atau pilih Kode kamar dari daftar opsi yang tersedia.",
     };
@@ -314,6 +318,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       allowBlank: true,
       formulae: [`Referensi_Enum!$D$2:$D$${kamars.length + 1}`],
       showErrorMessage: true,
+      errorStyle: "warning",
       errorTitle: "Pilihan Kamar Tidak Valid",
       error: "Silakan ketik atau pilih Nomor Kamar dari daftar opsi yang tersedia.",
     };
@@ -324,6 +329,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       allowBlank: true,
       formulae: [`Referensi_Enum!$E$2:$E$${kelasList.length + 1}`],
       showErrorMessage: true,
+      errorStyle: "warning",
       errorTitle: "Pilihan Kelas Tidak Valid",
       error: "Silakan pilih Kelas antara 1 sampai 10.",
     };
@@ -334,6 +340,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       allowBlank: true,
       formulae: [`Referensi_Enum!$F$2:$F$${bagianList.length + 1}`],
       showErrorMessage: true,
+      errorStyle: "warning",
       errorTitle: "Pilihan Bagian Tidak Valid",
       error: "Silakan pilih Bagian (A, B, C, dst.) dari opsi yang tersedia.",
     };
