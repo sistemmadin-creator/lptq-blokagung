@@ -961,10 +961,14 @@ export default function SantriPage() {
               <div className="space-y-3 py-4">
                 <button
                   type="button"
-                  onClick={() => {
-                    downloadSantriTemplateExcel();
-                    showToast("success", "Template Excel berhasil diunduh.");
-                    setExcelModalOpen(false);
+                  onClick={async () => {
+                    try {
+                      await downloadSantriTemplateExcel(hierarchyRules);
+                      showToast("success", "Template Excel berhasil diunduh.");
+                      setExcelModalOpen(false);
+                    } catch (err: any) {
+                      showToast("error", err?.message || "Gagal mengunduh template Excel.");
+                    }
                   }}
                   className="w-full flex items-center gap-3.5 p-3 rounded-xl border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/50 transition text-left group dark:border-slate-800 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/20"
                 >
@@ -976,7 +980,7 @@ export default function SantriPage() {
                       Template Excel
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Unduh format template kosong (Nama, WhatsApp, Asrama, Kode, Kamar, Halaqoh)
+                      Unduh template .xlsx berfitur ketik & pilih (Blok, Asrama, Kode, Kamar, Halaqoh)
                     </p>
                   </div>
                 </button>
