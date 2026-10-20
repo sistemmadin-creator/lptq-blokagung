@@ -30,6 +30,8 @@ import {
   fetchAllSantriFiltered,
   saveSantri,
   deleteSantriById,
+  deleteSantriBatch,
+  deleteAllSantri,
 } from "@/lib/services/tahfidz-service";
 import {
   loadHierarchyRules,
@@ -38,6 +40,11 @@ import {
   type HierarchyRule,
   type HierarchyTree,
 } from "@/lib/services/hierarchy-service";
+import {
+  loadHalaqohFormasi,
+  getDynamicHalaqohOptions,
+  type FormasiHalaqohItem,
+} from "@/lib/services/halaqoh-service";
 import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
@@ -57,7 +64,7 @@ import {
 import { useToast } from "@/components/ui/Toast";
 
 const santriSchema = z.object({
-  kode: z.string().min(2, "Kode wajib diisi (minimal 2 karakter)"),
+  kode: z.string().optional(),
   nama_lengkap: z.string().min(3, "Nama lengkap wajib diisi"),
   no_wa: z.string().optional(),
   blok: z.string().min(1, "Blok wajib diisi"),
@@ -65,7 +72,7 @@ const santriSchema = z.object({
   kode_kamar: z.string().optional(),
   kamar: z.string().min(1, "Kamar wajib diisi"),
   halaqoh_kelas: z.coerce.number().min(1).max(10),
-  halaqoh_bagian: z.enum(["A", "B", "C", "D", "E", "F"]),
+  halaqoh_bagian: z.string().min(1, "Halaqoh bagian wajib dipilih"),
 });
 
 type SantriFormValues = z.infer<typeof santriSchema>;
@@ -114,6 +121,13 @@ export default function SantriPage() {
     [hierarchyRules]
   );
 
+  // Daftar Formasi Halaqoh Dinamis (berpengaruh pada enum kelas & bagian)
+  const [halaqohFormasi, setHalaqohFormasi] = useState<FormasiHalaqohItem[]>([]);
+  const halaqohOptions = useMemo(
+    () => getDynamicHalaqohOptions(halaqohFormasi),
+    [halaqohFormasi]
+  );
+
   // Status Impor Excel
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState("");
@@ -145,13 +159,17 @@ export default function SantriPage() {
   const watchAsrama = watch("asrama");
   const watchKodeKamar = watch("kode_kamar");
 
-  // Muat aturan hierarki saat pertama kali dibuka
+  // Muat aturan hierarki & formasi halaqoh saat pertama kali dibuka
   useEffect(() => {
-    async function initHierarchy() {
-      const rules = await loadHierarchyRules();
+    async function initData() {
+      const [rules, formasi] = await Promise.all([
+        loadHierarchyRules(),
+        loadHalaqohFormasi(),
+      ]);
       setHierarchyRules(rules);
+      setHalaqohFormasi(formasi);
     }
-    initHierarchy();
+    initData();
   }, []);
 
   const loadData = useCallback(async () => {
@@ -210,7 +228,6 @@ export default function SantriPage() {
     const kodes = new Set<string>();
     const kamars = new Set<string>();
 
-    // Ambil dari data tabel
     rows.forEach((s) => {
       if (s.blok) bloks.add(s.blok);
       if (s.asrama) asramas.add(s.asrama);
@@ -218,7 +235,6 @@ export default function SantriPage() {
       if (s.kamar) kamars.add(s.kamar);
     });
 
-    // Ambil dari pohon hierarki
     Object.keys(hierarchyTree).forEach((b) => {
       bloks.add(b);
       Object.keys(hierarchyTree[b] || {}).forEach((a) => {
@@ -292,8 +308,8 @@ export default function SantriPage() {
       asrama: "",
       kode_kamar: "",
       kamar: "",
-      halaqoh_kelas: 1,
-      halaqoh_bagian: "A",
+      halaqoh_kelas: halaqohOptions.kelasList[0] || 1,
+      halaqoh_bagian: halaqohOptions.bagianList[0] || "A",
     });
     setModalOpen(true);
   };
@@ -316,9 +332,12 @@ export default function SantriPage() {
 
   const onSubmit = async (values: SantriFormValues) => {
     try {
+      // Kode unik dibuat otomatis di balik layar jika santri baru (tidak perlu diinput manual oleh user)
+      const autoKode = editingSantri?.kode || values.kode || `S-${Date.now().toString().slice(-6)}`;
+
       await saveSantri(
         {
-          kode: values.kode,
+          kode: autoKode,
           nama_lengkap: values.nama_lengkap,
           no_wa: values.no_wa || null,
           blok: values.blok,
@@ -326,7 +345,7 @@ export default function SantriPage() {
           kode_kamar: values.kode_kamar || null,
           kamar: values.kamar,
           halaqoh_kelas: values.halaqoh_kelas,
-          halaqoh_bagian: values.halaqoh_bagian,
+          halaqoh_bagian: values.halaqoh_bagian as HalaqohBagian,
         },
         editingSantri?.id
       );
@@ -342,7 +361,7 @@ export default function SantriPage() {
   };
 
   const handleDelete = async (s: Santri) => {
-    if (!window.confirm(`Hapus data santri "${s.nama_lengkap}" (${s.kode})?`)) return;
+    if (!window.confirm(`Hapus data santri "${s.nama_lengkap}"?`)) return;
     try {
       await deleteSantriById(s.id);
       showToast("success", `Santri ${s.nama_lengkap} berhasil dihapus.`);
@@ -353,6 +372,28 @@ export default function SantriPage() {
       loadData();
     } catch (err) {
       showToast("error", err instanceof Error ? err.message : "Gagal menghapus santri.");
+    }
+  };
+
+  // Hapus santri terpilih (dari select checkbox)
+  const handleDeleteBatch = async (selectedIds: string[]) => {
+    try {
+      await deleteSantriBatch(selectedIds);
+      showToast("success", `Berhasil menghapus ${selectedIds.length} data santri terpilih.`);
+      loadData();
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : "Gagal menghapus santri terpilih.");
+    }
+  };
+
+  // Hapus seluruh data santri (setelah konfirmasi 2 kali)
+  const handleDeleteAll = async () => {
+    try {
+      await deleteAllSantri();
+      showToast("success", "Seluruh data santri berhasil dihapus.");
+      loadData();
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : "Gagal mengosongkan data santri.");
     }
   };
 
@@ -382,7 +423,6 @@ export default function SantriPage() {
       });
       const formatted = allFiltered.map((s, idx) => ({
         No: idx + 1,
-        "Kode Santri": s.kode,
         "Nama Lengkap": s.nama_lengkap,
         "Nomor WhatsApp": s.no_wa || "-",
         Blok: s.blok,
@@ -448,17 +488,12 @@ export default function SantriPage() {
     }
   };
 
-  // Definisi Kolom Tabel (Memenuhi permintaan urutan: Asrama -> Kode -> Kamar)
+  // Kolom Tabel (Tanpa kolom Kode Unik Santri, posisi: Asrama -> Kode -> Kamar)
   const columns: ColumnDef<Santri>[] = [
     {
       id: "no",
       header: "NO",
       cell: ({ row }) => <span className="font-mono text-xs">{(page - 1) * 25 + row.index + 1}</span>,
-    },
-    {
-      accessorKey: "kode",
-      header: "KODE",
-      cell: ({ row }) => <span className="font-mono font-semibold text-xs text-slate-800 dark:text-slate-100">{row.original.kode}</span>,
     },
     {
       accessorKey: "nama_lengkap",
@@ -557,7 +592,7 @@ export default function SantriPage() {
       <div>
         <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">Data Santri Tahfidz</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Kelola biodata asrama, kamar, dan pengelompokan Halaqoh Kelas (1-10) serta Bagian (A-F).
+          Kelola biodata asrama, kamar, dan pengelompokan Halaqoh Kelas (1-10) serta Bagian.
         </p>
       </div>
 
@@ -574,8 +609,8 @@ export default function SantriPage() {
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Cari santri, kode, asrama, kamar, WhatsApp..."
-            aria-label="Cari nama atau kode santri"
+            placeholder="Cari santri, asrama, kamar, WhatsApp..."
+            aria-label="Cari nama santri"
             className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-sm text-slate-800 placeholder-slate-400 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
           {search && (
@@ -721,7 +756,7 @@ export default function SantriPage() {
         </div>
       )}
 
-      {/* Area Tabel (Siap Cetak PDF, Baris Dapat Diklik untuk Melihat Detail) */}
+      {/* Area Tabel (Siap Cetak PDF, Lengkap dengan Fitur Select & Hapus Massal) */}
       <div ref={printAreaRef} className="space-y-2">
         <div className="hidden print:block mb-4">
           <h2 className="text-lg font-bold">LPTQ Pondok Pesantren Darussalam Blokagung</h2>
@@ -742,6 +777,9 @@ export default function SantriPage() {
             setSelectedSantri(santri);
             setDetailModalOpen(true);
           }}
+          enableSelection={true}
+          onDeleteSelected={handleDeleteBatch}
+          onDeleteAll={handleDeleteAll}
         />
       </div>
 
@@ -829,7 +867,7 @@ export default function SantriPage() {
                 />
               </div>
 
-              {/* Halaqoh Kelas dan Bagian (Ketik dan Pilih) */}
+              {/* Halaqoh Kelas dan Bagian (Dinamis dari Formasi) */}
               <div className="grid grid-cols-2 gap-3">
                 <KetikDanPilih
                   label="Halaqoh Kelas"
@@ -839,7 +877,7 @@ export default function SantriPage() {
                     setKelasFilter(match ? Number(match[0]) : "");
                     setPage(1);
                   }}
-                  options={HALAQOH_KELAS_LIST.map((k) => `Kelas ${k}`)}
+                  options={halaqohOptions.kelasList.map((k) => `Kelas ${k}`)}
                   placeholder="Semua Kelas (1-10)"
                 />
 
@@ -851,8 +889,8 @@ export default function SantriPage() {
                     setBagianFilter(match);
                     setPage(1);
                   }}
-                  options={HALAQOH_BAGIAN_LIST.map((b) => `Bagian ${b}`)}
-                  placeholder="Semua Bagian (A-F)"
+                  options={halaqohOptions.bagianList.map((b) => `Bagian ${b}`)}
+                  placeholder="Semua Bagian"
                 />
               </div>
             </div>
@@ -938,7 +976,7 @@ export default function SantriPage() {
                       Template Excel
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Unduh format template kosong (termasuk WhatsApp & Kode) siap isi
+                      Unduh format template kosong (Nama, WhatsApp, Asrama, Kode, Kamar, Halaqoh)
                     </p>
                   </div>
                 </button>
@@ -1026,24 +1064,24 @@ export default function SantriPage() {
             </div>
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-              {/* Bagian 1: Identitas Pokok & Kontak WhatsApp */}
+              {/* Bagian 1: Identitas Pokok & WhatsApp (Tanpa Input Kode Unik Santri) */}
               <div className="space-y-3">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
-                  Identitas Pokok & WhatsApp
+                  Identitas Pokok & Kontak
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Kode Unik Santri
+                      Nama Lengkap Santri
                     </label>
                     <input
-                      {...register("kode")}
-                      placeholder="Contoh: S-1006"
-                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 font-mono focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      {...register("nama_lengkap")}
+                      placeholder="Nama lengkap santri"
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     />
-                    {errors.kode && (
+                    {errors.nama_lengkap && (
                       <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                        {errors.kode.message}
+                        {errors.nama_lengkap.message}
                       </p>
                     )}
                   </div>
@@ -1062,22 +1100,6 @@ export default function SantriPage() {
                       />
                     </div>
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Nama Lengkap
-                  </label>
-                  <input
-                    {...register("nama_lengkap")}
-                    placeholder="Nama lengkap santri"
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  {errors.nama_lengkap && (
-                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                      {errors.nama_lengkap.message}
-                    </p>
-                  )}
                 </div>
               </div>
 
@@ -1186,7 +1208,7 @@ export default function SantriPage() {
                 </div>
               </div>
 
-              {/* Bagian 3: Halaqoh & Pembinaan Tahfidz */}
+              {/* Bagian 3: Halaqoh & Pembinaan Tahfidz (Dinamis dari Formasi Halaqoh Gambar 5) */}
               <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
                   Pengelompokan Halaqoh
@@ -1200,7 +1222,7 @@ export default function SantriPage() {
                       {...register("halaqoh_kelas")}
                       className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
-                      {HALAQOH_KELAS_LIST.map((k) => (
+                      {halaqohOptions.kelasList.map((k) => (
                         <option key={k} value={k}>
                           Kelas {k}
                         </option>
@@ -1210,13 +1232,13 @@ export default function SantriPage() {
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Halaqoh Bagian (A-F)
+                      Halaqoh Bagian
                     </label>
                     <select
                       {...register("halaqoh_bagian")}
                       className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
-                      {HALAQOH_BAGIAN_LIST.map((b) => (
+                      {halaqohOptions.bagianList.map((b) => (
                         <option key={b} value={b}>
                           Bagian {b}
                         </option>
