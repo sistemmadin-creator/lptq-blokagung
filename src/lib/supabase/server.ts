@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import type { AppRole } from "@/types/database";
 
 export function createServerSupabase() {
   const cookieStore = cookies();
@@ -30,6 +31,19 @@ export function createServerSupabase() {
       },
     }
   );
+}
+
+// Membaca peran dari tabel profiles. Pengguna tanpa profil dianggap viewer.
+export async function getUserRole(
+  supabase: ReturnType<typeof createServerSupabase>,
+  userId: string
+): Promise<AppRole> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return (data?.role as AppRole | undefined) ?? "viewer";
 }
 
 // Digunakan khusus pada Route Handler server-side setelah memverifikasi role pengguna
