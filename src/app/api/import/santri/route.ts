@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createServerSupabase, getUserRole } from "@/lib/supabase/server";
+import type { AppRole } from "@/types/database";
+
+const IMPORT_ALLOWED_ROLES: AppRole[] = ["admin", "pengurus"];
 
 interface RawSantriImportRow {
   Kode?: string | number;
@@ -20,6 +23,14 @@ export async function POST(request: Request) {
 
     if (!user) {
       return NextResponse.json({ error: "Sesi tidak valid. Silakan masuk kembali." }, { status: 401 });
+    }
+
+    const role = await getUserRole(supabase, user.id);
+    if (!IMPORT_ALLOWED_ROLES.includes(role)) {
+      return NextResponse.json(
+        { error: "Peran Anda tidak diizinkan mengimpor data santri." },
+        { status: 403 }
+      );
     }
 
     const body = await request.json();
