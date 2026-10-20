@@ -1,5 +1,18 @@
 import { NextResponse } from "next/server";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createServerSupabase, getUserRole } from "@/lib/supabase/server";
+import {
+  KHOTMIL_15_TAHAP,
+  KHOTMIL_30_TAHAP,
+  type AppRole,
+  type JenisKhotmil,
+} from "@/types/database";
+
+const IMPORT_ALLOWED_ROLES: AppRole[] = ["admin", "pengurus"];
+
+const TAHAP_CONFIG: Record<JenisKhotmil, typeof KHOTMIL_15_TAHAP> = {
+  khotmil15: KHOTMIL_15_TAHAP,
+  khotmil30: KHOTMIL_30_TAHAP,
+};
 
 interface RawKhotmilImportRow {
   Kode?: string | number;
@@ -18,6 +31,14 @@ export async function POST(request: Request) {
 
     if (!user) {
       return NextResponse.json({ error: "Sesi tidak valid." }, { status: 401 });
+    }
+
+    const role = await getUserRole(supabase, user.id);
+    if (!IMPORT_ALLOWED_ROLES.includes(role)) {
+      return NextResponse.json(
+        { error: "Peran Anda tidak diizinkan mengimpor nilai khotmil." },
+        { status: 403 }
+      );
     }
 
     const body = await request.json();
@@ -59,6 +80,18 @@ export async function POST(request: Request) {
       }
       if (Number.isNaN(nilai) || nilai < 0 || nilai > 100) {
         throw new Error(`Nilai pada baris ${idx + 1} harus berada di antara 0 dan 100.`);
+      }
+
+      const tahapCfg = TAHAP_CONFIG[jenis].find((t) => t.tahap === tahap);
+      if (!Number.isInteger(tahap) || !tahapCfg) {
+        throw new Error(
+          `Tahap pada baris ${idx + 1} tidak valid untuk ${jenis} (tersedia tahap 1-${TAHAP_CONFIG[jenis].length}).`
+        );
+      }
+      if (!Number.isInteger(juz) || !tahapCfg.juzList.includes(juz)) {
+        throw new Error(
+          `Juz ${r.Juz ?? "kosong"} pada baris ${idx + 1} tidak termasuk dalam ${tahapCfg.label} (${tahapCfg.rentangLabel}).`
+        );
       }
 
       return {
