@@ -12,12 +12,15 @@ import type {
 } from "@/types/database";
 
 const SANTRI_COLUMNS =
+  "id, no_urut, kode, nama_lengkap, no_wa, blok, asrama, kode_kamar, kamar, halaqoh_kelas, halaqoh_bagian, halaqoh, created_at, updated_at";
+const SANTRI_FALLBACK_COLUMNS =
   "id, no_urut, kode, nama_lengkap, blok, asrama, kamar, halaqoh_kelas, halaqoh_bagian, halaqoh, created_at, updated_at";
 
 export interface SantriFilterParams {
   search?: string;
   asrama?: string;
   blok?: string;
+  kode_kamar?: string;
   kamar?: string;
   halaqoh_kelas?: number | "";
   halaqoh_bagian?: string;
@@ -78,6 +81,7 @@ function applySantriFilters<T>(query: T, params: SantriFilterOnly): T {
   }
   if (params.asrama) q = q.eq("asrama", params.asrama);
   if (params.blok) q = q.eq("blok", params.blok);
+  if (params.kode_kamar) q = q.eq("kode_kamar", params.kode_kamar);
   if (params.kamar) q = q.eq("kamar", params.kamar);
   if (params.halaqoh_kelas) q = q.eq("halaqoh_kelas", Number(params.halaqoh_kelas));
   if (params.halaqoh_bagian) q = q.eq("halaqoh_bagian", params.halaqoh_bagian);
@@ -92,23 +96,47 @@ export async function fetchSantriPaginated(params: SantriFilterParams) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  const query = applySantriFilters(
-    supabase
-      .from("santri")
-      .select(SANTRI_COLUMNS, { count: "exact" })
-      .order("halaqoh_kelas", { ascending: true })
-      .order("halaqoh_bagian", { ascending: true })
-      .order("nama_lengkap", { ascending: true }),
-    params
-  );
+  // Coba muat dengan kolom lengkap
+  try {
+    const query = applySantriFilters(
+      supabase
+        .from("santri")
+        .select(SANTRI_COLUMNS, { count: "exact" })
+        .order("halaqoh_kelas", { ascending: true })
+        .order("halaqoh_bagian", { ascending: true })
+        .order("nama_lengkap", { ascending: true }),
+      params
+    );
 
-  const { data, count, error } = await query.range(from, to);
-  if (error) throw new Error(error.message);
+    const { data, count, error } = await query.range(from, to);
+    if (error) throw error;
 
-  return {
-    rows: (data ?? []) as Santri[],
-    total: count ?? 0,
-  };
+    return {
+      rows: (data ?? []) as Santri[],
+      total: count ?? 0,
+    };
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    // Jika Supabase belum menambahkan kolom no_wa / kode_kamar, gunakan fallback
+    if (errorMsg.includes("no_wa") || errorMsg.includes("kode_kamar")) {
+      const fallbackQuery = applySantriFilters(
+        supabase
+          .from("santri")
+          .select(SANTRI_FALLBACK_COLUMNS, { count: "exact" })
+          .order("halaqoh_kelas", { ascending: true })
+          .order("halaqoh_bagian", { ascending: true })
+          .order("nama_lengkap", { ascending: true }),
+        params
+      );
+      const { data, count, error } = await fallbackQuery.range(from, to);
+      if (error) throw new Error(error.message);
+      return {
+        rows: (data ?? []) as Santri[],
+        total: count ?? 0,
+      };
+    }
+    throw new Error(errorMsg);
+  }
 }
 
 // Supabase membatasi satu respons (default 1000 baris), jadi data diambil bertahap hingga habis.
@@ -119,23 +147,46 @@ export async function fetchAllSantriFiltered(params: SantriFilterOnly) {
   const all: Santri[] = [];
 
   for (let from = 0; ; from += FETCH_ALL_PAGE_SIZE) {
-    const query = applySantriFilters(
-      supabase
-        .from("santri")
-        .select(SANTRI_COLUMNS)
-        .order("halaqoh_kelas", { ascending: true })
-        .order("halaqoh_bagian", { ascending: true })
-        .order("nama_lengkap", { ascending: true })
-        .order("id", { ascending: true }),
-      params
-    );
+    try {
+      const query = applySantriFilters(
+        supabase
+          .from("santri")
+          .select(SANTRI_COLUMNS)
+          .order("halaqoh_kelas", { ascending: true })
+          .order("halaqoh_bagian", { ascending: true })
+          .order("nama_lengkap", { ascending: true })
+          .order("id", { ascending: true }),
+        params
+      );
 
-    const { data, error } = await query.range(from, from + FETCH_ALL_PAGE_SIZE - 1);
-    if (error) throw new Error(error.message);
+      const { data, error } = await query.range(from, from + FETCH_ALL_PAGE_SIZE - 1);
+      if (error) throw error;
 
-    const batch = (data ?? []) as Santri[];
-    all.push(...batch);
-    if (batch.length < FETCH_ALL_PAGE_SIZE) break;
+      const batch = (data ?? []) as Santri[];
+      all.push(...batch);
+      if (batch.length < FETCH_ALL_PAGE_SIZE) break;
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (errorMsg.includes("no_wa") || errorMsg.includes("kode_kamar")) {
+        const fallbackQuery = applySantriFilters(
+          supabase
+            .from("santri")
+            .select(SANTRI_FALLBACK_COLUMNS)
+            .order("halaqoh_kelas", { ascending: true })
+            .order("halaqoh_bagian", { ascending: true })
+            .order("nama_lengkap", { ascending: true })
+            .order("id", { ascending: true }),
+          params
+        );
+        const { data, error } = await fallbackQuery.range(from, from + FETCH_ALL_PAGE_SIZE - 1);
+        if (error) throw new Error(error.message);
+        const batch = (data ?? []) as Santri[];
+        all.push(...batch);
+        if (batch.length < FETCH_ALL_PAGE_SIZE) break;
+      } else {
+        throw new Error(errorMsg);
+      }
+    }
   }
 
   return all;
@@ -146,12 +197,29 @@ export async function saveSantri(
   id?: string
 ) {
   const supabase = createClient();
-  if (id) {
-    const { error } = await supabase.from("santri").update(payload).eq("id", id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await supabase.from("santri").insert(payload);
-    if (error) throw new Error(error.message);
+  try {
+    if (id) {
+      const { error } = await supabase.from("santri").update(payload).eq("id", id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from("santri").insert(payload);
+      if (error) throw error;
+    }
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    // Jika kolom baru belum ada di Supabase, coba simpan tanpa kolom tersebut
+    if (errorMsg.includes("no_wa") || errorMsg.includes("kode_kamar")) {
+      const { no_wa: _wa, kode_kamar: _kk, ...fallbackPayload } = payload;
+      if (id) {
+        const { error } = await supabase.from("santri").update(fallbackPayload).eq("id", id);
+        if (error) throw new Error(error.message);
+      } else {
+        const { error } = await supabase.from("santri").insert(fallbackPayload);
+        if (error) throw new Error(error.message);
+      }
+      return;
+    }
+    throw new Error(errorMsg);
   }
 }
 
