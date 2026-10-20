@@ -31,6 +31,7 @@ import {
 import { DataTable } from "@/components/ui/DataTable";
 import { HalaqohBadge } from "@/components/ui/Badges";
 import { exportJsonToExcel } from "@/lib/utils/excel";
+import { toLocalIsoDate } from "@/lib/utils/date";
 import { useToast } from "@/components/ui/Toast";
 
 const setoranSchema = z.object({
@@ -79,7 +80,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     resolver: zodResolver(setoranSchema),
     defaultValues: {
       santri_id: "",
-      tanggal: now.toISOString().slice(0, 10),
+      tanggal: toLocalIsoDate(now),
       jumlah_juz_tambahan: 0.5,
       catatan: "",
     },
@@ -336,7 +337,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
           onClick={() => {
             reset({
               santri_id: santriOptions[0]?.id ?? "",
-              tanggal: now.toISOString().slice(0, 10),
+              tanggal: toLocalIsoDate(now),
               jumlah_juz_tambahan: 0.5,
               catatan: "",
             });
