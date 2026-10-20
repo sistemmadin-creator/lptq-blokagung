@@ -5,37 +5,46 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Plus, FileSpreadsheet, X } from "lucide-react";
 import {
-  fetchSetoranBulananMerged,
-  insertSetoranLog,
+  Plus,
+  FileSpreadsheet,
+  Printer,
+  SlidersHorizontal,
+  X,
+  Search,
+  RotateCcw,
+  Check,
+} from "lucide-react";
+import { useReactToPrint } from "react-to-print";
+import {
+  fetchAllSantriFiltered,
+  fetchSetoranTahunan,
+  saveSetoranLog,
 } from "@/lib/services/tahfidz-service";
 import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
+  type HalaqohBagian,
+  type Santri,
   type SetoranBulananRow,
   type TipeSetoran,
 } from "@/types/database";
 import { DataTable } from "@/components/ui/DataTable";
 import { HalaqohBadge } from "@/components/ui/Badges";
-import { PrintButton } from "@/components/ui/PrintButton";
 import { exportJsonToExcel } from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
 
 const setoranSchema = z.object({
-  santri_id: z.string().uuid("Pilih santri terlebih dahulu"),
-  tanggal: z.string().min(10, "Tanggal wajib diisi"),
-  jumlah_juz_tambahan: z.coerce
-    .number()
-    .min(0.05, "Jumlah setoran minimal 0.05 juz")
-    .max(30, "Jumlah setoran maksimal 30 juz"),
+  santri_id: z.string().uuid("Pilih santri yang valid"),
+  tanggal: z.string().min(10, "Format tanggal YYYY-MM-DD"),
+  jumlah_juz_tambahan: z.coerce.number().min(0.01, "Minimal setoran 0.01 Juz"),
   catatan: z.string().optional(),
 });
 
 type SetoranFormValues = z.infer<typeof setoranSchema>;
 
 interface SetoranModuleProps {
-  tipe: TipeSetoran;
+  tipe: TipeSetoran; // "juz_baru" | "evaluasi"
   judul: string;
   deskripsi: string;
 }
@@ -51,10 +60,13 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   const [kelasFilter, setKelasFilter] = useState<number | "">("");
   const [bagianFilter, setBagianFilter] = useState("");
 
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const [santriList, setSantriList] = useState<Santri[]>([]);
   const [rows, setRows] = useState<SetoranBulananRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
 
   const {
     register,
@@ -65,7 +77,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     resolver: zodResolver(setoranSchema),
     defaultValues: {
       santri_id: "",
-      tanggal: now.toISOString().slice(0, 10),
+      tanggal: new Date().toISOString().slice(0, 10),
       jumlah_juz_tambahan: 0.5,
       catatan: "",
     },
@@ -75,13 +87,54 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchSetoranBulananMerged(tahun, tipe, {
-        search,
-        asrama: asramaFilter,
-        halaqoh_kelas: kelasFilter,
-        halaqoh_bagian: bagianFilter,
+      const [allSantri, rekapRows] = await Promise.all([
+        fetchAllSantriFiltered({
+          search,
+          asrama: asramaFilter,
+          halaqoh_kelas: kelasFilter,
+          halaqoh_bagian: bagianFilter,
+        }),
+        fetchSetoranTahunan(tahun, tipe),
+      ]);
+
+      setSantriList(allSantri);
+
+      // Gabungkan data santri dengan rekap agregasi tahunan
+      const mapRekap = new Map<string, SetoranBulananRow>();
+      for (const r of rekapRows) {
+        mapRekap.set(r.santri_id, r);
+      }
+
+      const merged: SetoranBulananRow[] = allSantri.map((s) => {
+        const existing = mapRekap.get(s.id);
+        if (existing) return existing;
+        return {
+          santri_id: s.id,
+          kode: s.kode,
+          nama_lengkap: s.nama_lengkap,
+          asrama: s.asrama,
+          kamar: s.kamar,
+          halaqoh: s.halaqoh,
+          halaqoh_kelas: s.halaqoh_kelas,
+          halaqoh_bagian: s.halaqoh_bagian as HalaqohBagian,
+          tahun,
+          jan: 0,
+          feb: 0,
+          mar: 0,
+          apr: 0,
+          mei: 0,
+          jun: 0,
+          jul: 0,
+          agu: 0,
+          sep: 0,
+          okt: 0,
+          nov: 0,
+          des: 0,
+          total_setoran: 0,
+        };
       });
-      setRows(data);
+
+      setRows(merged);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat rekap setoran.");
     } finally {
@@ -93,28 +146,54 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     loadData();
   }, [loadData]);
 
+  // Handle tombol escape untuk modal
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && modalOpen) setModalOpen(false);
+      if (e.key === "Escape") {
+        if (modalOpen) setModalOpen(false);
+        if (filterModalOpen) setFilterModalOpen(false);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen]);
+  }, [modalOpen, filterModalOpen]);
+
+  // Hook cetak PDF via react-to-print
+  const handlePrint = useReactToPrint({
+    content: () => printRef.current,
+    documentTitle: `Rekap_${tipe}_${tahun}`,
+  });
+
+  // Hitung filter aktif
+  const activeFilterCount = [
+    asramaFilter,
+    kelasFilter !== "" ? kelasFilter : "",
+    bagianFilter,
+  ].filter(Boolean).length;
+
+  const resetAllFilters = () => {
+    setAsramaFilter("");
+    setKelasFilter("");
+    setBagianFilter("");
+    showToast("success", "Semua filter telah direset.");
+  };
 
   const onSubmit = async (values: SetoranFormValues) => {
     try {
-      await insertSetoranLog({
+      await saveSetoranLog({
         santri_id: values.santri_id,
         tanggal: values.tanggal,
         tipe,
         jumlah_juz_tambahan: values.jumlah_juz_tambahan,
-        catatan: values.catatan,
       });
-      showToast("success", "Log setoran berhasil disimpan dan diakumulasikan.");
+      showToast(
+        "success",
+        `Setoran sebesar ${values.jumlah_juz_tambahan} Juz berhasil dicatat.`
+      );
       setModalOpen(false);
       loadData();
     } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Gagal menyimpan setoran.");
+      showToast("error", err instanceof Error ? err.message : "Gagal menyimpan log setoran.");
     }
   };
 
@@ -122,7 +201,8 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     const formatted = rows.map((r, idx) => ({
       No: idx + 1,
       Kode: r.kode,
-      Nama: r.nama_lengkap,
+      "Nama Santri": r.nama_lengkap,
+      Asrama: r.asrama,
       Kamar: r.kamar,
       Halaqoh: r.halaqoh,
       Jan: r.jan,
@@ -137,42 +217,42 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       Okt: r.okt,
       Nov: r.nov,
       Des: r.des,
-      "Total Setoran": r.total_setoran,
+      "Total Setoran (Juz)": r.total_setoran,
     }));
-    exportJsonToExcel(formatted, `Rekap_${tipe}_${tahun}`, "RekapSetoran");
-    showToast("success", "Rekap setoran berhasil diekspor ke Excel.");
+    exportJsonToExcel(formatted, `Rekap_${tipe}_Tahun_${tahun}`, "RekapSetoran");
+    showToast("success", "Berkas rekap setoran berhasil diekspor.");
   };
 
   const monthKeys: { key: keyof SetoranBulananRow; label: string }[] = [
-    { key: "jan", label: "Jan" },
-    { key: "feb", label: "Feb" },
-    { key: "mar", label: "Mar" },
-    { key: "apr", label: "Apr" },
-    { key: "mei", label: "Mei" },
-    { key: "jun", label: "Jun" },
-    { key: "jul", label: "Jul" },
-    { key: "agu", label: "Agu" },
-    { key: "sep", label: "Sep" },
-    { key: "okt", label: "Okt" },
-    { key: "nov", label: "Nov" },
-    { key: "des", label: "Des" },
+    { key: "jan", label: "JAN" },
+    { key: "feb", label: "FEB" },
+    { key: "mar", label: "MAR" },
+    { key: "apr", label: "APR" },
+    { key: "mei", label: "MEI" },
+    { key: "jun", label: "JUN" },
+    { key: "jul", label: "JUL" },
+    { key: "agu", label: "AGU" },
+    { key: "sep", label: "SEP" },
+    { key: "okt", label: "OKT" },
+    { key: "nov", label: "NOV" },
+    { key: "des", label: "DES" },
   ];
 
   const columns: ColumnDef<SetoranBulananRow>[] = [
     {
       id: "no",
-      header: "No",
-      cell: ({ row }) => <span className="font-mono">{row.index + 1}</span>,
+      header: "NO",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.index + 1}</span>,
     },
     {
       accessorKey: "nama_lengkap",
-      header: "Nama",
-      cell: ({ row }) => <span className="font-medium">{row.original.nama_lengkap}</span>,
+      header: "NAMA",
+      cell: ({ row }) => <span className="font-semibold text-slate-800 dark:text-slate-100">{row.original.nama_lengkap}</span>,
     },
-    { accessorKey: "kamar", header: "Kamar" },
+    { accessorKey: "kamar", header: "KAMAR" },
     {
       id: "halaqoh",
-      header: "Halaqoh",
+      header: "HALAQOH",
       cell: ({ row }) => (
         <HalaqohBadge kelas={row.original.halaqoh_kelas} bagian={row.original.halaqoh_bagian} />
       ),
@@ -183,7 +263,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       cell: ({ row }: { row: { original: SetoranBulananRow } }) => {
         const val = Number(row.original[m.key] ?? 0);
         return (
-          <span className={`font-mono ${val > 0 ? "font-bold text-emerald-800 dark:text-emerald-300" : "text-slate-500"}`}>
+          <span className={`font-mono text-xs ${val > 0 ? "font-bold text-emerald-800 dark:text-emerald-300" : "text-slate-400"}`}>
             {val > 0 ? val : "-"}
           </span>
         );
@@ -191,7 +271,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     })),
     {
       accessorKey: "total_setoran",
-      header: "Total Setoran",
+      header: "TOTAL SETORAN",
       cell: ({ row }) => (
         <span className="font-mono font-bold text-emerald-900 dark:text-emerald-300">
           {row.original.total_setoran} Juz
@@ -202,105 +282,272 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-white">{judul}</h1>
-          <p className="text-sm text-slate-600 dark:text-slate-400">{deskripsi}</p>
-        </div>
-
-        <div className="no-print flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              reset({
-                santri_id: rows[0]?.santri_id ?? "",
-                tanggal: new Date().toISOString().slice(0, 10),
-                jumlah_juz_tambahan: 0.5,
-                catatan: "",
-              });
-              setModalOpen(true);
-            }}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-emerald-800 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-900"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Input Log Setoran</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleExportExcel}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-800 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-          >
-            <FileSpreadsheet className="h-4 w-4" />
-            <span>Ekspor Excel</span>
-          </button>
-
-          <PrintButton contentRef={printRef} documentTitle={`Rekap_${tipe}_${tahun}`} />
-        </div>
+      {/* Header Halaman */}
+      <div>
+        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{judul}</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400">{deskripsi}</p>
       </div>
 
-      {/* Filter Tahun, Pencarian, Asrama, Kelas, Bagian */}
-      <div className="no-print grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 rounded-md border border-slate-300 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
+      {/* Bilah Toolbar yang Disederhanakan 1 Baris */}
+      <div className="no-print flex items-center gap-2">
+        {/* Input Tahun */}
         <input
           type="number"
           value={tahun}
           onChange={(e) => setTahun(Number(e.target.value) || now.getFullYear())}
           aria-label="Tahun Rekap"
-          className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-mono dark:border-slate-700 dark:bg-slate-800"
+          className="h-11 w-24 shrink-0 rounded-xl border border-slate-300 bg-white px-3 text-center text-sm font-mono font-bold text-slate-800 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         />
 
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Cari nama atau kode..."
-          aria-label="Cari santri"
-          className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800"
-        />
+        {/* Kolom Pencarian Santri */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Cari nama atau kode santri..."
+            aria-label="Cari santri"
+            className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-sm text-slate-800 placeholder-slate-400 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              title="Bersihkan pencarian"
+              aria-label="Bersihkan pencarian"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
 
-        <input
-          type="text"
-          value={asramaFilter}
-          onChange={(e) => setAsramaFilter(e.target.value)}
-          placeholder="Filter Asrama..."
-          aria-label="Filter Asrama"
-          className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800"
-        />
-
-        <select
-          value={kelasFilter}
-          onChange={(e) => setKelasFilter(e.target.value ? Number(e.target.value) : "")}
-          aria-label="Filter Kelas"
-          className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800"
+        {/* Tombol Filter (Pop-up Pilihan Filter) */}
+        <button
+          type="button"
+          onClick={() => setFilterModalOpen(true)}
+          title={activeFilterCount > 0 ? `Filter aktif (${activeFilterCount})` : "Filter Asrama & Halaqoh"}
+          aria-label="Filter Asrama & Halaqoh"
+          className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border shadow-sm transition focus:outline-none focus:ring-2 focus:ring-emerald-500/20 ${
+            activeFilterCount > 0
+              ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-300"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-emerald-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          }`}
         >
-          <option value="">Semua Kelas</option>
-          {HALAQOH_KELAS_LIST.map((k) => (
-            <option key={k} value={k}>
-              Kelas {k}
-            </option>
-          ))}
-        </select>
+          <SlidersHorizontal className="h-5 w-5" />
+          {activeFilterCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-bold text-white shadow">
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
 
-        <select
-          value={bagianFilter}
-          onChange={(e) => setBagianFilter(e.target.value)}
-          aria-label="Filter Bagian"
-          className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800"
+        {/* Tombol Ekspor Excel (Hanya Logo) */}
+        <button
+          type="button"
+          onClick={handleExportExcel}
+          title="Ekspor Rekap Excel"
+          aria-label="Ekspor Rekap Excel"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
         >
-          <option value="">Semua Bagian</option>
-          {HALAQOH_BAGIAN_LIST.map((b) => (
-            <option key={b} value={b}>
-              Bagian {b}
-            </option>
-          ))}
-        </select>
+          <FileSpreadsheet className="h-5 w-5" />
+        </button>
+
+        {/* Tombol Cetak / Unduh PDF (Hanya Logo) */}
+        <button
+          type="button"
+          onClick={handlePrint}
+          title="Cetak / Unduh PDF"
+          aria-label="Cetak / Unduh PDF"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <Printer className="h-5 w-5" />
+        </button>
+
+        {/* Tombol Input Log Setoran (Hanya Logo) */}
+        <button
+          type="button"
+          onClick={() => {
+            reset({
+              santri_id: rows[0]?.santri_id ?? "",
+              tanggal: new Date().toISOString().slice(0, 10),
+              jumlah_juz_tambahan: 0.5,
+              catatan: "",
+            });
+            setModalOpen(true);
+          }}
+          title="Input Log Setoran"
+          aria-label="Input Log Setoran"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-800 text-white shadow transition hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+        >
+          <Plus className="h-5 w-5" />
+        </button>
       </div>
 
+      {/* Indikator Filter Aktif */}
+      {activeFilterCount > 0 && (
+        <div className="no-print flex flex-wrap items-center gap-2 pt-1">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Filter Aktif:</span>
+          {asramaFilter && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+              Asrama: {asramaFilter}
+              <button type="button" onClick={() => setAsramaFilter("")} aria-label="Hapus filter asrama">
+                <X className="h-3 w-3 hover:text-rose-600" />
+              </button>
+            </span>
+          )}
+          {kelasFilter !== "" && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+              Kelas: {kelasFilter}
+              <button type="button" onClick={() => setKelasFilter("")} aria-label="Hapus filter kelas">
+                <X className="h-3 w-3 hover:text-rose-600" />
+              </button>
+            </span>
+          )}
+          {bagianFilter && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+              Bagian: {bagianFilter}
+              <button type="button" onClick={() => setBagianFilter("")} aria-label="Hapus filter bagian">
+                <X className="h-3 w-3 hover:text-rose-600" />
+              </button>
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={resetAllFilters}
+            className="text-xs font-semibold text-rose-600 hover:underline dark:text-rose-400"
+          >
+            Reset Semua
+          </button>
+        </div>
+      )}
+
+      {/* Tabel Data Setoran */}
       <div ref={printRef}>
-        <DataTable columns={columns} data={rows} loading={loading} error={error} onRetry={loadData} />
+        <div className="hidden print:block mb-4">
+          <h2 className="text-lg font-bold">LPTQ Pondok Pesantren Darussalam Blokagung</h2>
+          <p className="text-xs">
+            {judul} - Tahun {tahun}
+          </p>
+        </div>
+
+        <DataTable
+          columns={columns}
+          data={rows}
+          loading={loading}
+          error={error}
+          onRetry={loadData}
+        />
       </div>
 
-      {/* Modal Input Log Setoran */}
+      {/* POP-UP 1: MODAL FILTER TERPADU */}
+      {filterModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-filter-setoran-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  <SlidersHorizontal className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 id="modal-filter-setoran-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    Filter Rekap Setoran
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Saring daftar santri berdasarkan asrama dan halaqoh</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFilterModalOpen(false)}
+                aria-label="Tutup dialog filter"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 py-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Asrama
+                </label>
+                <input
+                  type="text"
+                  value={asramaFilter}
+                  onChange={(e) => setAsramaFilter(e.target.value)}
+                  placeholder="Filter Asrama (misal: Al-Falah)"
+                  className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Halaqoh Kelas
+                  </label>
+                  <select
+                    value={kelasFilter}
+                    onChange={(e) => setKelasFilter(e.target.value ? Number(e.target.value) : "")}
+                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    <option value="">Semua Kelas (1-10)</option>
+                    {HALAQOH_KELAS_LIST.map((k) => (
+                      <option key={k} value={k}>
+                        Kelas {k}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Halaqoh Bagian
+                  </label>
+                  <select
+                    value={bagianFilter}
+                    onChange={(e) => setBagianFilter(e.target.value)}
+                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    <option value="">Semua Bagian (A-F)</option>
+                    {HALAQOH_BAGIAN_LIST.map((b) => (
+                      <option key={b} value={b}>
+                        Bagian {b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={resetAllFilters}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition dark:text-rose-400 dark:hover:bg-rose-950/40"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Reset Filter</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterModalOpen(false)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl shadow transition"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>Tutup & Terapkan</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POP-UP 2: MODAL INPUT LOG SETORAN */}
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
@@ -308,88 +555,105 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
           aria-modal="true"
           aria-labelledby="modal-setoran-title"
         >
-          <div className="w-full max-w-md rounded-md border border-slate-300 bg-white p-6 shadow-xl dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex items-center justify-between mb-4">
-              <h2 id="modal-setoran-title" className="text-base font-bold">
-                Input Log Setoran ({tipe === "juz_baru" ? "Juz Baru" : "Evaluasi Pusat"})
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <h2 id="modal-setoran-title" className="text-base font-bold text-slate-900 dark:text-white">
+                Catat Log {tipe === "juz_baru" ? "Juz Baru" : "Evaluasi"}
               </h2>
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
                 aria-label="Tutup dialog"
-                className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded border border-slate-300 dark:border-slate-700"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-semibold mb-1">Pilih Santri</label>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Pilih Santri
+                </label>
                 <select
                   {...register("santri_id")}
-                  className="w-full min-h-[44px] rounded border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+                  className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 >
                   <option value="">-- Pilih Santri --</option>
-                  {rows.map((r) => (
-                    <option key={r.santri_id} value={r.santri_id}>
-                      {r.kode} - {r.nama_lengkap} ({r.halaqoh})
+                  {santriList.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.kode} - {s.nama_lengkap} ({s.asrama})
                     </option>
                   ))}
                 </select>
                 {errors.santri_id && (
-                  <p className="mt-1 text-xs text-red-700">{errors.santri_id.message}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1">Tanggal Setoran</label>
-                <input
-                  type="date"
-                  {...register("tanggal")}
-                  className="w-full min-h-[44px] rounded border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1">
-                  Jumlah Juz Tambahan (Bisa Desimal, misal 0.25 / 0.5 / 1)
-                </label>
-                <input
-                  type="number"
-                  step="0.05"
-                  {...register("jumlah_juz_tambahan")}
-                  className="w-full min-h-[44px] rounded border border-slate-300 bg-white px-3 py-2 text-sm font-mono dark:border-slate-700 dark:bg-slate-800"
-                />
-                {errors.jumlah_juz_tambahan && (
-                  <p className="mt-1 text-xs text-red-700">
-                    {errors.jumlah_juz_tambahan.message}
+                  <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                    {errors.santri_id.message}
                   </p>
                 )}
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Tanggal
+                  </label>
+                  <input
+                    type="date"
+                    {...register("tanggal")}
+                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                  {errors.tanggal && (
+                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                      {errors.tanggal.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Jumlah Juz (Desimal)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    placeholder="Contoh: 0.5"
+                    {...register("jumlah_juz_tambahan")}
+                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-mono text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                  {errors.jumlah_juz_tambahan && (
+                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                      {errors.jumlah_juz_tambahan.message}
+                    </p>
+                  )}
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs font-semibold mb-1">Catatan (Opsional)</label>
-                <input
-                  type="text"
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Catatan Tambahan (Opsional)
+                </label>
+                <textarea
                   {...register("catatan")}
-                  placeholder="Contoh: Juz 4 halaman 1-10 lancar"
-                  className="w-full min-h-[44px] rounded border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+                  rows={2}
+                  placeholder="Keterangan kelancaran atau tajwid..."
+                  className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="min-h-[44px] rounded-md border border-slate-300 px-4 py-2 text-xs font-semibold dark:border-slate-700"
+                  className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="min-h-[44px] rounded-md bg-emerald-800 px-5 py-2 text-xs font-semibold text-white hover:bg-emerald-900 disabled:opacity-60"
+                  className="px-5 py-2 text-xs font-semibold rounded-xl bg-emerald-800 text-white hover:bg-emerald-900 shadow transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
                 >
                   {isSubmitting ? "Menyimpan..." : "Simpan Setoran"}
                 </button>
