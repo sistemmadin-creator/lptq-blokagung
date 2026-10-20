@@ -68,7 +68,7 @@ const santriSchema = z.object({
   nama_lengkap: z.string().min(3, "Nama lengkap wajib diisi"),
   no_wa: z.string().optional(),
   blok: z.string().min(1, "Blok wajib diisi"),
-  asrama: z.string().min(2, "Asrama wajib diisi"),
+  asrama: z.string().min(1, "Asrama wajib diisi (isi \"-\" jika belum ada)"),
   kode_kamar: z.string().optional(),
   kamar: z.string().min(1, "Kamar wajib diisi"),
   halaqoh_kelas: z.coerce.number().min(1).max(10),
@@ -449,10 +449,9 @@ export default function SantriPage() {
     setImportProgress("Memvalidasi header berkas...");
 
     try {
+      // Hanya Nama dan Halaqoh yang wajib; Nomor WhatsApp, Blok, Asrama, Kode, Kamar boleh kosong
       const requiredHeaders = [
         "Nama Lengkap",
-        "Asrama",
-        "Kamar",
         "Halaqoh Kelas",
         "Halaqoh Bagian",
       ];
