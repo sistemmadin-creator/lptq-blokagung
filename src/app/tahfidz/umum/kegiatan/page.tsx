@@ -99,7 +99,7 @@ export default function KegiatanAbsensiPage() {
     } finally {
       setLoading(false);
     }
-  }, [bulan, tahun, sesi, search, asramaFilter, kelasFilter, bagianFilter]);
+  }, [bulan, tahun, sesi, search, asramaFilter, kelasFilter, bagianFilter, showToast]);
 
   useEffect(() => {
     loadData();
