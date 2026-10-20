@@ -68,7 +68,7 @@ export async function POST(request: Request) {
         kode = `S-${Date.now().toString().slice(-6)}${index + 1}-${randomPart}`;
       }
 
-      let nama_lengkap = String(row["Nama Lengkap"] ?? "").trim();
+      const nama_lengkap = String(row["Nama Lengkap"] ?? "").trim();
       let blok = String(row.Blok ?? "").trim();
       let asrama = String(row.Asrama ?? "").trim();
 
@@ -84,12 +84,17 @@ export async function POST(request: Request) {
       if (hierarki && hierarki.includes(">")) {
         const parts = hierarki.split(">").map((s) => s.trim());
         if ((!blok || blok === "-") && parts[0]) blok = parts[0];
-        if (!asrama && parts[1]) asrama = parts[1];
-        if (!kode_kamar && parts[2]) kode_kamar = parts[2];
+        if ((!asrama || asrama === "-") && parts[1]) asrama = parts[1];
+        if ((!kode_kamar || kode_kamar === "-") && parts[2]) kode_kamar = parts[2];
       }
-      if (!blok) blok = "-";
 
-      const kamar = String(row.Kamar ?? "").trim();
+      // Blok, Asrama, Kode, dan Kamar boleh kosong: diisi "-" agar bisa dilengkapi lewat Edit.
+      if (!blok) blok = "-";
+      if (!asrama) asrama = "-";
+      if (!kode_kamar) kode_kamar = "-";
+
+      // Kamar ditulis apa adanya (2 atau 02 sama-sama diterima); angka dari Excel dinormalkan.
+      const kamar = String(row.Kamar ?? "").trim() || "-";
       const no_wa = String(
         row["Nomor WhatsApp"] ?? row["No WhatsApp"] ?? row.WhatsApp ?? row.Telepon ?? ""
       ).trim();
@@ -100,15 +105,13 @@ export async function POST(request: Request) {
 
       if (
         !nama_lengkap ||
-        !asrama ||
-        !kamar ||
         Number.isNaN(halaqoh_kelas) ||
         halaqoh_kelas < 1 ||
         halaqoh_kelas > 10 ||
         !validBagian.has(halaqoh_bagian)
       ) {
         throw new Error(
-          `Data tidak valid pada baris ke-${index + 1} (Nama: ${nama_lengkap || "kosong"}). Pastikan Nama, Asrama, Kamar terisi, Kelas 1-10 dan Bagian A-F.`
+          `Data tidak valid pada baris ke-${index + 1} (Nama: ${nama_lengkap || "kosong"}). Pastikan Nama terisi, Kelas 1-10 dan Bagian A-F.`
         );
       }
 
@@ -118,7 +121,7 @@ export async function POST(request: Request) {
         no_wa: no_wa || null,
         blok,
         asrama,
-        kode_kamar: kode_kamar || null,
+        kode_kamar,
         kamar,
         halaqoh_kelas,
         halaqoh_bagian,
