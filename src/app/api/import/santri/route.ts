@@ -6,9 +6,15 @@ const IMPORT_ALLOWED_ROLES: AppRole[] = ["admin", "pengurus"];
 
 interface RawSantriImportRow {
   Kode?: string | number;
+  "Kode Santri"?: string | number;
   "Nama Lengkap"?: string;
+  "Nomor WhatsApp"?: string | number;
+  "No WhatsApp"?: string | number;
+  WhatsApp?: string | number;
+  Telepon?: string | number;
   Blok?: string | number;
   Asrama?: string;
+  "Kode Kamar"?: string | number;
   Kamar?: string | number;
   "Halaqoh Kelas"?: number | string;
   "Halaqoh Bagian"?: string;
@@ -42,18 +48,34 @@ export async function POST(request: Request) {
 
     const validBagian = new Set(["A", "B", "C", "D", "E", "F"]);
     const payload = rawRows.map((row, index) => {
-      const kode = String(row.Kode ?? "").trim();
+      // Prioritaskan Kode Santri jika ada. Jika tidak ada (karena Kode Unik Santri telah
+      // dihapus dari template), gunakan auto-generate unik dan kolom 'Kode' diperlakukan sebagai kode_kamar.
+      let kode = String(row["Kode Santri"] ?? "").trim();
+      let kode_kamar = String(row["Kode Kamar"] ?? "").trim();
+
+      if (!kode_kamar && row.Kode) {
+        kode_kamar = String(row.Kode).trim();
+      }
+
+      if (!kode) {
+        // Auto-generate kode unik santri (contoh: S-98123-1)
+        const randomPart = Math.floor(1000 + Math.random() * 9000);
+        kode = `S-${Date.now().toString().slice(-6)}${index + 1}-${randomPart}`;
+      }
+
       const nama_lengkap = String(row["Nama Lengkap"] ?? "").trim();
       const blok = String(row.Blok ?? "-").trim() || "-";
       const asrama = String(row.Asrama ?? "").trim();
       const kamar = String(row.Kamar ?? "").trim();
+      const no_wa = String(
+        row["Nomor WhatsApp"] ?? row["No WhatsApp"] ?? row.WhatsApp ?? row.Telepon ?? ""
+      ).trim();
       const halaqoh_kelas = Number(row["Halaqoh Kelas"]);
       const halaqoh_bagian = String(row["Halaqoh Bagian"] ?? "")
         .trim()
         .toUpperCase();
 
       if (
-        !kode ||
         !nama_lengkap ||
         !asrama ||
         !kamar ||
@@ -63,24 +85,35 @@ export async function POST(request: Request) {
         !validBagian.has(halaqoh_bagian)
       ) {
         throw new Error(
-          `Data tidak valid pada baris ke-${index + 1} (Kode: ${kode || "kosong"}). Pastikan Kelas 1-10 dan Bagian A-F.`
+          `Data tidak valid pada baris ke-${index + 1} (Nama: ${nama_lengkap || "kosong"}). Pastikan Nama, Asrama, Kamar terisi, Kelas 1-10 dan Bagian A-F.`
         );
       }
 
       return {
         kode,
         nama_lengkap,
+        no_wa: no_wa || null,
         blok,
         asrama,
+        kode_kamar: kode_kamar || null,
         kamar,
         halaqoh_kelas,
         halaqoh_bagian,
       };
     });
 
-    const { error } = await supabase
+    let { error } = await supabase
       .from("santri")
       .upsert(payload, { onConflict: "kode" });
+
+    // Fallback jika Supabase belum menambahkan kolom no_wa / kode_kamar
+    if (error && (error.message.includes("no_wa") || error.message.includes("kode_kamar"))) {
+      const fallbackPayload = payload.map(({ no_wa: _wa, kode_kamar: _kk, ...rest }) => rest);
+      const retryRes = await supabase
+        .from("santri")
+        .upsert(fallbackPayload, { onConflict: "kode" });
+      error = retryRes.error;
+    }
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
