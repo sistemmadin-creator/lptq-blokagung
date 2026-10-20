@@ -24,15 +24,15 @@ export const DEFAULT_HIERARCHY_RULES: HierarchyRule[] = [
   {
     id: "rule_1",
     tree: "tree1",
-    parentPath: "Blok 1 > Al Hikmah > E",
+    parentPath: "Blok 12 > Maqomin Amin > AB",
     type: "numeric",
     numStart: 1,
-    numEnd: 20,
+    numEnd: 10,
   },
   {
     id: "rule_2",
     tree: "tree1",
-    parentPath: "Blok 1 > Al Ghozali > G",
+    parentPath: "Blok 12 > Munzalan Mubaroka > W",
     type: "numeric",
     numStart: 1,
     numEnd: 10,
@@ -40,13 +40,61 @@ export const DEFAULT_HIERARCHY_RULES: HierarchyRule[] = [
   {
     id: "rule_3",
     tree: "tree1",
-    parentPath: "Blok A > Al-Falah > A",
+    parentPath: "Blok 11 > Bir Aly > X",
     type: "numeric",
     numStart: 1,
     numEnd: 10,
   },
   {
     id: "rule_4",
+    tree: "tree1",
+    parentPath: "Blok 11 > Al Multazam > HB",
+    type: "numeric",
+    numStart: 1,
+    numEnd: 10,
+  },
+  {
+    id: "rule_5",
+    tree: "tree1",
+    parentPath: "Blok 11 > Al Multazam > HA",
+    type: "numeric",
+    numStart: 1,
+    numEnd: 10,
+  },
+  {
+    id: "rule_6",
+    tree: "tree1",
+    parentPath: "Blok 10 > Al Munawwir > Z",
+    type: "numeric",
+    numStart: 1,
+    numEnd: 10,
+  },
+  {
+    id: "rule_7",
+    tree: "tree1",
+    parentPath: "Blok 1 > Al Hikmah > E",
+    type: "numeric",
+    numStart: 1,
+    numEnd: 20,
+  },
+  {
+    id: "rule_8",
+    tree: "tree1",
+    parentPath: "Blok 1 > Al Ghozali > G",
+    type: "numeric",
+    numStart: 1,
+    numEnd: 10,
+  },
+  {
+    id: "rule_9",
+    tree: "tree1",
+    parentPath: "Blok A > Al-Falah > A",
+    type: "numeric",
+    numStart: 1,
+    numEnd: 10,
+  },
+  {
+    id: "rule_10",
     tree: "tree1",
     parentPath: "Blok B > An-Nur > B",
     type: "numeric",
@@ -120,6 +168,50 @@ export function parseHierarchyTree(rules: HierarchyRule[]): HierarchyTree {
   });
 
   return tree;
+}
+
+/**
+ * Mengekstrak daftar enum unik untuk Blok, Asrama, Kode, dan Kamar
+ * dari aturan hierarki aktif, beserta daftar kombinasi valid.
+ */
+export function extractHierarchyEnums(rules: HierarchyRule[]) {
+  const bloks = new Set<string>();
+  const asramas = new Set<string>();
+  const kodes = new Set<string>();
+  const kamars = new Set<string>();
+  const combinations: {
+    blok: string;
+    asrama: string;
+    kode: string;
+    kamarList: string[];
+  }[] = [];
+
+  const tree = parseHierarchyTree(rules);
+  Object.keys(tree).forEach((b) => {
+    bloks.add(b);
+    Object.keys(tree[b]).forEach((a) => {
+      asramas.add(a);
+      Object.keys(tree[b][a]).forEach((k) => {
+        kodes.add(k);
+        const kmList = tree[b][a][k];
+        kmList.forEach((km) => kamars.add(km));
+        combinations.push({
+          blok: b,
+          asrama: a,
+          kode: k,
+          kamarList: kmList,
+        });
+      });
+    });
+  });
+
+  return {
+    bloks: Array.from(bloks).sort(),
+    asramas: Array.from(asramas).sort(),
+    kodes: Array.from(kodes).sort(),
+    kamars: Array.from(kamars).sort((x, y) => x.localeCompare(y, undefined, { numeric: true })),
+    combinations,
+  };
 }
 
 /**
