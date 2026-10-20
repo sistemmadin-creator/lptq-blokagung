@@ -309,3 +309,32 @@ export async function saveHierarchyRules(rules: HierarchyRule[]): Promise<void> 
     // Tidak melempar error agar tetap berjalan mulus lewat LocalStorage jika koneksi bermasalah
   }
 }
+
+/**
+ * Format penggabungan Kode dan Kamar untuk tampilan ringkas pada kartu halaqoh.
+ * Contoh: Kode "E", Kamar "1" atau "01" -> "E1"
+ *         Kode "E", Kamar "03" -> "E3"
+ *         Kode "-", Kamar "03" -> "3"
+ *         Kode "-", Kamar "-"  -> "-"
+ */
+export function formatKamarDisplay(
+  kodeKamar?: string | null,
+  kamar?: string | null
+): string {
+  const cleanKode = (kodeKamar || "").trim();
+  const cleanKamarRaw = (kamar || "").trim();
+  const hasKode = cleanKode !== "" && cleanKode !== "-";
+  const hasKamar = cleanKamarRaw !== "" && cleanKamarRaw !== "-";
+
+  if (!hasKode && !hasKamar) return "-";
+  if (hasKode && !hasKamar) return cleanKode;
+
+  // Hapus angka 0 di depan jika digit angka murni, misal "01" -> "1", "03" -> "3"
+  const normalizedKamar = cleanKamarRaw.replace(/^0+(?=\d)/, "");
+
+  if (hasKode) {
+    return `${cleanKode}${normalizedKamar}`;
+  }
+  return normalizedKamar;
+}
+
