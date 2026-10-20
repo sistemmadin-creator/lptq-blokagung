@@ -229,6 +229,54 @@ export async function deleteSantriById(id: string) {
   if (error) throw new Error(error.message);
 }
 
+export async function deleteSantriBatch(ids: string[]) {
+  if (!ids || ids.length === 0) return;
+  const supabase = createClient();
+  const { error } = await supabase.from("santri").delete().in("id", ids);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteAllSantri() {
+  const supabase = createClient();
+  const { error } = await supabase.from("santri").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteSetoranBatch(params: {
+  santri_ids: string[];
+  tipe: TipeSetoran;
+  tahun: number;
+}) {
+  if (!params.santri_ids || params.santri_ids.length === 0) return;
+  const supabase = createClient();
+  const startYear = `${params.tahun}-01-01`;
+  const endYear = `${params.tahun}-12-31`;
+  const { error } = await supabase
+    .from("setoran")
+    .delete()
+    .in("santri_id", params.santri_ids)
+    .eq("tipe", params.tipe)
+    .gte("tanggal", startYear)
+    .lte("tanggal", endYear);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteAllSetoran(params: {
+  tipe: TipeSetoran;
+  tahun: number;
+}) {
+  const supabase = createClient();
+  const startYear = `${params.tahun}-01-01`;
+  const endYear = `${params.tahun}-12-31`;
+  const { error } = await supabase
+    .from("setoran")
+    .delete()
+    .eq("tipe", params.tipe)
+    .gte("tanggal", startYear)
+    .lte("tanggal", endYear);
+  if (error) throw new Error(error.message);
+}
+
 export async function fetchAbsensiBulan(tahun: number, bulan: number, sesi: SesiAbsen) {
   const supabase = createClient();
   const startDate = `${tahun}-${String(bulan).padStart(2, "0")}-01`;
