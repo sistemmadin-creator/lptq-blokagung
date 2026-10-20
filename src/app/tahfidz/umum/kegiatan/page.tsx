@@ -59,6 +59,8 @@ export default function KegiatanAbsensiPage() {
 
   const [search, setSearch] = useState("");
   const [asramaFilter, setAsramaFilter] = useState("");
+  const [blokFilter, setBlokFilter] = useState("");
+  const [kamarFilter, setKamarFilter] = useState("");
   const [kelasFilter, setKelasFilter] = useState<number | "">("");
   const [bagianFilter, setBagianFilter] = useState("");
 
@@ -80,18 +82,25 @@ export default function KegiatanAbsensiPage() {
         fetchAllSantriFiltered({
           search,
           asrama: asramaFilter,
+          blok: blokFilter,
+          kamar: kamarFilter,
           halaqoh_kelas: kelasFilter,
           halaqoh_bagian: bagianFilter,
         }),
-        fetchAbsensiBulan(bulan, tahun, sesi),
+        // Parameter urutan yang benar: tahun dahulu, kemudian bulan, lalu sesi
+        fetchAbsensiBulan(tahun, bulan, sesi),
       ]);
 
       setSantriList(allSantri);
 
       const map: Record<string, StatusAbsen> = {};
       for (const row of absensiRows) {
-        const d = new Date(row.tanggal).getDate();
-        map[`${row.santri_id}_${d}`] = row.status;
+        // Parsing aman berbasis string 'YYYY-MM-DD' untuk mencegah pergeseran zona waktu
+        const parts = row.tanggal.split("-");
+        const d = parts.length === 3 ? parseInt(parts[2], 10) : new Date(row.tanggal).getDate();
+        if (!isNaN(d)) {
+          map[`${row.santri_id}_${d}`] = row.status;
+        }
       }
       setAbsenMap(map);
     } catch (err) {
@@ -99,7 +108,18 @@ export default function KegiatanAbsensiPage() {
     } finally {
       setLoading(false);
     }
-  }, [bulan, tahun, sesi, search, asramaFilter, kelasFilter, bagianFilter, showToast]);
+  }, [
+    tahun,
+    bulan,
+    sesi,
+    search,
+    asramaFilter,
+    blokFilter,
+    kamarFilter,
+    kelasFilter,
+    bagianFilter,
+    showToast,
+  ]);
 
   useEffect(() => {
     loadData();
@@ -125,12 +145,16 @@ export default function KegiatanAbsensiPage() {
   // Hitung filter aktif
   const activeFilterCount = [
     asramaFilter,
+    blokFilter,
+    kamarFilter,
     kelasFilter !== "" ? kelasFilter : "",
     bagianFilter,
   ].filter(Boolean).length;
 
   const resetAllFilters = () => {
     setAsramaFilter("");
+    setBlokFilter("");
+    setKamarFilter("");
     setKelasFilter("");
     setBagianFilter("");
     showToast("success", "Semua filter telah direset.");
@@ -139,26 +163,25 @@ export default function KegiatanAbsensiPage() {
   // Simpan nilai absensi per sel secara cepat (in-cell editing)
   const handleCellChange = async (santriId: string, day: number, newStatus: string) => {
     const key = `${santriId}_${day}`;
-    if (!newStatus) {
-      const updated = { ...absenMap };
-      delete updated[key];
-      setAbsenMap(updated);
-      return;
-    }
-
     const padMonth = String(bulan).padStart(2, "0");
     const padDay = String(day).padStart(2, "0");
     const dateStr = `${tahun}-${padMonth}-${padDay}`;
 
     // Pembaruan optimistik di UI
-    setAbsenMap((prev) => ({ ...prev, [key]: newStatus as StatusAbsen }));
+    if (!newStatus) {
+      const updated = { ...absenMap };
+      delete updated[key];
+      setAbsenMap(updated);
+    } else {
+      setAbsenMap((prev) => ({ ...prev, [key]: newStatus as StatusAbsen }));
+    }
 
     try {
       await upsertAbsensiCell({
         santri_id: santriId,
         tanggal: dateStr,
         sesi,
-        status: newStatus as StatusAbsen,
+        status: (newStatus || "") as StatusAbsen | "",
       });
     } catch (err) {
       showToast("error", "Gagal menyimpan absensi tanggal " + day);
@@ -183,6 +206,7 @@ export default function KegiatanAbsensiPage() {
         Kode: s.kode,
         "Nama Santri": s.nama_lengkap,
         Asrama: s.asrama,
+        Blok: s.blok,
         Kamar: s.kamar,
         Halaqoh: s.halaqoh,
       };
@@ -298,8 +322,8 @@ export default function KegiatanAbsensiPage() {
         <button
           type="button"
           onClick={() => setFilterModalOpen(true)}
-          title={activeFilterCount > 0 ? `Filter aktif (${activeFilterCount})` : "Filter Asrama & Halaqoh"}
-          aria-label="Filter Asrama & Halaqoh"
+          title={activeFilterCount > 0 ? `Filter aktif (${activeFilterCount})` : "Filter Asrama, Blok, Kamar, Kelas, Bagian"}
+          aria-label="Filter Asrama, Blok, Kamar, Kelas, Bagian"
           className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border shadow-sm transition focus:outline-none focus:ring-2 focus:ring-emerald-500/20 ${
             activeFilterCount > 0
               ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-300"
@@ -345,6 +369,22 @@ export default function KegiatanAbsensiPage() {
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
               Asrama: {asramaFilter}
               <button type="button" onClick={() => setAsramaFilter("")} aria-label="Hapus filter asrama">
+                <X className="h-3 w-3 hover:text-rose-600" />
+              </button>
+            </span>
+          )}
+          {blokFilter && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+              Blok: {blokFilter}
+              <button type="button" onClick={() => setBlokFilter("")} aria-label="Hapus filter blok">
+                <X className="h-3 w-3 hover:text-rose-600" />
+              </button>
+            </span>
+          )}
+          {kamarFilter && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+              Kamar: {kamarFilter}
+              <button type="button" onClick={() => setKamarFilter("")} aria-label="Hapus filter kamar">
                 <X className="h-3 w-3 hover:text-rose-600" />
               </button>
             </span>
@@ -438,7 +478,7 @@ export default function KegiatanAbsensiPage() {
                     <td className="sticky left-8 z-10 bg-white dark:bg-slate-900 px-2.5 py-1.5 font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
                       {s.nama_lengkap}
                       <span className="block text-[10px] font-normal text-slate-400">
-                        {s.asrama} - {s.kamar}
+                        {s.asrama} {s.blok ? `Blok ${s.blok}` : ""} {s.kamar ? `Kamar ${s.kamar}` : ""}
                       </span>
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -523,7 +563,9 @@ export default function KegiatanAbsensiPage() {
                   <h2 id="modal-filter-kegiatan-title" className="text-base font-bold text-slate-900 dark:text-white">
                     Filter Absensi Santri
                   </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Saring daftar santri berdasarkan asrama dan halaqoh</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Saring daftar santri berdasarkan Asrama, Blok, Kamar, Kelas, dan Bagian
+                  </p>
                 </div>
               </div>
               <button
@@ -536,10 +578,11 @@ export default function KegiatanAbsensiPage() {
               </button>
             </div>
 
-            <div className="space-y-3.5 py-4">
+            <div className="space-y-3 py-4">
+              {/* Filter Asrama */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Asrama
+                  Filter Asrama
                 </label>
                 <input
                   type="text"
@@ -550,10 +593,39 @@ export default function KegiatanAbsensiPage() {
                 />
               </div>
 
+              {/* Filter Blok & Kamar */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Halaqoh Kelas
+                    Filter Blok
+                  </label>
+                  <input
+                    type="text"
+                    value={blokFilter}
+                    onChange={(e) => setBlokFilter(e.target.value)}
+                    placeholder="Filter Blok (misal: A)"
+                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Filter Kamar
+                  </label>
+                  <input
+                    type="text"
+                    value={kamarFilter}
+                    onChange={(e) => setKamarFilter(e.target.value)}
+                    placeholder="Filter Kamar (misal: 01)"
+                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              {/* Filter Kelas & Bagian */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Semua Kelas
                   </label>
                   <select
                     value={kelasFilter}
@@ -571,7 +643,7 @@ export default function KegiatanAbsensiPage() {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Halaqoh Bagian
+                    Semua Bagian
                   </label>
                   <select
                     value={bagianFilter}
