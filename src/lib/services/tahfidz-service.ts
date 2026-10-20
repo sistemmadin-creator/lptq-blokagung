@@ -294,6 +294,51 @@ export async function fetchAbsensiBulan(tahun: number, bulan: number, sesi: Sesi
   return (data ?? []) as AbsensiRecord[];
 }
 
+/**
+ * Mengambil rekap jumlah ketidakhadiran (alfa) per santri untuk bulan & tahun tertentu.
+ * Menggabungkan seluruh sesi (pagi & malam) dari tabel absensi.
+ * Digunakan untuk menampilkan badge status kehadiran di kartu halaqoh santri:
+ * - Hijau: tidak ada alfa (0)
+ * - Kuning: alfa > 3x (misal 4-5)
+ * - Merah: alfa > 5x (misal > 5)
+ */
+export async function fetchSantriAlfaCounts(
+  tahun: number,
+  bulan: number
+): Promise<Record<string, number>> {
+  const supabase = createClient();
+  const startDate = `${tahun}-${String(bulan).padStart(2, "0")}-01`;
+  const lastDay = new Date(tahun, bulan, 0).getDate();
+  const endDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+  try {
+    const { data, error } = await supabase
+      .from("absensi")
+      .select("santri_id, status")
+      .gte("tanggal", startDate)
+      .lte("tanggal", endDate);
+
+    if (error) {
+      console.error("Gagal mengambil data alfa absensi:", error);
+      return {};
+    }
+
+    const counts: Record<string, number> = {};
+    for (const row of data || []) {
+      const st = String(row.status || "").toLowerCase();
+      if (st === "alfa" || st === "a") {
+        if (row.santri_id) {
+          counts[row.santri_id] = (counts[row.santri_id] || 0) + 1;
+        }
+      }
+    }
+    return counts;
+  } catch (err) {
+    console.error("Error fetchSantriAlfaCounts:", err);
+    return {};
+  }
+}
+
 export async function upsertAbsensiCell(params: {
   santri_id: string;
   tanggal: string;
