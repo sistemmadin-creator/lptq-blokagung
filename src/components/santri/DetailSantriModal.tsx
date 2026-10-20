@@ -75,8 +75,8 @@ export function DetailSantriModal({
               >
                 {santri.nama_lengkap}
               </h2>
-              <p className="text-xs text-emerald-100 font-mono">
-                Kode: {santri.kode}
+              <p className="text-xs text-emerald-100">
+                Data Santri Tahfidz
               </p>
             </div>
           </div>
@@ -134,15 +134,15 @@ export function DetailSantriModal({
             </h3>
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
-                <span className="text-slate-400 block mb-0.5">Kode Unik</span>
-                <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
-                  {santri.kode}
-                </span>
-              </div>
-              <div>
                 <span className="text-slate-400 block mb-0.5">Nama Lengkap</span>
                 <span className="font-semibold text-slate-800 dark:text-slate-100">
                   {santri.nama_lengkap}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block mb-0.5">Nomor WhatsApp</span>
+                <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                  {santri.no_wa || "-"}
                 </span>
               </div>
             </div>
