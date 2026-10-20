@@ -20,8 +20,10 @@ export interface Santri {
   no_urut: number;
   kode: string;
   nama_lengkap: string;
+  no_wa?: string | null;
   blok: string;
   asrama: string;
+  kode_kamar?: string | null;
   kamar: string;
   halaqoh_kelas: number;
   halaqoh_bagian: HalaqohBagian;
