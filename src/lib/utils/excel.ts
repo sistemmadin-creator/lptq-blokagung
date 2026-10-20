@@ -47,7 +47,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
   }
   if (!formasi || formasi.length === 0) formasi = DEFAULT_FORMASI_HALAQOH;
 
-  const { bloks, asramas, kodes, kamars, combinations } = extractHierarchyEnums(rules);
+  const { bloks, asramas, kodes, kamars, combinations, routes } = extractHierarchyEnums(rules);
 
   const kelasList = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   const bagianSet = new Set<string>();
@@ -68,8 +68,9 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
   });
 
   ws.columns = [
-    { header: "Nama Lengkap", key: "nama_lengkap", width: 30 },
-    { header: "Nomor WhatsApp", key: "no_wa", width: 20 },
+    { header: "Nama Lengkap", key: "nama_lengkap", width: 28 },
+    { header: "Nomor WhatsApp", key: "no_wa", width: 18 },
+    { header: "Penempatan Kamar (Hierarki)", key: "hierarki", width: 38 },
     { header: "Blok", key: "blok", width: 16 },
     { header: "Asrama", key: "asrama", width: 25 },
     { header: "Kode", key: "kode", width: 14 },
@@ -103,31 +104,49 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
   });
 
   // Contoh data baris 2 & 3 sesuai data riil hierarki Blokagung
-  const sample1 = [
-    "Ahmad Fauzi Darussalam",
-    "085289039180",
-    bloks[0] || "Blok 12",
-    asramas[0] || "Maqomin Amin",
-    kodes[0] || "AB",
-    kamars[0] || "01",
-    1,
-    "A",
-  ];
-  const sample2 = [
-    "Muhammad Rizky Pratama",
-    "081234567890",
-    bloks[1] || bloks[0] || "Blok 11",
-    asramas[1] || asramas[0] || "Al Multazam",
-    kodes[1] || kodes[0] || "HA",
-    kamars[1] || kamars[0] || "02",
-    1,
-    "A",
-  ];
-
+  const sampleRoute1 = routes[0] || "Blok 12 > Maqomin Amin > AB";
+  const sampleParts1 = sampleRoute1.split(">").map((s) => s.trim());
   const r2 = ws.getRow(2);
-  r2.values = sample1;
+  r2.getCell(1).value = "Ahmad Fauzi Darussalam";
+  r2.getCell(2).value = "085289039180";
+  r2.getCell(3).value = sampleRoute1;
+  r2.getCell(4).value = {
+    formula: `IF(C2="","",TRIM(MID(SUBSTITUTE(C2,">",REPT(" ",100)),1,100)))`,
+    result: sampleParts1[0] || "Blok 12",
+  };
+  r2.getCell(5).value = {
+    formula: `IF(C2="","",TRIM(MID(SUBSTITUTE(C2,">",REPT(" ",100)),101,100)))`,
+    result: sampleParts1[1] || "Maqomin Amin",
+  };
+  r2.getCell(6).value = {
+    formula: `IF(C2="","",TRIM(MID(SUBSTITUTE(C2,">",REPT(" ",100)),201,100)))`,
+    result: sampleParts1[2] || "AB",
+  };
+  r2.getCell(7).value = "01";
+  r2.getCell(8).value = 1;
+  r2.getCell(9).value = "A";
+
+  const sampleRoute2 = routes[4] || routes[1] || "Blok 11 > Al Multazam > HA";
+  const sampleParts2 = sampleRoute2.split(">").map((s) => s.trim());
   const r3 = ws.getRow(3);
-  r3.values = sample2;
+  r3.getCell(1).value = "Muhammad Rizky Pratama";
+  r3.getCell(2).value = "081234567890";
+  r3.getCell(3).value = sampleRoute2;
+  r3.getCell(4).value = {
+    formula: `IF(C3="","",TRIM(MID(SUBSTITUTE(C3,">",REPT(" ",100)),1,100)))`,
+    result: sampleParts2[0] || "Blok 11",
+  };
+  r3.getCell(5).value = {
+    formula: `IF(C3="","",TRIM(MID(SUBSTITUTE(C3,">",REPT(" ",100)),101,100)))`,
+    result: sampleParts2[1] || "Al Multazam",
+  };
+  r3.getCell(6).value = {
+    formula: `IF(C3="","",TRIM(MID(SUBSTITUTE(C3,">",REPT(" ",100)),201,100)))`,
+    result: sampleParts2[2] || "HA",
+  };
+  r3.getCell(7).value = "02";
+  r3.getCell(8).value = 2;
+  r3.getCell(9).value = "B";
 
   // SHEET 2: Referensi Enum & Hierarki (Sumber validasi dropdown dan panduan)
   const refWs = wb.addWorksheet("Referensi_Enum", {
@@ -141,16 +160,17 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
   refWs.getCell("D1").value = "Daftar Kamar";
   refWs.getCell("E1").value = "Halaqoh Kelas";
   refWs.getCell("F1").value = "Halaqoh Bagian";
+  refWs.getCell("G1").value = "Rute Hierarki (Blok > Asrama > Kode)";
 
-  refWs.getCell("H1").value = "Blok (Hierarki)";
-  refWs.getCell("I1").value = "Asrama (Hierarki)";
-  refWs.getCell("J1").value = "Kode (Hierarki)";
-  refWs.getCell("K1").value = "Daftar Kamar Valid";
+  refWs.getCell("I1").value = "Blok (Hierarki)";
+  refWs.getCell("J1").value = "Asrama (Hierarki)";
+  refWs.getCell("K1").value = "Kode (Hierarki)";
+  refWs.getCell("L1").value = "Daftar Kamar Valid";
 
-  refWs.getCell("M1").value = "Kelas";
-  refWs.getCell("N1").value = "Target Hafalan Juz";
+  refWs.getCell("N1").value = "Kelas";
+  refWs.getCell("O1").value = "Target Hafalan Juz";
 
-  // Isi data enum kolom A - F
+  // Isi data enum kolom A - G
   bloks.forEach((b, i) => {
     refWs.getCell(`A${i + 2}`).value = b;
   });
@@ -171,19 +191,22 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
   bagianList.forEach((bg, i) => {
     refWs.getCell(`F${i + 2}`).value = bg;
   });
-
-  // Isi data kombinasi hierarki kolom H - K
-  combinations.forEach((comb, i) => {
-    refWs.getCell(`H${i + 2}`).value = comb.blok;
-    refWs.getCell(`I${i + 2}`).value = comb.asrama;
-    refWs.getCell(`J${i + 2}`).value = comb.kode;
-    refWs.getCell(`K${i + 2}`).value = comb.kamarList.join(", ");
+  routes.forEach((rt, i) => {
+    refWs.getCell(`G${i + 2}`).value = rt;
   });
 
-  // Isi target juz kelas kolom M - N
+  // Isi data kombinasi hierarki kolom I - L
+  combinations.forEach((comb, i) => {
+    refWs.getCell(`I${i + 2}`).value = comb.blok;
+    refWs.getCell(`J${i + 2}`).value = comb.asrama;
+    refWs.getCell(`K${i + 2}`).value = comb.kode;
+    refWs.getCell(`L${i + 2}`).value = comb.kamarList.join(", ");
+  });
+
+  // Isi target juz kelas kolom N - O
   kelasList.forEach((kl, i) => {
-    refWs.getCell(`M${i + 2}`).value = `Kelas ${kl}`;
-    refWs.getCell(`N${i + 2}`).value = PEMETAAN_HALAQOH_KELAS[kl] || "-";
+    refWs.getCell(`N${i + 2}`).value = `Kelas ${kl}`;
+    refWs.getCell(`O${i + 2}`).value = PEMETAAN_HALAQOH_KELAS[kl] || "-";
   });
 
   // Format header Sheet Referensi
@@ -211,25 +234,52 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
   refWs.getColumn("D").width = 15;
   refWs.getColumn("E").width = 16;
   refWs.getColumn("F").width = 16;
-  refWs.getColumn("G").width = 4;
-  refWs.getColumn("H").width = 18;
-  refWs.getColumn("I").width = 25;
-  refWs.getColumn("J").width = 16;
-  refWs.getColumn("K").width = 32;
-  refWs.getColumn("L").width = 4;
-  refWs.getColumn("M").width = 14;
-  refWs.getColumn("N").width = 24;
+  refWs.getColumn("G").width = 40;
+  refWs.getColumn("H").width = 4;
+  refWs.getColumn("I").width = 18;
+  refWs.getColumn("J").width = 25;
+  refWs.getColumn("K").width = 16;
+  refWs.getColumn("L").width = 32;
+  refWs.getColumn("M").width = 4;
+  refWs.getColumn("N").width = 14;
+  refWs.getColumn("O").width = 24;
 
   // 3. Terapkan Data Validation (Dropdown / Ketik dan Pilih) pada Sheet TemplateSantri
   const maxRows = 500;
   for (let r = 2; r <= maxRows; r++) {
     // Format WhatsApp & Kamar sebagai teks (@)
     ws.getCell(`B${r}`).numFmt = "@";
-    const kamarCell = ws.getCell(`F${r}`);
+    const kamarCell = ws.getCell(`G${r}`);
     kamarCell.numFmt = "@";
 
-    // Dropdown Blok (Kolom C)
+    // Auto-fill rumus jika rute C diisi (untuk baris 4 ke atas yang belum punya nilai)
+    if (r > 3) {
+      ws.getCell(`D${r}`).value = {
+        formula: `IF(C${r}="","",TRIM(MID(SUBSTITUTE(C${r},">",REPT(" ",100)),1,100)))`,
+        result: undefined,
+      };
+      ws.getCell(`E${r}`).value = {
+        formula: `IF(C${r}="","",TRIM(MID(SUBSTITUTE(C${r},">",REPT(" ",100)),101,100)))`,
+        result: undefined,
+      };
+      ws.getCell(`F${r}`).value = {
+        formula: `IF(C${r}="","",TRIM(MID(SUBSTITUTE(C${r},">",REPT(" ",100)),201,100)))`,
+        result: undefined,
+      };
+    }
+
+    // Dropdown RUTE HIERARKI (Kolom C) -> Memuat rute valid Blok > Asrama > Kode
     ws.getCell(`C${r}`).dataValidation = {
+      type: "list",
+      allowBlank: true,
+      formulae: [`Referensi_Enum!$G$2:$G$${routes.length + 1}`],
+      showErrorMessage: true,
+      errorTitle: "Rute Penempatan Kamar Tidak Valid",
+      error: "Silakan pilih salah satu rute hierarki (Blok > Asrama > Kode) dari daftar opsi yang tersedia.",
+    };
+
+    // Dropdown Blok (Kolom D)
+    ws.getCell(`D${r}`).dataValidation = {
       type: "list",
       allowBlank: true,
       formulae: [`Referensi_Enum!$A$2:$A$${bloks.length + 1}`],
@@ -238,8 +288,8 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       error: "Silakan ketik atau pilih nama Blok dari daftar opsi yang tersedia.",
     };
 
-    // Dropdown Asrama (Kolom D)
-    ws.getCell(`D${r}`).dataValidation = {
+    // Dropdown Asrama (Kolom E)
+    ws.getCell(`E${r}`).dataValidation = {
       type: "list",
       allowBlank: true,
       formulae: [`Referensi_Enum!$B$2:$B$${asramas.length + 1}`],
@@ -248,8 +298,8 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       error: "Silakan ketik atau pilih nama Asrama dari daftar opsi yang tersedia.",
     };
 
-    // Dropdown Kode (Kolom E)
-    ws.getCell(`E${r}`).dataValidation = {
+    // Dropdown Kode (Kolom F)
+    ws.getCell(`F${r}`).dataValidation = {
       type: "list",
       allowBlank: true,
       formulae: [`Referensi_Enum!$C$2:$C$${kodes.length + 1}`],
@@ -258,7 +308,7 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       error: "Silakan ketik atau pilih Kode kamar dari daftar opsi yang tersedia.",
     };
 
-    // Dropdown Kamar (Kolom F)
+    // Dropdown Kamar (Kolom G)
     kamarCell.dataValidation = {
       type: "list",
       allowBlank: true,
@@ -268,8 +318,8 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       error: "Silakan ketik atau pilih Nomor Kamar dari daftar opsi yang tersedia.",
     };
 
-    // Dropdown Halaqoh Kelas (Kolom G)
-    ws.getCell(`G${r}`).dataValidation = {
+    // Dropdown Halaqoh Kelas (Kolom H)
+    ws.getCell(`H${r}`).dataValidation = {
       type: "list",
       allowBlank: true,
       formulae: [`Referensi_Enum!$E$2:$E$${kelasList.length + 1}`],
@@ -278,8 +328,8 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
       error: "Silakan pilih Kelas antara 1 sampai 10.",
     };
 
-    // Dropdown Halaqoh Bagian (Kolom H)
-    ws.getCell(`H${r}`).dataValidation = {
+    // Dropdown Halaqoh Bagian (Kolom I)
+    ws.getCell(`I${r}`).dataValidation = {
       type: "list",
       allowBlank: true,
       formulae: [`Referensi_Enum!$F$2:$F$${bagianList.length + 1}`],
