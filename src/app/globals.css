@@ -4,12 +4,12 @@
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased;
+    @apply bg-[#f8f9fc] text-slate-800 dark:bg-slate-950 dark:text-slate-100 antialiased;
   }
 
-  /* Fokus keyboard dengan kontras minimal 3:1 terhadap permukaan sekitar (R-32) */
+  /* Indikator fokus keyboard kontras tinggi minimal 3:1 (R-32) */
   *:focus-visible {
-    @apply outline outline-2 outline-offset-2 outline-emerald-700 dark:outline-emerald-400;
+    @apply outline outline-2 outline-offset-2 outline-brand-dark dark:outline-emerald-400;
   }
 }
 
