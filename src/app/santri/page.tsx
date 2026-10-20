@@ -173,7 +173,7 @@ export default function SantriPage() {
     setKelasFilter("");
     setBagianFilter("");
     setPage(1);
-    showToast("info", "Semua filter telah direset.");
+    showToast("success", "Semua filter telah direset.");
   };
 
   const openAddModal = () => {
@@ -233,7 +233,6 @@ export default function SantriPage() {
   const handleExportExcel = async () => {
     try {
       setExcelModalOpen(false);
-      showToast("info", "Menyiapkan data ekspor...");
       const allFiltered = await fetchAllSantriFiltered({
         search,
         asrama: asramaFilter,
@@ -742,7 +741,7 @@ export default function SantriPage() {
                   type="button"
                   onClick={() => {
                     downloadSantriTemplateExcel();
-                    showToast("info", "Template Excel berhasil diunduh.");
+                    showToast("success", "Template Excel berhasil diunduh.");
                     setExcelModalOpen(false);
                   }}
                   className="w-full flex items-center gap-3.5 p-3 rounded-xl border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/50 transition text-left group dark:border-slate-800 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/20"
