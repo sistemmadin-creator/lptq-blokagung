@@ -51,6 +51,40 @@ export async function fetchCurrentUserProfile(): Promise<Profile | null> {
   };
 }
 
+// Karakter berikut bermakna khusus di sintaks filter PostgREST (.or) atau sebagai wildcard ilike.
+// Dibuang dari input agar pencarian tidak error atau melebar ke semua baris.
+function sanitizeSearchTerm(raw: string): string {
+  return raw
+    .replace(/[,()"'\\%*_]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type SantriFilterOnly = Omit<SantriFilterParams, "page" | "pageSize">;
+
+// Tipe builder Supabase sangat dalam; dipersempit ke dua method yang dipakai agar compiler tidak
+// menelusuri seluruh tipenya (TS2589).
+interface FilterableQuery {
+  or(filters: string): FilterableQuery;
+  eq(column: string, value: string | number): FilterableQuery;
+}
+
+function applySantriFilters<T>(query: T, params: SantriFilterOnly): T {
+  let q = query as unknown as FilterableQuery;
+
+  const term = params.search ? sanitizeSearchTerm(params.search) : "";
+  if (term !== "") {
+    q = q.or(`nama_lengkap.ilike.%${term}%,kode.ilike.%${term}%`);
+  }
+  if (params.asrama) q = q.eq("asrama", params.asrama);
+  if (params.blok) q = q.eq("blok", params.blok);
+  if (params.kamar) q = q.eq("kamar", params.kamar);
+  if (params.halaqoh_kelas) q = q.eq("halaqoh_kelas", Number(params.halaqoh_kelas));
+  if (params.halaqoh_bagian) q = q.eq("halaqoh_bagian", params.halaqoh_bagian);
+
+  return q as unknown as T;
+}
+
 export async function fetchSantriPaginated(params: SantriFilterParams) {
   const supabase = createClient();
   const page = params.page ?? 1;
@@ -58,22 +92,15 @@ export async function fetchSantriPaginated(params: SantriFilterParams) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  let query = supabase
-    .from("santri")
-    .select(SANTRI_COLUMNS, { count: "exact" })
-    .order("halaqoh_kelas", { ascending: true })
-    .order("halaqoh_bagian", { ascending: true })
-    .order("nama_lengkap", { ascending: true });
-
-  if (params.search && params.search.trim() !== "") {
-    const q = params.search.trim();
-    query = query.or(`nama_lengkap.ilike.%${q}%,kode.ilike.%${q}%`);
-  }
-  if (params.asrama) query = query.eq("asrama", params.asrama);
-  if (params.blok) query = query.eq("blok", params.blok);
-  if (params.kamar) query = query.eq("kamar", params.kamar);
-  if (params.halaqoh_kelas) query = query.eq("halaqoh_kelas", Number(params.halaqoh_kelas));
-  if (params.halaqoh_bagian) query = query.eq("halaqoh_bagian", params.halaqoh_bagian);
+  const query = applySantriFilters(
+    supabase
+      .from("santri")
+      .select(SANTRI_COLUMNS, { count: "exact" })
+      .order("halaqoh_kelas", { ascending: true })
+      .order("halaqoh_bagian", { ascending: true })
+      .order("nama_lengkap", { ascending: true }),
+    params
+  );
 
   const { data, count, error } = await query.range(from, to);
   if (error) throw new Error(error.message);
@@ -84,28 +111,34 @@ export async function fetchSantriPaginated(params: SantriFilterParams) {
   };
 }
 
-export async function fetchAllSantriFiltered(params: Omit<SantriFilterParams, "page" | "pageSize">) {
+// Supabase membatasi satu respons (default 1000 baris), jadi data diambil bertahap hingga habis.
+const FETCH_ALL_PAGE_SIZE = 1000;
+
+export async function fetchAllSantriFiltered(params: SantriFilterOnly) {
   const supabase = createClient();
-  let query = supabase
-    .from("santri")
-    .select(SANTRI_COLUMNS)
-    .order("halaqoh_kelas", { ascending: true })
-    .order("halaqoh_bagian", { ascending: true })
-    .order("nama_lengkap", { ascending: true });
+  const all: Santri[] = [];
 
-  if (params.search && params.search.trim() !== "") {
-    const q = params.search.trim();
-    query = query.or(`nama_lengkap.ilike.%${q}%,kode.ilike.%${q}%`);
+  for (let from = 0; ; from += FETCH_ALL_PAGE_SIZE) {
+    const query = applySantriFilters(
+      supabase
+        .from("santri")
+        .select(SANTRI_COLUMNS)
+        .order("halaqoh_kelas", { ascending: true })
+        .order("halaqoh_bagian", { ascending: true })
+        .order("nama_lengkap", { ascending: true })
+        .order("id", { ascending: true }),
+      params
+    );
+
+    const { data, error } = await query.range(from, from + FETCH_ALL_PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+
+    const batch = (data ?? []) as Santri[];
+    all.push(...batch);
+    if (batch.length < FETCH_ALL_PAGE_SIZE) break;
   }
-  if (params.asrama) query = query.eq("asrama", params.asrama);
-  if (params.blok) query = query.eq("blok", params.blok);
-  if (params.kamar) query = query.eq("kamar", params.kamar);
-  if (params.halaqoh_kelas) query = query.eq("halaqoh_kelas", Number(params.halaqoh_kelas));
-  if (params.halaqoh_bagian) query = query.eq("halaqoh_bagian", params.halaqoh_bagian);
 
-  const { data, error } = await query.limit(1000);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Santri[];
+  return all;
 }
 
 export async function saveSantri(
