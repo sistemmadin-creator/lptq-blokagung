@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,6 +20,9 @@ import {
   Loader2,
   RotateCcw,
   Check,
+  Settings,
+  Phone,
+  Building,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
@@ -29,6 +32,13 @@ import {
   deleteSantriById,
 } from "@/lib/services/tahfidz-service";
 import {
+  loadHierarchyRules,
+  saveHierarchyRules,
+  parseHierarchyTree,
+  type HierarchyRule,
+  type HierarchyTree,
+} from "@/lib/services/hierarchy-service";
+import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
   type HalaqohBagian,
@@ -36,6 +46,9 @@ import {
 } from "@/types/database";
 import { DataTable } from "@/components/ui/DataTable";
 import { HalaqohBadge } from "@/components/ui/Badges";
+import { KetikDanPilih } from "@/components/ui/KetikDanPilih";
+import { DetailSantriModal } from "@/components/santri/DetailSantriModal";
+import { HierarchySettingsModal } from "@/components/santri/HierarchySettingsModal";
 import {
   downloadSantriTemplateExcel,
   exportJsonToExcel,
@@ -46,8 +59,10 @@ import { useToast } from "@/components/ui/Toast";
 const santriSchema = z.object({
   kode: z.string().min(2, "Kode wajib diisi (minimal 2 karakter)"),
   nama_lengkap: z.string().min(3, "Nama lengkap wajib diisi"),
+  no_wa: z.string().optional(),
   blok: z.string().min(1, "Blok wajib diisi"),
   asrama: z.string().min(2, "Asrama wajib diisi"),
+  kode_kamar: z.string().optional(),
   kamar: z.string().min(1, "Kamar wajib diisi"),
   halaqoh_kelas: z.coerce.number().min(1).max(10),
   halaqoh_bagian: z.enum(["A", "B", "C", "D", "E", "F"]),
@@ -55,7 +70,6 @@ const santriSchema = z.object({
 
 type SantriFormValues = z.infer<typeof santriSchema>;
 
-// Memotong array menjadi batch @100 baris agar aman dari batas waktu 10s serverless Vercel
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -78,6 +92,7 @@ export default function SantriPage() {
   const [search, setSearch] = useState("");
   const [asramaFilter, setAsramaFilter] = useState("");
   const [blokFilter, setBlokFilter] = useState("");
+  const [kodeFilter, setKodeFilter] = useState("");
   const [kamarFilter, setKamarFilter] = useState("");
   const [kelasFilter, setKelasFilter] = useState<number | "">("");
   const [bagianFilter, setBagianFilter] = useState("");
@@ -87,7 +102,17 @@ export default function SantriPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
+  const [hierarchyModalOpen, setHierarchyModalOpen] = useState(false);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedSantri, setSelectedSantri] = useState<Santri | null>(null);
   const [editingSantri, setEditingSantri] = useState<Santri | null>(null);
+
+  // Hierarki Dropdown Rules & Tree (Blok > Asrama > Kode > Kamar)
+  const [hierarchyRules, setHierarchyRules] = useState<HierarchyRule[]>([]);
+  const hierarchyTree: HierarchyTree = useMemo(
+    () => parseHierarchyTree(hierarchyRules),
+    [hierarchyRules]
+  );
 
   // Status Impor Excel
   const [importing, setImporting] = useState(false);
@@ -97,19 +122,37 @@ export default function SantriPage() {
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<SantriFormValues>({
     resolver: zodResolver(santriSchema),
     defaultValues: {
       kode: "",
       nama_lengkap: "",
-      blok: "A",
+      no_wa: "",
+      blok: "",
       asrama: "",
+      kode_kamar: "",
       kamar: "",
       halaqoh_kelas: 1,
       halaqoh_bagian: "A",
     },
   });
+
+  // Watch field hierarki form santri untuk cascading dropdown
+  const watchBlok = watch("blok");
+  const watchAsrama = watch("asrama");
+  const watchKodeKamar = watch("kode_kamar");
+
+  // Muat aturan hierarki saat pertama kali dibuka
+  useEffect(() => {
+    async function initHierarchy() {
+      const rules = await loadHierarchyRules();
+      setHierarchyRules(rules);
+    }
+    initHierarchy();
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -119,6 +162,7 @@ export default function SantriPage() {
         search,
         asrama: asramaFilter,
         blok: blokFilter,
+        kode_kamar: kodeFilter,
         kamar: kamarFilter,
         halaqoh_kelas: kelasFilter,
         halaqoh_bagian: bagianFilter,
@@ -132,7 +176,7 @@ export default function SantriPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, asramaFilter, blokFilter, kamarFilter, kelasFilter, bagianFilter, page]);
+  }, [search, asramaFilter, blokFilter, kodeFilter, kamarFilter, kelasFilter, bagianFilter, page]);
 
   useEffect(() => {
     loadData();
@@ -142,6 +186,8 @@ export default function SantriPage() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (detailModalOpen) setDetailModalOpen(false);
+        if (hierarchyModalOpen) setHierarchyModalOpen(false);
         if (modalOpen) setModalOpen(false);
         if (filterModalOpen) setFilterModalOpen(false);
         if (excelModalOpen) setExcelModalOpen(false);
@@ -149,7 +195,7 @@ export default function SantriPage() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, filterModalOpen, excelModalOpen]);
+  }, [detailModalOpen, hierarchyModalOpen, modalOpen, filterModalOpen, excelModalOpen]);
 
   // Hook cetak PDF via react-to-print
   const handlePrint = useReactToPrint({
@@ -157,10 +203,69 @@ export default function SantriPage() {
     documentTitle: "Data_Santri_Tahfidz_LPTQ_Blokagung",
   });
 
+  // Opsi unik untuk "Ketik dan Pilih" filter (gabungan dari data santri aktif dan hierarki)
+  const uniqueFilterOptions = useMemo(() => {
+    const bloks = new Set<string>();
+    const asramas = new Set<string>();
+    const kodes = new Set<string>();
+    const kamars = new Set<string>();
+
+    // Ambil dari data tabel
+    rows.forEach((s) => {
+      if (s.blok) bloks.add(s.blok);
+      if (s.asrama) asramas.add(s.asrama);
+      if (s.kode_kamar) kodes.add(s.kode_kamar);
+      if (s.kamar) kamars.add(s.kamar);
+    });
+
+    // Ambil dari pohon hierarki
+    Object.keys(hierarchyTree).forEach((b) => {
+      bloks.add(b);
+      Object.keys(hierarchyTree[b] || {}).forEach((a) => {
+        asramas.add(a);
+        Object.keys(hierarchyTree[b][a] || {}).forEach((kd) => {
+          kodes.add(kd);
+          (hierarchyTree[b][a][kd] || []).forEach((km) => {
+            kamars.add(km);
+          });
+        });
+      });
+    });
+
+    return {
+      bloks: Array.from(bloks).filter(Boolean).sort(),
+      asramas: Array.from(asramas).filter(Boolean).sort(),
+      kodes: Array.from(kodes).filter(Boolean).sort(),
+      kamars: Array.from(kamars).filter(Boolean).sort(),
+    };
+  }, [rows, hierarchyTree]);
+
+  // Opsi dropdown untuk Form Tambah / Edit Santri berdasarkan Cascading Hierarki
+  const formOptions = useMemo(() => {
+    const blokOptions = Object.keys(hierarchyTree).sort();
+    const asramaOptions = watchBlok && hierarchyTree[watchBlok]
+      ? Object.keys(hierarchyTree[watchBlok]).sort()
+      : [];
+    const kodeOptions = watchBlok && watchAsrama && hierarchyTree[watchBlok]?.[watchAsrama]
+      ? Object.keys(hierarchyTree[watchBlok][watchAsrama]).sort()
+      : [];
+    const kamarOptions = watchBlok && watchAsrama && watchKodeKamar && hierarchyTree[watchBlok]?.[watchAsrama]?.[watchKodeKamar]
+      ? hierarchyTree[watchBlok][watchAsrama][watchKodeKamar]
+      : [];
+
+    return {
+      bloks: blokOptions,
+      asramas: asramaOptions,
+      kodes: kodeOptions,
+      kamars: kamarOptions,
+    };
+  }, [hierarchyTree, watchBlok, watchAsrama, watchKodeKamar]);
+
   // Hitung jumlah filter yang sedang aktif
   const activeFilterCount = [
     asramaFilter,
     blokFilter,
+    kodeFilter,
     kamarFilter,
     kelasFilter !== "" ? kelasFilter : "",
     bagianFilter,
@@ -169,6 +274,7 @@ export default function SantriPage() {
   const resetAllFilters = () => {
     setAsramaFilter("");
     setBlokFilter("");
+    setKodeFilter("");
     setKamarFilter("");
     setKelasFilter("");
     setBagianFilter("");
@@ -181,8 +287,10 @@ export default function SantriPage() {
     reset({
       kode: "",
       nama_lengkap: "",
-      blok: "A",
+      no_wa: "",
+      blok: formOptions.bloks[0] || "Blok 1",
       asrama: "",
+      kode_kamar: "",
       kamar: "",
       halaqoh_kelas: 1,
       halaqoh_bagian: "A",
@@ -195,8 +303,10 @@ export default function SantriPage() {
     reset({
       kode: s.kode,
       nama_lengkap: s.nama_lengkap,
+      no_wa: s.no_wa || "",
       blok: s.blok,
       asrama: s.asrama,
+      kode_kamar: s.kode_kamar || "",
       kamar: s.kamar,
       halaqoh_kelas: s.halaqoh_kelas,
       halaqoh_bagian: s.halaqoh_bagian,
@@ -206,7 +316,20 @@ export default function SantriPage() {
 
   const onSubmit = async (values: SantriFormValues) => {
     try {
-      await saveSantri(values, editingSantri?.id);
+      await saveSantri(
+        {
+          kode: values.kode,
+          nama_lengkap: values.nama_lengkap,
+          no_wa: values.no_wa || null,
+          blok: values.blok,
+          asrama: values.asrama,
+          kode_kamar: values.kode_kamar || null,
+          kamar: values.kamar,
+          halaqoh_kelas: values.halaqoh_kelas,
+          halaqoh_bagian: values.halaqoh_bagian,
+        },
+        editingSantri?.id
+      );
       showToast(
         "success",
         editingSantri ? "Data santri berhasil diperbarui." : "Santri baru berhasil ditambahkan."
@@ -223,9 +346,24 @@ export default function SantriPage() {
     try {
       await deleteSantriById(s.id);
       showToast("success", `Santri ${s.nama_lengkap} berhasil dihapus.`);
+      if (selectedSantri?.id === s.id) {
+        setDetailModalOpen(false);
+        setSelectedSantri(null);
+      }
       loadData();
     } catch (err) {
       showToast("error", err instanceof Error ? err.message : "Gagal menghapus santri.");
+    }
+  };
+
+  // Simpan aturan hierarki dari modal pengaturan
+  const handleSaveHierarchyRules = async (newRules: HierarchyRule[]) => {
+    try {
+      await saveHierarchyRules(newRules);
+      setHierarchyRules(newRules);
+      showToast("success", "Pengaturan Hierarki Dropdown berhasil disimpan.");
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : "Gagal menyimpan hierarki.");
     }
   };
 
@@ -237,16 +375,19 @@ export default function SantriPage() {
         search,
         asrama: asramaFilter,
         blok: blokFilter,
+        kode_kamar: kodeFilter,
         kamar: kamarFilter,
         halaqoh_kelas: kelasFilter,
         halaqoh_bagian: bagianFilter,
       });
       const formatted = allFiltered.map((s, idx) => ({
         No: idx + 1,
-        Kode: s.kode,
+        "Kode Santri": s.kode,
         "Nama Lengkap": s.nama_lengkap,
+        "Nomor WhatsApp": s.no_wa || "-",
         Blok: s.blok,
         Asrama: s.asrama,
+        Kode: s.kode_kamar || "-",
         Kamar: s.kamar,
         "Halaqoh Kelas": s.halaqoh_kelas,
         "Halaqoh Bagian": s.halaqoh_bagian,
@@ -271,7 +412,6 @@ export default function SantriPage() {
       const requiredHeaders = [
         "Nama Lengkap",
         "Asrama",
-        "Kode",
         "Kamar",
         "Halaqoh Kelas",
         "Halaqoh Bagian",
@@ -308,6 +448,7 @@ export default function SantriPage() {
     }
   };
 
+  // Definisi Kolom Tabel (Memenuhi permintaan urutan: Asrama -> Kode -> Kamar)
   const columns: ColumnDef<Santri>[] = [
     {
       id: "no",
@@ -317,15 +458,52 @@ export default function SantriPage() {
     {
       accessorKey: "kode",
       header: "KODE",
-      cell: ({ row }) => <span className="font-mono font-semibold text-xs">{row.original.kode}</span>,
+      cell: ({ row }) => <span className="font-mono font-semibold text-xs text-slate-800 dark:text-slate-100">{row.original.kode}</span>,
     },
     {
       accessorKey: "nama_lengkap",
       header: "NAMA LENGKAP",
-      cell: ({ row }) => <span className="font-semibold text-slate-800 dark:text-slate-100">{row.original.nama_lengkap}</span>,
+      cell: ({ row }) => (
+        <span className="font-semibold text-slate-900 dark:text-slate-100">
+          {row.original.nama_lengkap}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "no_wa",
+      header: "NOMOR WHATSAPP",
+      cell: ({ row }) => {
+        const wa = row.original.no_wa;
+        if (!wa) return <span className="text-slate-400 font-mono text-xs">-</span>;
+        let clean = wa.replace(/\D/g, "");
+        if (clean.startsWith("0")) clean = "62" + clean.slice(1);
+        else if (!clean.startsWith("62")) clean = "62" + clean;
+        return (
+          <a
+            href={`https://wa.me/${clean}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 font-mono text-xs text-emerald-700 hover:text-emerald-900 hover:underline dark:text-emerald-400"
+            title="Kirim pesan WhatsApp"
+          >
+            <Phone className="h-3 w-3 shrink-0 text-emerald-600" />
+            <span>{wa}</span>
+          </a>
+        );
+      },
     },
     { accessorKey: "blok", header: "BLOK" },
     { accessorKey: "asrama", header: "ASRAMA" },
+    {
+      accessorKey: "kode_kamar",
+      header: "KODE",
+      cell: ({ row }) => (
+        <span className="font-mono font-semibold text-xs text-slate-700 dark:text-slate-300">
+          {row.original.kode_kamar || "-"}
+        </span>
+      ),
+    },
     { accessorKey: "kamar", header: "KAMAR" },
     {
       id: "halaqoh",
@@ -342,7 +520,7 @@ export default function SantriPage() {
       id: "aksi",
       header: "AKSI",
       cell: ({ row }) => (
-        <div className="no-print flex items-center gap-1.5">
+        <div className="no-print flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             onClick={() => openEditModal(row.original)}
@@ -383,10 +561,10 @@ export default function SantriPage() {
         </p>
       </div>
 
-      {/* Bilah Toolbar yang Disederhanakan:
-          Dari kiri: [ Pencarian ] -> [ Filter (Pop-up) ] -> [ Import/Export Excel (Pop-up) ] -> [ Cetak PDF ] -> [ Tambah Santri ] */}
+      {/* Bilah Toolbar:
+          [ Pencarian ] -> [ Filter (Pop-up) ] -> [ Menu Excel ] -> [ Cetak PDF ] -> [ Pengaturan Hierarki (Gambar 3) ] -> [ Tambah Santri ] */}
       <div className="no-print flex items-center gap-2">
-        {/* 1. Pencarian (Kiri) */}
+        {/* 1. Pencarian */}
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
@@ -396,7 +574,7 @@ export default function SantriPage() {
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Cari santri, kode, asrama, kamar..."
+            placeholder="Cari santri, kode, asrama, kamar, WhatsApp..."
             aria-label="Cari nama atau kode santri"
             className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-sm text-slate-800 placeholder-slate-400 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
@@ -416,7 +594,7 @@ export default function SantriPage() {
           )}
         </div>
 
-        {/* 2. Tombol Filter (Pop-up Pilihan Filter) */}
+        {/* 2. Tombol Filter (Pop-up Ketik dan Pilih) */}
         <button
           type="button"
           onClick={() => setFilterModalOpen(true)}
@@ -436,7 +614,7 @@ export default function SantriPage() {
           )}
         </button>
 
-        {/* 3. Tombol Excel (Pop-up Pilihan Template, Impor, Ekspor) */}
+        {/* 3. Tombol Excel */}
         <button
           type="button"
           onClick={() => setExcelModalOpen(true)}
@@ -447,7 +625,7 @@ export default function SantriPage() {
           <FileSpreadsheet className="h-5 w-5" />
         </button>
 
-        {/* 4. Tombol Cetak / Unduh PDF */}
+        {/* 4. Tombol Cetak PDF */}
         <button
           type="button"
           onClick={handlePrint}
@@ -458,7 +636,18 @@ export default function SantriPage() {
           <Printer className="h-5 w-5" />
         </button>
 
-        {/* 5. Tombol Tambah Santri */}
+        {/* 5. Tombol Pengaturan Hierarki (Gambar 3: Blok > Asrama > Kode > Kamar) */}
+        <button
+          type="button"
+          onClick={() => setHierarchyModalOpen(true)}
+          title="Pengaturan Hierarki Dropdown (Blok > Asrama > Kode > Kamar)"
+          aria-label="Pengaturan Hierarki Dropdown"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <Settings className="h-5 w-5 text-slate-700 dark:text-slate-300 hover:rotate-45 transition-transform" />
+        </button>
+
+        {/* 6. Tombol Tambah Santri */}
         <button
           type="button"
           onClick={openAddModal}
@@ -470,7 +659,7 @@ export default function SantriPage() {
         </button>
       </div>
 
-      {/* Indikator Filter Aktif (Chip ringkas jika ada filter) */}
+      {/* Indikator Filter Aktif */}
       {activeFilterCount > 0 && (
         <div className="no-print flex flex-wrap items-center gap-2 pt-1">
           <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Filter Aktif:</span>
@@ -486,6 +675,14 @@ export default function SantriPage() {
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
               Blok: {blokFilter}
               <button type="button" onClick={() => { setBlokFilter(""); setPage(1); }} aria-label="Hapus filter blok">
+                <X className="h-3 w-3 hover:text-rose-600" />
+              </button>
+            </span>
+          )}
+          {kodeFilter && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+              Kode: {kodeFilter}
+              <button type="button" onClick={() => { setKodeFilter(""); setPage(1); }} aria-label="Hapus filter kode">
                 <X className="h-3 w-3 hover:text-rose-600" />
               </button>
             </span>
@@ -524,7 +721,7 @@ export default function SantriPage() {
         </div>
       )}
 
-      {/* Area Tabel (Siap Cetak PDF) */}
+      {/* Area Tabel (Siap Cetak PDF, Baris Dapat Diklik untuk Melihat Detail) */}
       <div ref={printAreaRef} className="space-y-2">
         <div className="hidden print:block mb-4">
           <h2 className="text-lg font-bold">LPTQ Pondok Pesantren Darussalam Blokagung</h2>
@@ -541,20 +738,24 @@ export default function SantriPage() {
           pageSize={25}
           totalCount={totalCount}
           onPageChange={setPage}
+          onRowClick={(santri) => {
+            setSelectedSantri(santri);
+            setDetailModalOpen(true);
+          }}
         />
       </div>
 
       {/* ========================================================================= */}
-      {/* POP-UP 1: MODAL FILTER TERPADU                                            */}
+      {/* POP-UP 1: MODAL FILTER TERPADU (KETIK DAN PILIH)                          */}
       {/* ========================================================================= */}
       {filterModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in duration-200"
           role="dialog"
           aria-modal="true"
           aria-labelledby="modal-filter-title"
         >
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
@@ -564,7 +765,9 @@ export default function SantriPage() {
                   <h2 id="modal-filter-title" className="text-base font-bold text-slate-900 dark:text-white">
                     Filter Data Santri
                   </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Saring daftar santri berdasarkan kriteria</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Ketik langsung atau klik tombol panah untuk memilih kriteria
+                  </p>
                 </div>
               </div>
               <button
@@ -578,96 +781,79 @@ export default function SantriPage() {
             </div>
 
             <div className="space-y-3.5 py-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Asrama
-                </label>
-                <input
-                  type="text"
-                  value={asramaFilter}
-                  onChange={(e) => {
-                    setAsramaFilter(e.target.value);
+              {/* Asrama (Ketik dan Pilih) */}
+              <KetikDanPilih
+                label="Asrama"
+                value={asramaFilter}
+                onChange={(val) => {
+                  setAsramaFilter(val);
+                  setPage(1);
+                }}
+                options={uniqueFilterOptions.asramas}
+                placeholder="Ketik atau pilih Asrama (misal: Al-Falah)"
+              />
+
+              {/* Blok, Kode, dan Kamar (Ketik dan Pilih) */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <KetikDanPilih
+                  label="Blok"
+                  value={blokFilter}
+                  onChange={(val) => {
+                    setBlokFilter(val);
                     setPage(1);
                   }}
-                  placeholder="Filter Asrama (misal: Al-Falah)"
-                  className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  options={uniqueFilterOptions.bloks}
+                  placeholder="Pilih Blok"
+                />
+
+                <KetikDanPilih
+                  label="Kode"
+                  value={kodeFilter}
+                  onChange={(val) => {
+                    setKodeFilter(val);
+                    setPage(1);
+                  }}
+                  options={uniqueFilterOptions.kodes}
+                  placeholder="Pilih Kode"
+                />
+
+                <KetikDanPilih
+                  label="Kamar"
+                  value={kamarFilter}
+                  onChange={(val) => {
+                    setKamarFilter(val);
+                    setPage(1);
+                  }}
+                  options={uniqueFilterOptions.kamars}
+                  placeholder="Pilih Kamar"
                 />
               </div>
 
+              {/* Halaqoh Kelas dan Bagian (Ketik dan Pilih) */}
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Blok
-                  </label>
-                  <input
-                    type="text"
-                    value={blokFilter}
-                    onChange={(e) => {
-                      setBlokFilter(e.target.value);
-                      setPage(1);
-                    }}
-                    placeholder="Filter Blok (misal: A)"
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Kamar
-                  </label>
-                  <input
-                    type="text"
-                    value={kamarFilter}
-                    onChange={(e) => {
-                      setKamarFilter(e.target.value);
-                      setPage(1);
-                    }}
-                    placeholder="Filter Kamar (misal: A1)"
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-              </div>
+                <KetikDanPilih
+                  label="Halaqoh Kelas"
+                  value={kelasFilter !== "" ? `Kelas ${kelasFilter}` : ""}
+                  onChange={(val) => {
+                    const match = val.match(/\d+/);
+                    setKelasFilter(match ? Number(match[0]) : "");
+                    setPage(1);
+                  }}
+                  options={HALAQOH_KELAS_LIST.map((k) => `Kelas ${k}`)}
+                  placeholder="Semua Kelas (1-10)"
+                />
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Halaqoh Kelas
-                  </label>
-                  <select
-                    value={kelasFilter}
-                    onChange={(e) => {
-                      setKelasFilter(e.target.value ? Number(e.target.value) : "");
-                      setPage(1);
-                    }}
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <option value="">Semua Kelas (1-10)</option>
-                    {HALAQOH_KELAS_LIST.map((k) => (
-                      <option key={k} value={k}>
-                        Kelas {k}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Halaqoh Bagian
-                  </label>
-                  <select
-                    value={bagianFilter}
-                    onChange={(e) => {
-                      setBagianFilter(e.target.value);
-                      setPage(1);
-                    }}
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <option value="">Semua Bagian (A-F)</option>
-                    {HALAQOH_BAGIAN_LIST.map((b) => (
-                      <option key={b} value={b}>
-                        Bagian {b}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <KetikDanPilih
+                  label="Halaqoh Bagian"
+                  value={bagianFilter ? `Bagian ${bagianFilter}` : ""}
+                  onChange={(val) => {
+                    const match = val.replace("Bagian", "").trim();
+                    setBagianFilter(match);
+                    setPage(1);
+                  }}
+                  options={HALAQOH_BAGIAN_LIST.map((b) => `Bagian ${b}`)}
+                  placeholder="Semua Bagian (A-F)"
+                />
               </div>
             </div>
 
@@ -698,7 +884,7 @@ export default function SantriPage() {
       {/* ========================================================================= */}
       {excelModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in duration-200"
           role="dialog"
           aria-modal="true"
           aria-labelledby="modal-excel-title"
@@ -727,7 +913,6 @@ export default function SantriPage() {
               </button>
             </div>
 
-            {/* Jika sedang mengimpor berkas */}
             {importing ? (
               <div className="py-8 text-center space-y-3">
                 <Loader2 className="h-8 w-8 animate-spin text-emerald-700 mx-auto" />
@@ -736,7 +921,6 @@ export default function SantriPage() {
               </div>
             ) : (
               <div className="space-y-3 py-4">
-                {/* Pilihan 1: Template Excel */}
                 <button
                   type="button"
                   onClick={() => {
@@ -754,12 +938,11 @@ export default function SantriPage() {
                       Template Excel
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Unduh format template kosong siap isi untuk impor massal
+                      Unduh format template kosong (termasuk WhatsApp & Kode) siap isi
                     </p>
                   </div>
                 </button>
 
-                {/* Pilihan 2: Impor Excel / CSV */}
                 <button
                   type="button"
                   onClick={() => excelFileInputRef.current?.click()}
@@ -778,7 +961,6 @@ export default function SantriPage() {
                   </div>
                 </button>
 
-                {/* Pilihan 3: Ekspor Excel */}
                 <button
                   type="button"
                   onClick={handleExportExcel}
@@ -803,46 +985,83 @@ export default function SantriPage() {
       )}
 
       {/* ========================================================================= */}
-      {/* POP-UP 3: MODAL TAMBAH / EDIT SANTRI                                      */}
+      {/* POP-UP 3: MODAL TAMBAH / EDIT SANTRI DENGAN HIERARKI & WA                 */}
       {/* ========================================================================= */}
       {modalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in duration-200"
           role="dialog"
           aria-modal="true"
           aria-labelledby="modal-santri-title"
         >
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 max-h-[90vh] overflow-y-auto">
+          <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
-              <h2 id="modal-santri-title" className="text-base font-bold text-slate-900 dark:text-white">
-                {editingSantri ? "Edit Data Santri" : "Tambah Santri Baru"}
-              </h2>
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                aria-label="Tutup dialog"
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div>
+                <h2 id="modal-santri-title" className="text-base font-bold text-slate-900 dark:text-white">
+                  {editingSantri ? "Edit Data Santri" : "Tambah Santri Baru"}
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Lengkapi data biodata santri dan penempatan asrama
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setHierarchyModalOpen(true)}
+                  title="Buka Pengaturan Hierarki Dropdown"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-emerald-700 transition dark:hover:bg-slate-800"
+                >
+                  <Settings className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  aria-label="Tutup dialog"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-3.5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Kode Unik Santri
-                  </label>
-                  <input
-                    {...register("kode")}
-                    placeholder="Contoh: S-1006"
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  {errors.kode && (
-                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                      {errors.kode.message}
-                    </p>
-                  )}
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              {/* Bagian 1: Identitas Pokok & Kontak WhatsApp */}
+              <div className="space-y-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
+                  Identitas Pokok & WhatsApp
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Kode Unik Santri
+                    </label>
+                    <input
+                      {...register("kode")}
+                      placeholder="Contoh: S-1006"
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 font-mono focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                    {errors.kode && (
+                      <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                        {errors.kode.message}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Nomor WhatsApp
+                    </label>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-emerald-600" />
+                      <input
+                        {...register("no_wa")}
+                        type="tel"
+                        placeholder="Contoh: 081234567890"
+                        className="w-full h-10 rounded-xl border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-800 font-mono focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div>
@@ -862,87 +1081,148 @@ export default function SantriPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Blok
-                  </label>
-                  <input
-                    {...register("blok")}
-                    placeholder="Contoh: A"
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  {errors.blok && (
-                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                      {errors.blok.message}
-                    </p>
-                  )}
+              {/* Bagian 2: Penempatan Kamar (Hierarki: Blok > Asrama > Kode > Kamar) */}
+              <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400 flex items-center gap-1.5">
+                    <Building className="h-3.5 w-3.5" />
+                    <span>Penempatan Kamar (Hierarki)</span>
+                  </h3>
+                  <span className="text-[11px] text-slate-400">
+                    Blok &gt; Asrama &gt; Kode &gt; Kamar
+                  </span>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Asrama
-                  </label>
-                  <input
-                    {...register("asrama")}
-                    placeholder="Contoh: Al-Falah"
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  {errors.asrama && (
-                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                      {errors.asrama.message}
-                    </p>
-                  )}
-                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {/* 1. Blok */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Blok
+                    </label>
+                    <input
+                      list="blok_options_list"
+                      {...register("blok")}
+                      placeholder="Pilih/Ketik Blok"
+                      onChange={(e) => {
+                        setValue("blok", e.target.value);
+                      }}
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-2.5 text-xs text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                    <datalist id="blok_options_list">
+                      {formOptions.bloks.map((b) => (
+                        <option key={b} value={b} />
+                      ))}
+                    </datalist>
+                    {errors.blok && (
+                      <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">
+                        {errors.blok.message}
+                      </p>
+                    )}
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Kamar
-                  </label>
-                  <input
-                    {...register("kamar")}
-                    placeholder="Contoh: A1"
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  {errors.kamar && (
-                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                      {errors.kamar.message}
-                    </p>
-                  )}
+                  {/* 2. Asrama */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Asrama
+                    </label>
+                    <input
+                      list="asrama_options_list"
+                      {...register("asrama")}
+                      placeholder="Pilih/Ketik Asrama"
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-2.5 text-xs text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                    <datalist id="asrama_options_list">
+                      {formOptions.asramas.map((a) => (
+                        <option key={a} value={a} />
+                      ))}
+                    </datalist>
+                    {errors.asrama && (
+                      <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">
+                        {errors.asrama.message}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 3. Kode (Antara Asrama dan Kamar) */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Kode
+                    </label>
+                    <input
+                      list="kode_options_list"
+                      {...register("kode_kamar")}
+                      placeholder="Kode (misal: E)"
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-2.5 text-xs text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                    <datalist id="kode_options_list">
+                      {formOptions.kodes.map((k) => (
+                        <option key={k} value={k} />
+                      ))}
+                    </datalist>
+                  </div>
+
+                  {/* 4. Kamar */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Kamar
+                    </label>
+                    <input
+                      list="kamar_options_list"
+                      {...register("kamar")}
+                      placeholder="Kamar (misal: 01)"
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-2.5 text-xs text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                    <datalist id="kamar_options_list">
+                      {formOptions.kamars.map((km) => (
+                        <option key={km} value={km} />
+                      ))}
+                    </datalist>
+                    {errors.kamar && (
+                      <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">
+                        {errors.kamar.message}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Halaqoh Kelas (1-10)
-                  </label>
-                  <select
-                    {...register("halaqoh_kelas")}
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    {HALAQOH_KELAS_LIST.map((k) => (
-                      <option key={k} value={k}>
-                        Kelas {k}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              {/* Bagian 3: Halaqoh & Pembinaan Tahfidz */}
+              <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
+                  Pengelompokan Halaqoh
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Halaqoh Kelas (1-10)
+                    </label>
+                    <select
+                      {...register("halaqoh_kelas")}
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      {HALAQOH_KELAS_LIST.map((k) => (
+                        <option key={k} value={k}>
+                          Kelas {k}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Halaqoh Bagian (A-F)
-                  </label>
-                  <select
-                    {...register("halaqoh_bagian")}
-                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    {HALAQOH_BAGIAN_LIST.map((b) => (
-                      <option key={b} value={b}>
-                        Bagian {b}
-                      </option>
-                    ))}
-                  </select>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Halaqoh Bagian (A-F)
+                    </label>
+                    <select
+                      {...register("halaqoh_bagian")}
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      {HALAQOH_BAGIAN_LIST.map((b) => (
+                        <option key={b} value={b}>
+                          Bagian {b}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -966,6 +1246,32 @@ export default function SantriPage() {
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* POP-UP 4: MODAL DETAIL DATA SANTRI (KLIK BARIS)                           */}
+      {/* ========================================================================= */}
+      <DetailSantriModal
+        santri={selectedSantri}
+        onClose={() => {
+          setDetailModalOpen(false);
+          setSelectedSantri(null);
+        }}
+        onEdit={(s) => {
+          setDetailModalOpen(false);
+          openEditModal(s);
+        }}
+        onDelete={(s) => handleDelete(s)}
+      />
+
+      {/* ========================================================================= */}
+      {/* POP-UP 5: MODAL PENGATURAN HIERARKI DROPDOWN (GAMBAR 3)                   */}
+      {/* ========================================================================= */}
+      <HierarchySettingsModal
+        isOpen={hierarchyModalOpen}
+        onClose={() => setHierarchyModalOpen(false)}
+        rules={hierarchyRules}
+        onSave={handleSaveHierarchyRules}
+      />
     </div>
   );
 }
