@@ -22,6 +22,7 @@ interface DataTableProps<TData> {
   pageSize?: number;
   totalCount?: number;
   onPageChange?: (newPage: number) => void;
+  onRowClick?: (row: TData) => void;
 }
 
 export function DataTable<TData>({
@@ -36,6 +37,7 @@ export function DataTable<TData>({
   pageSize = 25,
   totalCount,
   onPageChange,
+  onRowClick,
 }: DataTableProps<TData>) {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [showColMenu, setShowColMenu] = useState(false);
@@ -152,7 +154,12 @@ export function DataTable<TData>({
               {table.getRowModel().rows.map((row) => (
                 <tr
                   key={row.id}
-                  className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
+                  onClick={() => onRowClick?.(row.original)}
+                  className={`transition-colors ${
+                    onRowClick
+                      ? "cursor-pointer hover:bg-emerald-50/60 dark:hover:bg-emerald-950/20"
+                      : "hover:bg-slate-50/80 dark:hover:bg-slate-800/50"
+                  }`}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td key={cell.id} className="px-3.5 py-3 whitespace-nowrap">
