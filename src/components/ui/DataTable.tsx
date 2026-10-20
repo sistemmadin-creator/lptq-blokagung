@@ -52,27 +52,27 @@ export function DataTable<TData>({
     typeof totalCount === "number" ? Math.max(1, Math.ceil(totalCount / pageSize)) : 1;
 
   return (
-    <div className="space-y-3">
-      <div className="no-print flex items-center justify-between">
-        <div className="text-xs text-slate-600 dark:text-slate-400">
+    <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 sm:p-6 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">
+      <div className="no-print flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-slate-600 dark:text-slate-400">
           {typeof totalCount === "number"
-            ? `Menampilkan ${data.length} dari total ${totalCount} baris`
-            : `Total ${data.length} baris`}
+            ? `Menampilkan ${data.length} dari total ${totalCount} baris data`
+            : `Total ${data.length} baris data`}
         </div>
 
         <div className="relative">
           <button
             type="button"
             onClick={() => setShowColMenu((prev) => !prev)}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-1.5 text-xs font-bold text-slate-800 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
           >
-            <SlidersHorizontal className="h-4 w-4" />
+            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
             <span>Tampilkan / Sembunyikan Kolom</span>
           </button>
 
           {showColMenu && (
-            <div className="absolute right-0 mt-1 z-30 w-56 rounded-md border border-slate-300 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900">
-              <p className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+            <div className="absolute right-0 mt-1.5 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+              <p className="mb-2 text-xs font-bold text-slate-800 dark:text-slate-200">
                 Pilih Kolom Tabel
               </p>
               <div className="space-y-1.5 max-h-60 overflow-y-auto">
@@ -85,7 +85,7 @@ export function DataTable<TData>({
                       type="checkbox"
                       checked={column.getIsVisible()}
                       onChange={column.getToggleVisibilityHandler()}
-                      className="h-4 w-4 rounded border-slate-300 text-emerald-800"
+                      className="h-4 w-4 rounded border-slate-300 text-brand"
                     />
                     <span>{String(column.columnDef.header ?? column.id)}</span>
                   </label>
@@ -96,10 +96,10 @@ export function DataTable<TData>({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-md border border-slate-300 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="overflow-x-auto">
         {loading ? (
           <div className="p-8 text-center" role="status">
-            <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
               Memuat data dari server...
             </p>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
@@ -108,7 +108,7 @@ export function DataTable<TData>({
           </div>
         ) : error ? (
           <div className="p-8 text-center space-y-3" role="alert">
-            <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+            <p className="text-sm font-bold text-red-800 dark:text-red-300">
               Gagal memuat data: {error}
             </p>
             <p className="text-xs text-slate-600 dark:text-slate-400">
@@ -118,25 +118,25 @@ export function DataTable<TData>({
               <button
                 type="button"
                 onClick={onRetry}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-emerald-800 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-900"
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-white hover:bg-brand-hover"
               >
-                <RefreshCw className="h-4 w-4" />
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
                 <span>Muat Ulang Data</span>
               </button>
             )}
           </div>
         ) : data.length === 0 ? (
           <div className="p-8 text-center space-y-1">
-            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{emptyTitle}</p>
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">{emptyTitle}</p>
             <p className="text-xs text-slate-600 dark:text-slate-400">{emptyDescription}</p>
           </div>
         ) : (
-          <table className="w-full border-collapse text-left text-sm">
+          <table className="w-full border-collapse text-left text-xs sm:text-sm">
             <thead>
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr
                   key={headerGroup.id}
-                  className="border-b border-slate-300 bg-slate-100 text-xs font-semibold uppercase text-slate-800 dark:border-slate-800 dark:bg-slate-800/70 dark:text-slate-200"
+                  className="border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400"
                 >
                   {headerGroup.headers.map((header) => (
                     <th key={header.id} className="px-3.5 py-3 whitespace-nowrap">
@@ -148,14 +148,14 @@ export function DataTable<TData>({
                 </tr>
               ))}
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {table.getRowModel().rows.map((row) => (
                 <tr
                   key={row.id}
-                  className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                  className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-3.5 py-2.5 whitespace-nowrap">
+                    <td key={cell.id} className="px-3.5 py-3 whitespace-nowrap">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}
@@ -167,28 +167,32 @@ export function DataTable<TData>({
       </div>
 
       {onPageChange && typeof totalCount === "number" && totalCount > 0 && (
-        <div className="no-print flex flex-wrap items-center justify-between gap-2 pt-1">
-          <span className="text-xs text-slate-700 dark:text-slate-300">
-            Halaman {page} dari {totalPages}
+        <div className="no-print flex flex-wrap items-center justify-between gap-2 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400">
+          <span>
+            Halaman <strong className="text-slate-900 dark:text-white">{page}</strong> dari{" "}
+            <strong className="text-slate-900 dark:text-white">{totalPages}</strong>
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 font-bold">
             <button
               type="button"
               disabled={page <= 1}
               onClick={() => onPageChange(page - 1)}
-              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="inline-flex min-h-[40px] items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 disabled:opacity-50"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
               <span>Sebelumnya</span>
             </button>
+            <span className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl bg-brand text-white text-xs font-mono">
+              {page}
+            </span>
             <button
               type="button"
               disabled={page >= totalPages}
               onClick={() => onPageChange(page + 1)}
-              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="inline-flex min-h-[40px] items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 disabled:opacity-50"
             >
               <span>Berikutnya</span>
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>
