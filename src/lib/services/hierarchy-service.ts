@@ -88,11 +88,23 @@ export const DEFAULT_HIERARCHY_RULES: HierarchyRule[] = [
 
 const LOCAL_STORAGE_KEY = "lptq_hierarchy_rules";
 
+/** Nilai bawaan "kosong" untuk Kode dan Kamar pada dropdown hierarki. */
+export const EMPTY_HIERARCHY_VALUE = "-";
+
 /**
  * Mengubah array aturan hierarki menjadi objek pohon nested:
  * tree[blok][asrama][kode] = array kamar
+ *
+ * Secara bawaan ("-") otomatis tersedia sebagai pilihan kosong:
+ * - setiap asrama memiliki Kode "-" dengan Kamar ["-"]
+ * - setiap daftar Kamar diawali pilihan "-"
+ * Nomor kamar angka ditulis apa adanya (2, bukan 02).
  */
-export function parseHierarchyTree(rules: HierarchyRule[]): HierarchyTree {
+export function parseHierarchyTree(
+  rules: HierarchyRule[],
+  options: { includeEmptyDefault?: boolean } = {}
+): HierarchyTree {
+  const { includeEmptyDefault = true } = options;
   const tree: HierarchyTree = {};
 
   if (!Array.isArray(rules)) return tree;
@@ -102,8 +114,8 @@ export function parseHierarchyTree(rules: HierarchyRule[]): HierarchyTree {
 
     const parts = rule.parentPath.split(">").map((s) => s.trim()).filter(Boolean);
     const blok = parts[0] || "Umum";
-    const asrama = parts[1] || "-";
-    const kode = parts[2] || "-";
+    const asrama = parts[1] || EMPTY_HIERARCHY_VALUE;
+    const kode = parts[2] || EMPTY_HIERARCHY_VALUE;
 
     const kamarList: string[] = [];
 
@@ -118,7 +130,7 @@ export function parseHierarchyTree(rules: HierarchyRule[]): HierarchyTree {
         end = temp;
       }
       for (let i = start; i <= end; i++) {
-        kamarList.push(i < 10 ? `0${i}` : String(i));
+        kamarList.push(String(i));
       }
     } else if (rule.type === "alpha") {
       let start = String(rule.alphaStart || "A").toUpperCase().charCodeAt(0);
@@ -150,12 +162,27 @@ export function parseHierarchyTree(rules: HierarchyRule[]): HierarchyTree {
     });
   });
 
+  if (includeEmptyDefault) {
+    Object.keys(tree).forEach((b) => {
+      Object.keys(tree[b]).forEach((a) => {
+        if (!tree[b][a][EMPTY_HIERARCHY_VALUE]) {
+          tree[b][a][EMPTY_HIERARCHY_VALUE] = [];
+        }
+        Object.keys(tree[b][a]).forEach((k) => {
+          const list = tree[b][a][k].filter((x) => x !== EMPTY_HIERARCHY_VALUE);
+          tree[b][a][k] = [EMPTY_HIERARCHY_VALUE, ...list];
+        });
+      });
+    });
+  }
+
   return tree;
 }
 
 /**
  * Mengekstrak daftar enum unik untuk Blok, Asrama, Kode, dan Kamar
  * dari aturan hierarki aktif, beserta daftar kombinasi valid.
+ * Pilihan kosong "-" selalu tersedia di urutan pertama untuk Kode dan Kamar.
  */
 export function extractHierarchyEnums(rules: HierarchyRule[]) {
   const bloks = new Set<string>();
@@ -169,7 +196,7 @@ export function extractHierarchyEnums(rules: HierarchyRule[]) {
     kamarList: string[];
   }[] = [];
 
-  const tree = parseHierarchyTree(rules);
+  const tree = parseHierarchyTree(rules, { includeEmptyDefault: false });
   Object.keys(tree).forEach((b) => {
     bloks.add(b);
     Object.keys(tree[b]).forEach((a) => {
@@ -188,13 +215,19 @@ export function extractHierarchyEnums(rules: HierarchyRule[]) {
     });
   });
 
+  kodes.delete(EMPTY_HIERARCHY_VALUE);
+  kamars.delete(EMPTY_HIERARCHY_VALUE);
+
   const routes = combinations.map((c) => `${c.blok} > ${c.asrama} > ${c.kode}`);
 
   return {
     bloks: Array.from(bloks).sort(),
     asramas: Array.from(asramas).sort(),
-    kodes: Array.from(kodes).sort(),
-    kamars: Array.from(kamars).sort((x, y) => x.localeCompare(y, undefined, { numeric: true })),
+    kodes: [EMPTY_HIERARCHY_VALUE, ...Array.from(kodes).sort()],
+    kamars: [
+      EMPTY_HIERARCHY_VALUE,
+      ...Array.from(kamars).sort((x, y) => x.localeCompare(y, undefined, { numeric: true })),
+    ],
     combinations,
     routes,
   };
