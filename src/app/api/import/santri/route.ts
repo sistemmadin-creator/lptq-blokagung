@@ -12,12 +12,17 @@ interface RawSantriImportRow {
   "No WhatsApp"?: string | number;
   WhatsApp?: string | number;
   Telepon?: string | number;
+  "Penempatan Kamar (Hierarki)"?: string;
+  "Penempatan Kamar"?: string;
+  Hierarki?: string;
+  Rute?: string;
   Blok?: string | number;
   Asrama?: string;
   "Kode Kamar"?: string | number;
   Kamar?: string | number;
   "Halaqoh Kelas"?: number | string;
   "Halaqoh Bagian"?: string;
+  [key: string]: unknown;
 }
 
 export async function POST(request: Request) {
@@ -63,9 +68,27 @@ export async function POST(request: Request) {
         kode = `S-${Date.now().toString().slice(-6)}${index + 1}-${randomPart}`;
       }
 
-      const nama_lengkap = String(row["Nama Lengkap"] ?? "").trim();
-      const blok = String(row.Blok ?? "-").trim() || "-";
-      const asrama = String(row.Asrama ?? "").trim();
+      let nama_lengkap = String(row["Nama Lengkap"] ?? "").trim();
+      let blok = String(row.Blok ?? "").trim();
+      let asrama = String(row.Asrama ?? "").trim();
+
+      // Dukung pengisian melalui kolom Penempatan Kamar (Hierarki)
+      const hierarki = String(
+        row["Penempatan Kamar (Hierarki)"] ??
+        row["Penempatan Kamar"] ??
+        row.Hierarki ??
+        row.Rute ??
+        ""
+      ).trim();
+
+      if (hierarki && hierarki.includes(">")) {
+        const parts = hierarki.split(">").map((s) => s.trim());
+        if ((!blok || blok === "-") && parts[0]) blok = parts[0];
+        if (!asrama && parts[1]) asrama = parts[1];
+        if (!kode_kamar && parts[2]) kode_kamar = parts[2];
+      }
+      if (!blok) blok = "-";
+
       const kamar = String(row.Kamar ?? "").trim();
       const no_wa = String(
         row["Nomor WhatsApp"] ?? row["No WhatsApp"] ?? row.WhatsApp ?? row.Telepon ?? ""
