@@ -17,14 +17,15 @@ import {
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
-  fetchKhotmilRekapTahap,
+  fetchAllSantriFiltered,
+  fetchKhotmilTahapNilai,
   upsertKhotmilNilaiBatch,
 } from "@/lib/services/tahfidz-service";
 import {
-  KHOTMIL_15_TAHAP,
-  KHOTMIL_30_TAHAP,
+  KKM_DEFAULT,
   type JenisKhotmil,
-  type KhotmilRekapRow,
+  type Santri,
+  type TahapConfig,
 } from "@/types/database";
 import { HalaqohBadge } from "@/components/ui/Badges";
 import {
@@ -34,9 +35,10 @@ import {
 } from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
 
-interface KhotmilModuleProps {
-  jenis: JenisKhotmil; // "khotmil15" | "khotmil30"
+export interface KhotmilModuleProps {
+  jenis: JenisKhotmil;
   judul: string;
+  tahapList: TahapConfig[];
 }
 
 // Memotong array menjadi batch @100 baris agar aman dari batas 10s serverless Vercel
@@ -48,49 +50,53 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
-export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
+export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
   const { showToast } = useToast();
   const printRef = useRef<HTMLDivElement>(null);
   const excelFileInputRef = useRef<HTMLInputElement>(null);
 
-  const tahapList = jenis === "khotmil15" ? KHOTMIL_15_TAHAP : KHOTMIL_30_TAHAP;
-  const [activeTahap, setActiveTahap] = useState<number>(1);
-
+  const [activeTahap, setActiveTahap] = useState<number>(tahapList[0]?.tahap ?? 1);
   const [search, setSearch] = useState("");
   const [asramaFilter, setAsramaFilter] = useState("");
 
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
 
   // Status Impor Excel
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState("");
 
-  const [rows, setRows] = useState<KhotmilRekapRow[]>([]);
+  const [santriList, setSantriList] = useState<Santri[]>([]);
+  const [nilaiMap, setNilaiMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Santri yang sedang dinilai di modal
-  const [selectedSantri, setSelectedSantri] = useState<KhotmilRekapRow | null>(null);
-  const [nilaiInputs, setNilaiInputs] = useState<Record<number, number | "">>({});
-  const [submitting, setSubmitting] = useState(false);
+  const [editingSantri, setEditingSantri] = useState<Santri | null>(null);
+  const [formScores, setFormScores] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState(false);
 
-  const currentTahapInfo = tahapList.find((t) => t.tahap === activeTahap) || tahapList[0];
+  const currentTahapCfg =
+    tahapList.find((t) => t.tahap === activeTahap) ?? tahapList[0];
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchKhotmilRekapTahap({
-        jenis,
-        tahap: activeTahap,
-        search,
-        asrama: asramaFilter,
+      const [santriData, nilaiData] = await Promise.all([
+        fetchAllSantriFiltered({ search, asrama: asramaFilter }),
+        fetchKhotmilTahapNilai(jenis, activeTahap),
+      ]);
+
+      const map: Record<string, number> = {};
+      nilaiData.forEach((n) => {
+        map[`${n.santri_id}_${n.juz}`] = n.nilai;
       });
-      setRows(data);
+
+      setSantriList(santriData);
+      setNilaiMap(map);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal memuat rekap nilai Khotmil.");
+      setError(err instanceof Error ? err.message : "Gagal memuat nilai khotmil.");
     } finally {
       setLoading(false);
     }
@@ -104,14 +110,14 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (modalOpen) setModalOpen(false);
+        if (editingSantri) setEditingSantri(null);
         if (filterModalOpen) setFilterModalOpen(false);
         if (excelModalOpen) setExcelModalOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, filterModalOpen, excelModalOpen]);
+  }, [editingSantri, filterModalOpen, excelModalOpen]);
 
   // Hook cetak PDF via react-to-print
   const handlePrint = useReactToPrint({
@@ -126,64 +132,95 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
     showToast("success", "Filter asrama telah direset.");
   };
 
-  const openInputModal = (santri: KhotmilRekapRow) => {
-    setSelectedSantri(santri);
-    const initial: Record<number, number | ""> = {};
-    for (const juz of currentTahapInfo.juzList) {
-      const val = santri.nilaiPerJuz[juz];
-      initial[juz] = val !== undefined && val !== null ? val : "";
+  // Menghitung rata-rata dan kelulusan KKM per santri
+  const computeRowSummary = (santriId: string) => {
+    const scores: number[] = [];
+    for (const j of currentTahapCfg.juzList) {
+      const val = nilaiMap[`${santriId}_${j}`];
+      if (typeof val === "number") scores.push(val);
     }
-    setNilaiInputs(initial);
-    setModalOpen(true);
+    const lengkap = scores.length === currentTahapCfg.juzList.length;
+    const rataRata =
+      scores.length > 0
+        ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2))
+        : null;
+    const lulus = lengkap && rataRata !== null && rataRata >= KKM_DEFAULT;
+    return { rataRata, lengkap, lulus };
   };
 
-  const handleSaveNilai = async (e: React.FormEvent) => {
+  let totalTuntas = 0;
+  let totalBelum = 0;
+  santriList.forEach((s) => {
+    const sum = computeRowSummary(s.id);
+    if (sum.lulus) totalTuntas += 1;
+    else totalBelum += 1;
+  });
+
+  const openScoreModal = (santri: Santri) => {
+    const initial: Record<number, string> = {};
+    currentTahapCfg.juzList.forEach((j) => {
+      const existing = nilaiMap[`${santri.id}_${j}`];
+      initial[j] = typeof existing === "number" ? String(existing) : "";
+    });
+    setFormScores(initial);
+    setEditingSantri(santri);
+  };
+
+  const handleSaveScores = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSantri) return;
+    if (!editingSantri) return;
 
-    setSubmitting(true);
-    try {
-      const payload = currentTahapInfo.juzList
-        .filter((juz) => nilaiInputs[juz] !== "" && nilaiInputs[juz] !== undefined)
-        .map((juz) => ({
-          santri_id: selectedSantri.santri_id,
-          jenis,
-          tahap: activeTahap,
-          juz,
-          nilai: Number(nilaiInputs[juz]),
-        }));
-
-      if (payload.length === 0) {
-        throw new Error("Mohon isi minimal satu nilai juz.");
+    const payload: { juz: number; nilai: number }[] = [];
+    for (const j of currentTahapCfg.juzList) {
+      const raw = formScores[j];
+      if (raw !== undefined && raw.trim() !== "") {
+        const num = Number(raw);
+        if (Number.isNaN(num) || num < 0 || num > 100) {
+          showToast("error", `Nilai Juz ${j} harus berupa angka antara 0 hingga 100.`);
+          return;
+        }
+        payload.push({ juz: j, nilai: Math.round(num) });
       }
+    }
 
-      await upsertKhotmilNilaiBatch(payload);
-      showToast("success", `Nilai untuk santri ${selectedSantri.nama_lengkap} berhasil disimpan.`);
-      setModalOpen(false);
+    if (payload.length === 0) {
+      showToast("error", "Isi minimal satu nilai juz sebelum menyimpan.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await upsertKhotmilNilaiBatch(editingSantri.id, jenis, activeTahap, payload);
+      showToast(
+        "success",
+        `Nilai ${editingSantri.nama_lengkap} (${currentTahapCfg.label}) berhasil disimpan.`
+      );
+      setEditingSantri(null);
       loadData();
     } catch (err) {
       showToast("error", err instanceof Error ? err.message : "Gagal menyimpan nilai.");
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
   const handleExportExcel = () => {
     setExcelModalOpen(false);
-    const exportRows = rows.map((r, idx) => {
-      const obj: Record<string, unknown> = {
+    const exportRows = santriList.map((s, idx) => {
+      const summary = computeRowSummary(s.id);
+      const obj: Record<string, string | number> = {
         No: idx + 1,
-        Kode: r.kode,
-        "Nama Santri": r.nama_lengkap,
-        Asrama: r.asrama,
-        Kamar: r.kamar,
-        Halaqoh: r.halaqoh,
+        Kode: s.kode,
+        "Nama Lengkap": s.nama_lengkap,
+        Asrama: s.asrama,
+        Halaqoh: s.halaqoh,
       };
-      for (const juz of currentTahapInfo.juzList) {
-        obj[`Juz ${juz}`] = r.nilaiPerJuz[juz] ?? "-";
-      }
-      obj["Rata-rata"] = r.rataRata !== null ? r.rataRata : "-";
-      obj["Status KKM"] = r.statusTuntas ? "Tuntas / Lulus" : "Belum Tuntas";
+      currentTahapCfg.juzList.forEach((j) => {
+        const v = nilaiMap[`${s.id}_${j}`];
+        obj[`Juz_${j}`] = typeof v === "number" ? v : "-";
+      });
+      obj["Rata-rata"] = summary.rataRata ?? "-";
+      obj["Status KKM (85)"] = summary.lulus ? "Tuntas / Lulus" : "Belum Tuntas";
       return obj;
     });
 
@@ -236,9 +273,6 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
       if (excelFileInputRef.current) excelFileInputRef.current.value = "";
     }
   };
-
-  const totalTuntas = rows.filter((r) => r.statusTuntas).length;
-  const totalBelum = rows.length - totalTuntas;
 
   return (
     <div className="space-y-5">
@@ -391,10 +425,10 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200 pb-3 mb-3 dark:border-slate-800">
           <div>
             <h2 className="text-sm font-bold uppercase tracking-wide text-slate-800 dark:text-slate-100">
-              {judul} - {currentTahapInfo.label} ({currentTahapInfo.rentangLabel})
+              {judul} - {currentTahapCfg.label} ({currentTahapCfg.rentangLabel})
             </h2>
             <p className="text-xs text-slate-500">
-              Menampilkan {rows.length} santri
+              Menampilkan {santriList.length} santri
             </p>
           </div>
 
@@ -416,7 +450,7 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
                   <th className="px-3 py-2.5 font-semibold text-slate-700 dark:text-slate-300">Nama Santri</th>
                   <th className="px-3 py-2.5 font-semibold text-slate-700 dark:text-slate-300">Asrama</th>
                   <th className="px-3 py-2.5 font-semibold text-slate-700 dark:text-slate-300 text-center">Halaqoh</th>
-                  {currentTahapInfo.juzList.map((j) => (
+                  {currentTahapCfg.juzList.map((j) => (
                     <th key={j} className="px-3 py-2.5 font-semibold text-center font-mono">
                       Juz {j}
                     </th>
@@ -427,57 +461,60 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {rows.map((r, idx) => (
-                  <tr key={r.santri_id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-                    <td className="px-3 py-2 font-mono text-slate-500">{idx + 1}</td>
-                    <td className="px-3 py-2 font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
-                      {r.nama_lengkap}
-                      <span className="block text-[10px] font-normal font-mono text-slate-400">{r.kode}</span>
-                    </td>
-                    <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{r.asrama}</td>
-                    <td className="px-3 py-2 text-center">
-                      <HalaqohBadge kelas={r.halaqoh_kelas} bagian={r.halaqoh_bagian} />
-                    </td>
-                    {currentTahapInfo.juzList.map((j) => {
-                      const n = r.nilaiPerJuz[j];
-                      return (
-                        <td key={j} className="px-3 py-2 text-center font-mono">
-                          {n !== undefined && n !== null ? (
-                            <span className={n >= 85 ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-slate-700 dark:text-slate-300"}>
-                              {n}
-                            </span>
-                          ) : (
-                            <span className="text-slate-300 dark:text-slate-600">-</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                    <td className="px-3 py-2 text-center font-mono font-bold">
-                      {r.rataRata !== null ? r.rataRata : <span className="text-slate-300">-</span>}
-                    </td>
-                    <td className="px-3 py-2 text-center whitespace-nowrap">
-                      {r.statusTuntas ? (
-                        <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                          Tuntas / Lulus
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-medium text-rose-800 dark:bg-rose-950 dark:text-rose-300">
-                          {r.isComplete ? "Belum Tuntas" : "Nilai Belum Lengkap"}
-                        </span>
-                      )}
-                    </td>
-                    <td className="no-print px-3 py-2 text-center">
-                      <button
-                        type="button"
-                        onClick={() => openInputModal(r)}
-                        className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        <span>Input / Edit Nilai</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {santriList.map((s, idx) => {
+                  const summary = computeRowSummary(s.id);
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                      <td className="px-3 py-2 font-mono text-slate-500">{idx + 1}</td>
+                      <td className="px-3 py-2 font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                        {s.nama_lengkap}
+                        <span className="block text-[10px] font-normal font-mono text-slate-400">{s.kode}</span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{s.asrama}</td>
+                      <td className="px-3 py-2 text-center">
+                        <HalaqohBadge kelas={s.halaqoh_kelas} bagian={s.halaqoh_bagian} />
+                      </td>
+                      {currentTahapCfg.juzList.map((j) => {
+                        const n = nilaiMap[`${s.id}_${j}`];
+                        return (
+                          <td key={j} className="px-3 py-2 text-center font-mono">
+                            {typeof n === "number" ? (
+                              <span className={n >= 85 ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-slate-700 dark:text-slate-300"}>
+                                {n}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 dark:text-slate-600">-</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td className="px-3 py-2 text-center font-mono font-bold">
+                        {summary.rataRata !== null ? summary.rataRata : <span className="text-slate-300">-</span>}
+                      </td>
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        {summary.lulus ? (
+                          <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                            Tuntas / Lulus
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-medium text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                            {summary.lengkap ? "Belum Tuntas" : "Nilai Belum Lengkap"}
+                          </span>
+                        )}
+                      </td>
+                      <td className="no-print px-3 py-2 text-center">
+                        <button
+                          type="button"
+                          onClick={() => openScoreModal(s)}
+                          className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          <span>Input / Edit Nilai</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -657,7 +694,7 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
       )}
 
       {/* POP-UP 3: MODAL INPUT / EDIT NILAI KHOTMIL */}
-      {modalOpen && selectedSantri && (
+      {editingSantri && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
           role="dialog"
@@ -671,12 +708,12 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
                   Input Nilai Khotmil
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {selectedSantri.nama_lengkap} ({selectedSantri.kode})
+                  {editingSantri.nama_lengkap} ({editingSantri.kode})
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setModalOpen(false)}
+                onClick={() => setEditingSantri(null)}
                 aria-label="Tutup dialog"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
@@ -684,14 +721,14 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
               </button>
             </div>
 
-            <form onSubmit={handleSaveNilai} className="space-y-4">
+            <form onSubmit={handleSaveScores} className="space-y-4">
               <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60 text-xs flex justify-between">
-                <span>Tahap: <strong>{currentTahapInfo.label}</strong></span>
-                <span>Rentang: <strong>{currentTahapInfo.rentangLabel}</strong></span>
+                <span>Tahap: <strong>{currentTahapCfg.label}</strong></span>
+                <span>Rentang: <strong>{currentTahapCfg.rentangLabel}</strong></span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto px-1">
-                {currentTahapInfo.juzList.map((juz) => (
+                {currentTahapCfg.juzList.map((juz) => (
                   <div key={juz}>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Nilai Juz {juz} (0-100)
@@ -700,10 +737,10 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
                       type="number"
                       min="0"
                       max="100"
-                      value={nilaiInputs[juz] !== undefined ? nilaiInputs[juz] : ""}
+                      value={formScores[juz] !== undefined ? formScores[juz] : ""}
                       onChange={(e) => {
-                        const val = e.target.value === "" ? "" : Number(e.target.value);
-                        setNilaiInputs((prev) => ({ ...prev, [juz]: val }));
+                        const val = e.target.value;
+                        setFormScores((prev) => ({ ...prev, [juz]: val }));
                       }}
                       placeholder="85"
                       className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-mono font-bold text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -715,17 +752,17 @@ export function KhotmilModule({ jenis, judul }: KhotmilModuleProps) {
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setModalOpen(false)}
+                  onClick={() => setEditingSantri(null)}
                   className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={saving}
                   className="px-5 py-2 text-xs font-semibold rounded-xl bg-emerald-800 text-white hover:bg-emerald-900 shadow transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
                 >
-                  {submitting ? "Menyimpan..." : "Simpan Nilai"}
+                  {saving ? "Menyimpan..." : "Simpan Nilai"}
                 </button>
               </div>
             </form>
