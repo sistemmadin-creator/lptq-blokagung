@@ -18,13 +18,12 @@ import {
 import { useReactToPrint } from "react-to-print";
 import {
   fetchAllSantriFiltered,
-  fetchSetoranTahunan,
-  saveSetoranLog,
+  fetchSetoranBulananMerged,
+  insertSetoranLog,
 } from "@/lib/services/tahfidz-service";
 import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
-  type HalaqohBagian,
   type Santri,
   type SetoranBulananRow,
   type TipeSetoran,
@@ -35,16 +34,19 @@ import { exportJsonToExcel } from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
 
 const setoranSchema = z.object({
-  santri_id: z.string().uuid("Pilih santri yang valid"),
-  tanggal: z.string().min(10, "Format tanggal YYYY-MM-DD"),
-  jumlah_juz_tambahan: z.coerce.number().min(0.01, "Minimal setoran 0.01 Juz"),
+  santri_id: z.string().uuid("Pilih santri terlebih dahulu"),
+  tanggal: z.string().min(10, "Tanggal wajib diisi"),
+  jumlah_juz_tambahan: z.coerce
+    .number()
+    .min(0.05, "Jumlah setoran minimal 0.05 juz")
+    .max(30, "Jumlah setoran maksimal 30 juz"),
   catatan: z.string().optional(),
 });
 
 type SetoranFormValues = z.infer<typeof setoranSchema>;
 
 interface SetoranModuleProps {
-  tipe: TipeSetoran; // "juz_baru" | "evaluasi"
+  tipe: TipeSetoran;
   judul: string;
   deskripsi: string;
 }
@@ -63,7 +65,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
-  const [santriList, setSantriList] = useState<Santri[]>([]);
+  const [santriOptions, setSantriOptions] = useState<Santri[]>([]);
   const [rows, setRows] = useState<SetoranBulananRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +79,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     resolver: zodResolver(setoranSchema),
     defaultValues: {
       santri_id: "",
-      tanggal: new Date().toISOString().slice(0, 10),
+      tanggal: now.toISOString().slice(0, 10),
       jumlah_juz_tambahan: 0.5,
       catatan: "",
     },
@@ -87,54 +89,17 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     setLoading(true);
     setError(null);
     try {
-      const [allSantri, rekapRows] = await Promise.all([
-        fetchAllSantriFiltered({
+      const [mergedData, allSantri] = await Promise.all([
+        fetchSetoranBulananMerged(tahun, tipe, {
           search,
           asrama: asramaFilter,
           halaqoh_kelas: kelasFilter,
           halaqoh_bagian: bagianFilter,
         }),
-        fetchSetoranTahunan(tahun, tipe),
+        fetchAllSantriFiltered({}),
       ]);
-
-      setSantriList(allSantri);
-
-      // Gabungkan data santri dengan rekap agregasi tahunan
-      const mapRekap = new Map<string, SetoranBulananRow>();
-      for (const r of rekapRows) {
-        mapRekap.set(r.santri_id, r);
-      }
-
-      const merged: SetoranBulananRow[] = allSantri.map((s) => {
-        const existing = mapRekap.get(s.id);
-        if (existing) return existing;
-        return {
-          santri_id: s.id,
-          kode: s.kode,
-          nama_lengkap: s.nama_lengkap,
-          asrama: s.asrama,
-          kamar: s.kamar,
-          halaqoh: s.halaqoh,
-          halaqoh_kelas: s.halaqoh_kelas,
-          halaqoh_bagian: s.halaqoh_bagian as HalaqohBagian,
-          tahun,
-          jan: 0,
-          feb: 0,
-          mar: 0,
-          apr: 0,
-          mei: 0,
-          jun: 0,
-          jul: 0,
-          agu: 0,
-          sep: 0,
-          okt: 0,
-          nov: 0,
-          des: 0,
-          total_setoran: 0,
-        };
-      });
-
-      setRows(merged);
+      setRows(mergedData);
+      setSantriOptions(allSantri);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat rekap setoran.");
     } finally {
@@ -180,11 +145,12 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
 
   const onSubmit = async (values: SetoranFormValues) => {
     try {
-      await saveSetoranLog({
+      await insertSetoranLog({
         santri_id: values.santri_id,
         tanggal: values.tanggal,
         tipe,
         jumlah_juz_tambahan: values.jumlah_juz_tambahan,
+        catatan: values.catatan,
       });
       showToast(
         "success",
@@ -193,7 +159,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       setModalOpen(false);
       loadData();
     } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Gagal menyimpan log setoran.");
+      showToast("error", err instanceof Error ? err.message : "Gagal menyimpan setoran.");
     }
   };
 
@@ -201,8 +167,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     const formatted = rows.map((r, idx) => ({
       No: idx + 1,
       Kode: r.kode,
-      "Nama Santri": r.nama_lengkap,
-      Asrama: r.asrama,
+      Nama: r.nama_lengkap,
       Kamar: r.kamar,
       Halaqoh: r.halaqoh,
       Jan: r.jan,
@@ -217,25 +182,25 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       Okt: r.okt,
       Nov: r.nov,
       Des: r.des,
-      "Total Setoran (Juz)": r.total_setoran,
+      "Total Setoran": r.total_setoran,
     }));
-    exportJsonToExcel(formatted, `Rekap_${tipe}_Tahun_${tahun}`, "RekapSetoran");
-    showToast("success", "Berkas rekap setoran berhasil diekspor.");
+    exportJsonToExcel(formatted, `Rekap_${tipe}_${tahun}`, "RekapSetoran");
+    showToast("success", "Rekap setoran berhasil diekspor ke Excel.");
   };
 
   const monthKeys: { key: keyof SetoranBulananRow; label: string }[] = [
-    { key: "jan", label: "JAN" },
-    { key: "feb", label: "FEB" },
-    { key: "mar", label: "MAR" },
-    { key: "apr", label: "APR" },
-    { key: "mei", label: "MEI" },
-    { key: "jun", label: "JUN" },
-    { key: "jul", label: "JUL" },
-    { key: "agu", label: "AGU" },
-    { key: "sep", label: "SEP" },
-    { key: "okt", label: "OKT" },
-    { key: "nov", label: "NOV" },
-    { key: "des", label: "DES" },
+    { key: "jan", label: "Jan" },
+    { key: "feb", label: "Feb" },
+    { key: "mar", label: "Mar" },
+    { key: "apr", label: "Apr" },
+    { key: "mei", label: "Mei" },
+    { key: "jun", label: "Jun" },
+    { key: "jul", label: "Jul" },
+    { key: "agu", label: "Agu" },
+    { key: "sep", label: "Sep" },
+    { key: "okt", label: "Okt" },
+    { key: "nov", label: "Nov" },
+    { key: "des", label: "Des" },
   ];
 
   const columns: ColumnDef<SetoranBulananRow>[] = [
@@ -370,8 +335,8 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
           type="button"
           onClick={() => {
             reset({
-              santri_id: rows[0]?.santri_id ?? "",
-              tanggal: new Date().toISOString().slice(0, 10),
+              santri_id: santriOptions[0]?.id ?? "",
+              tanggal: now.toISOString().slice(0, 10),
               jumlah_juz_tambahan: 0.5,
               catatan: "",
             });
@@ -580,7 +545,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                   className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 >
                   <option value="">-- Pilih Santri --</option>
-                  {santriList.map((s) => (
+                  {santriOptions.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.kode} - {s.nama_lengkap} ({s.asrama})
                     </option>
