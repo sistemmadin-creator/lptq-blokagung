@@ -11,6 +11,7 @@ import {
   type SesiAbsen,
 } from "@/types/database";
 import { HalaqohBadge } from "@/components/ui/Badges";
+import { toLocalIsoDate } from "@/lib/utils/date";
 
 interface RecentSetoranItem {
   id: string;
@@ -52,7 +53,7 @@ export default function DashboardPage() {
 
     try {
       const now = new Date();
-      const todayIso = now.toISOString().slice(0, 10);
+      const todayIso = toLocalIsoDate(now);
       const isFriday = now.getDay() === 5;
       const year = now.getFullYear();
       const month = now.getMonth() + 1;
