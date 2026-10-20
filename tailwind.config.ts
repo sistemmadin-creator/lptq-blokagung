@@ -8,7 +8,21 @@ const config: Config = {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        sans: ["var(--font-jakarta)", "sans-serif"],
+      },
+      colors: {
+        // Palet hijau pesantren Lptq Blokagung dengan struktur token ala Koki
+        brand: {
+          DEFAULT: "#047857",
+          hover: "#065f46",
+          light: "#d1fae5",
+          dark: "#065f46",
+          darker: "#064e3b",
+        },
+      },
+    },
   },
   plugins: [],
 };
