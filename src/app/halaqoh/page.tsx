@@ -17,6 +17,8 @@ import {
   Building,
   GraduationCap,
   Save,
+  LayoutGrid,
+  Table,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
@@ -24,6 +26,7 @@ import {
   deleteSantriById,
   deleteSantriBatch,
   saveSantri,
+  fetchSantriAlfaCounts,
 } from "@/lib/services/tahfidz-service";
 import {
   loadHalaqohFormasi,
@@ -33,6 +36,7 @@ import {
   updatePembimbingMap,
   type FormasiHalaqohItem,
 } from "@/lib/services/halaqoh-service";
+import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
   PEMETAAN_HALAQOH_KELAS,
   HALAQOH_KELAS_LIST,
@@ -45,12 +49,35 @@ import { exportJsonToExcel } from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
 import type { ColumnDef } from "@tanstack/react-table";
 
+const BULAN_NAMES = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
+
 export default function HalaqohPage() {
   const { showToast } = useToast();
   const printAreaRef = useRef<HTMLDivElement>(null);
 
+  const now = new Date();
+  const [tahunAbsen, setTahunAbsen] = useState<number>(now.getFullYear());
+  const [bulanAbsen, setBulanAbsen] = useState<number>(now.getMonth() + 1);
+
+  // Mode Tampilan: Kartu (Default) atau Tabel
+  const [viewMode, setViewMode] = useState<"kartu" | "tabel">("kartu");
+
   const [santriList, setSantriList] = useState<Santri[]>([]);
   const [formasiList, setFormasiList] = useState<FormasiHalaqohItem[]>([]);
+  const [alfaMap, setAlfaMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,17 +101,19 @@ export default function HalaqohPage() {
   const [formasiPembimbing, setFormasiPembimbing] = useState<string>("");
   const [isAddingFormasi, setIsAddingFormasi] = useState(false);
 
-  // Muat data formasi dan santri
+  // Muat data formasi, santri, dan rekap alfa absensi
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [formasi, santri] = await Promise.all([
+      const [formasi, santri, alfaData] = await Promise.all([
         loadHalaqohFormasi(),
         fetchAllSantriFiltered({}),
+        fetchSantriAlfaCounts(tahunAbsen, bulanAbsen),
       ]);
       setFormasiList(formasi);
       setSantriList(santri);
+      setAlfaMap(alfaData);
 
       // Inisialisasi map pembimbing
       const map: Record<string, string> = {};
@@ -97,7 +126,7 @@ export default function HalaqohPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tahunAbsen, bulanAbsen]);
 
   useEffect(() => {
     loadData();
@@ -322,6 +351,57 @@ export default function HalaqohPage() {
     },
   ];
 
+  // Helper render badge absensi alfa (sumber: /tahfidz/umum/kegiatan)
+  // Hijau: tidak ada alfa (0)
+  // Kuning: alfa > 3x (4 atau 5)
+  // Merah: alfa > 5x (> 5)
+  // Netral: 1 - 3 alfa
+  const renderAlfaBadge = (santriId: string) => {
+    const count = alfaMap[santriId] || 0;
+    if (count === 0) {
+      return (
+        <span
+          title="Tidak ada alfa (Aman)"
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 whitespace-nowrap"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+          0 Alfa
+        </span>
+      );
+    }
+    if (count > 5) {
+      return (
+        <span
+          title={`Alfa lebih dari 5x: ${count} kali tidak hadir`}
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800 whitespace-nowrap"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0"></span>
+          {count} Alfa
+        </span>
+      );
+    }
+    if (count > 3) {
+      return (
+        <span
+          title={`Alfa lebih dari 3x: ${count} kali tidak hadir`}
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-700 whitespace-nowrap"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0"></span>
+          {count} Alfa
+        </span>
+      );
+    }
+    return (
+      <span
+        title={`${count} kali alfa`}
+        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700 whitespace-nowrap"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-400 shrink-0"></span>
+        {count} Alfa
+      </span>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header Halaman */}
@@ -335,11 +415,39 @@ export default function HalaqohPage() {
         </p>
       </div>
 
-      {/* Toolbar Atas: [ Cari ] -> [ Filter Kelas ] -> [ Pembimbing Halaqoh ] -> [ + Tambah Formasi ] -> [ Cetak ] -> [ Ekspor ] */}
-      <div className="no-print flex flex-wrap items-center justify-between gap-2.5">
-        <div className="flex flex-wrap items-center gap-2 flex-1 max-w-xl">
+      {/* Toolbar Atas: [ Switch Kartu / Tabel ] -> [ Cari ] -> [ Filter Kelas ] -> [ Filter Bulan ] -> [ Tindakan ] */}
+      <div className="no-print flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 flex-1 max-w-3xl">
+          {/* Switch Mode: Kartu (Default) / Tabel */}
+          <div className="flex items-center rounded-xl bg-slate-100 p-1 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80">
+            <button
+              type="button"
+              onClick={() => setViewMode("kartu")}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                viewMode === "kartu"
+                  ? "bg-white text-emerald-800 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
+                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              <span>Kartu</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("tabel")}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                viewMode === "tabel"
+                  ? "bg-white text-emerald-800 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
+                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+            >
+              <Table className="h-3.5 w-3.5" />
+              <span>Tabel</span>
+            </button>
+          </div>
+
           {/* Pencarian Santri */}
-          <div className="relative flex-1 min-w-[200px]">
+          <div className="relative flex-1 min-w-[180px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               type="text"
@@ -369,6 +477,20 @@ export default function HalaqohPage() {
             {HALAQOH_KELAS_LIST.map((k) => (
               <option key={k} value={k}>
                 Kelas {k}
+              </option>
+            ))}
+          </select>
+
+          {/* Filter Bulan Absensi (Sumber Data Status Alfa Gambar 2) */}
+          <select
+            value={bulanAbsen}
+            onChange={(e) => setBulanAbsen(Number(e.target.value))}
+            title="Pilih Bulan Absensi Santri"
+            className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+          >
+            {BULAN_NAMES.map((name, idx) => (
+              <option key={name} value={idx + 1}>
+                Absen: {name} {tahunAbsen}
               </option>
             ))}
           </select>
@@ -424,8 +546,8 @@ export default function HalaqohPage() {
         </div>
       </div>
 
-      {/* Kontainer Siap Cetak & Tabel-Tabel Pengelompokan Halaqoh */}
-      <div ref={printAreaRef} className="space-y-8">
+      {/* Kontainer Siap Cetak: Tampilan Kartu (3 Kolom) atau Tampilan Tabel */}
+      <div ref={printAreaRef} className="space-y-6">
         <div className="hidden print:block mb-4">
           <h2 className="text-lg font-bold">LPTQ Pondok Pesantren Darussalam Blokagung</h2>
           <p className="text-xs">Daftar Pengelompokan Halaqoh Santri & Pembimbing</p>
@@ -446,9 +568,157 @@ export default function HalaqohPage() {
               Gunakan tombol (+) di atas untuk menambahkan pengelompokan halaqoh baru.
             </p>
           </div>
+        ) : viewMode === "kartu" ? (
+          /* ========================================================================= */
+          /* TAMPILAN KARTU: 3 KOLOM RESPONSIVE                                        */
+          /* Hanya menampilkan: Halaqoh, Pembimbing, Total Santri, Nama Santri,       */
+          /* Kamar (gabungan Kode+Kamar), dan Status badge alfa                       */
+          /* ========================================================================= */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 items-start">
+            {filteredFormasi.map((formasi) => {
+              const santriInHalaqoh = santriList.filter((s) => {
+                const matchHalaqoh =
+                  s.halaqoh_kelas === formasi.kelas &&
+                  String(s.halaqoh_bagian).toUpperCase() === String(formasi.bagian).toUpperCase();
+                if (!matchHalaqoh) return false;
+                if (search) {
+                  const term = search.toLowerCase();
+                  return (
+                    s.nama_lengkap.toLowerCase().includes(term) ||
+                    (s.no_wa && s.no_wa.includes(term)) ||
+                    (s.asrama && s.asrama.toLowerCase().includes(term)) ||
+                    (s.kamar && s.kamar.toLowerCase().includes(term))
+                  );
+                }
+                return true;
+              });
+
+              const targetJuz = PEMETAAN_HALAQOH_KELAS[formasi.kelas] || "-";
+
+              return (
+                <div
+                  key={formasi.id}
+                  className="rounded-2xl border border-slate-200 bg-white shadow-sm hover:shadow transition-shadow overflow-hidden flex flex-col dark:border-slate-800 dark:bg-slate-900"
+                >
+                  {/* Header Kartu: Halaqoh, Target Juz, Total Santri, dan Pembimbing */}
+                  <div className="p-4 bg-slate-50/80 border-b border-slate-100 dark:bg-slate-800/40 dark:border-slate-800">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-800 text-white font-extrabold text-xs shadow-sm">
+                          {formasi.kelas}
+                          {formasi.bagian}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                              Halaqoh {formasi.kelas}
+                              {formasi.bagian}
+                            </h2>
+                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+                              {targetJuz}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <span className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700 border border-slate-200 shadow-xs dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700">
+                          {santriInHalaqoh.length} Santri
+                        </span>
+                        {santriInHalaqoh.length === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteFormasi(formasi)}
+                            title="Hapus formasi kosong"
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Pembimbing */}
+                    <div className="mt-2.5 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300 pt-2 border-t border-slate-200/60 dark:border-slate-800">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <UserCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                        <span className="text-slate-500 dark:text-slate-400 text-[11px]">Pembimbing:</span>
+                        {formasi.pembimbing ? (
+                          <strong className="text-emerald-900 font-bold truncate dark:text-emerald-300 text-xs">
+                            {formasi.pembimbing}
+                          </strong>
+                        ) : (
+                          <span className="text-amber-600 italic text-[11px]">Belum diisi</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setModalPembimbingOpen(true)}
+                        title="Atur Pembimbing"
+                        className="text-[11px] font-medium text-emerald-700 hover:text-emerald-900 hover:underline dark:text-emerald-400 shrink-0 ml-1"
+                      >
+                        Atur
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Isi Kartu: Hanya menampilkan No, Nama Santri, Kamar (Kode+Kamar), Status Alfa */}
+                  <div className="p-3 flex-1">
+                    {santriInHalaqoh.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-slate-400">
+                        Belum ada santri di halaqoh ini
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:border-slate-800">
+                              <th className="py-1.5 pl-1 pr-2 w-7">No</th>
+                              <th className="py-1.5 px-2">Nama Santri</th>
+                              <th className="py-1.5 px-2 text-center w-14">Kamar</th>
+                              <th className="py-1.5 pl-2 pr-1 text-right w-20">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                            {santriInHalaqoh.map((s, idx) => (
+                              <tr
+                                key={s.id}
+                                onClick={() => {
+                                  setSelectedSantri(s);
+                                  setDetailModalOpen(true);
+                                }}
+                                className="hover:bg-slate-50/80 cursor-pointer transition dark:hover:bg-slate-800/50 group"
+                              >
+                                <td className="py-2 pl-1 pr-2 font-mono text-[11px] text-slate-400">
+                                  {idx + 1}
+                                </td>
+                                <td className="py-2 px-2 font-semibold text-slate-900 group-hover:text-emerald-700 transition dark:text-slate-100 dark:group-hover:text-emerald-300">
+                                  {s.nama_lengkap}
+                                </td>
+                                <td className="py-2 px-2 text-center">
+                                  <span className="inline-block font-mono font-bold text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                    {formatKamarDisplay(s.kode_kamar, s.kamar)}
+                                  </span>
+                                </td>
+                                <td className="py-2 pl-2 pr-1 text-right">
+                                  {renderAlfaBadge(s.id)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : (
+          /* ========================================================================= */
+          /* TAMPILAN TABEL: TABEL PENUH DENGAN FITUR LENGKAP                          */
+          /* ========================================================================= */
           filteredFormasi.map((formasi) => {
-            // Filter santri yang berada pada halaqoh ini
             const santriInHalaqoh = santriList.filter((s) => {
               const matchHalaqoh =
                 s.halaqoh_kelas === formasi.kelas &&
@@ -473,7 +743,7 @@ export default function HalaqohPage() {
                 key={formasi.id}
                 className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4 dark:border-slate-800 dark:bg-slate-900"
               >
-                {/* Header Pengelompokan Halaqoh: Nama Halaqoh, Target Juz, dan NAMA PEMBIMBING DI ATAS TABEL */}
+                {/* Header Pengelompokan Halaqoh */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
                   <div className="flex items-center gap-3">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-800 text-white font-extrabold text-sm shadow">
