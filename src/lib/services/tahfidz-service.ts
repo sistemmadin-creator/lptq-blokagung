@@ -710,3 +710,70 @@ export async function upsertKhotmilNilaiBatch(
 
   if (error) throw new Error(error.message);
 }
+
+/**
+ * Mengambil riwayat absensi seorang santri dalam tahun tertentu.
+ */
+export async function fetchSantriAbsensiDetail(santri_id: string, tahun: number) {
+  const supabase = createClient();
+  const startYear = `${tahun}-01-01`;
+  const endYear = `${tahun}-12-31`;
+
+  const { data, error } = await supabase
+    .from("absensi")
+    .select("id, santri_id, tanggal, sesi, status, penginput, created_at")
+    .eq("santri_id", santri_id)
+    .gte("tanggal", startYear)
+    .lte("tanggal", endYear)
+    .order("tanggal", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+/**
+ * Mengambil pemetaan pembimbing halaqoh dari tabel profiles.
+ */
+export async function fetchPembimbingMap(): Promise<Record<string, string>> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("nama, role, halaqoh_kelas, halaqoh_bagian")
+    .not("halaqoh_kelas", "is", null)
+    .not("halaqoh_bagian", "is", null);
+
+  if (error) {
+    console.error("Gagal memuat pembimbing halaqoh:", error);
+    return {};
+  }
+
+  const map: Record<string, string> = {};
+  for (const p of data || []) {
+    if (p.nama && p.halaqoh_kelas && p.halaqoh_bagian) {
+      map[`${p.halaqoh_kelas}_${p.halaqoh_bagian}`] = p.nama;
+    }
+  }
+  return map;
+}
+
+/**
+ * Mengambil ID santri yang pernah memiliki catatan nilai khotmil untuk jenis tertentu.
+ */
+export async function fetchKhotmilRegisteredSantriIds(
+  jenis: JenisKhotmil
+): Promise<string[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("khotmil_nilai")
+    .select("santri_id")
+    .eq("jenis", jenis);
+
+  if (error) {
+    console.error("Gagal memuat id santri khotmil:", error);
+    return [];
+  }
+
+  const ids = Array.from(new Set((data || []).map((row) => row.santri_id).filter(Boolean)));
+  return ids;
+}
+
