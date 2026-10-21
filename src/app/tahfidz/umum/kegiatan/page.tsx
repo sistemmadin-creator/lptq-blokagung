@@ -14,13 +14,15 @@ import {
   CheckSquare,
   Square,
   Users,
+  CalendarRange,
+  Info,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
   fetchAllSantriFiltered,
   fetchAbsensiBulan,
   upsertAbsensiCell,
-  isSessionPastOrCurrent,
+  upsertAbsensiBatch,
 } from "@/lib/services/tahfidz-service";
 import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
@@ -110,6 +112,13 @@ export default function KegiatanAbsensiPage() {
   const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
   const [bulkSearch, setBulkSearch] = useState("");
   const [isSavingBulk, setIsSavingBulk] = useState(false);
+
+  // Modal Rentang "Pilih Hadir"
+  const [rangeModalOpen, setRangeModalOpen] = useState(false);
+  const [rangeStartDay, setRangeStartDay] = useState<number>(1);
+  const [rangeEndDay, setRangeEndDay] = useState<number>(Math.min(now.getDate(), 28));
+  const [rangeSesi, setRangeSesi] = useState<SesiAbsen | "semua">("semua");
+  const [isSavingRange, setIsSavingRange] = useState(false);
 
   // Jumlah hari dalam bulan terpilih (28 - 31)
   const totalDays = new Date(tahun, bulan, 0).getDate();
@@ -201,22 +210,18 @@ export default function KegiatanAbsensiPage() {
     showToast("success", "Semua filter telah direset.");
   };
 
-  // Status absensi:
-  // 1. Jika ada status tercatat di database (alfa, izin, sakit, hadir, atau ""), gunakan itu.
-  // 2. Jika sesi telah/sedang berjalan (Pagi >= 04.00 WIB, Malam >= 17.00 WIB): otomatis HADIR.
-  // 3. Jika sesi belum berjalan / hari mendatang: kosong (-).
+  // Status absensi efektif santri:
+  // 1. Jika ada status tercatat (hadir, alfa, izin, sakit), tampilkan status tersebut.
+  // 2. Default jika belum diisi: kosong / "-" ("").
   const getEffectiveStatus = useCallback(
     (santriId: string, day: number, sesiType: SesiAbsen): StatusAbsen | "" => {
       const key = `${santriId}_${day}_${sesiType}`;
       if (key in absenMap) {
         return absenMap[key];
       }
-      if (isSessionPastOrCurrent(tahun, bulan, day, sesiType)) {
-        return "hadir";
-      }
       return "";
     },
-    [absenMap, tahun, bulan]
+    [absenMap]
   );
 
   // Simpan nilai absensi per sel secara cepat (in-cell editing)
@@ -378,6 +383,80 @@ export default function KegiatanAbsensiPage() {
     );
   }, [santriList, bulkSearch]);
 
+  // Menetapkan status Hadir untuk rentang tanggal tertentu pada santri yang belum diabsen (status "-")
+  // Aturan user:
+  // "untuk merentangkan hadir semua sesuai dengan tanggal yang dikehendaki tanpa membuat hadir secara paksa bila sudah diisi status lainnya kecuali '-'"
+  const handleApplyRangeHadir = async () => {
+    const start = Math.min(rangeStartDay, rangeEndDay);
+    const end = Math.max(rangeStartDay, rangeEndDay);
+
+    const targetSessions: SesiAbsen[] =
+      rangeSesi === "semua" ? ["pagi", "malam"] : [rangeSesi as SesiAbsen];
+
+    const recordsToUpsert: {
+      santri_id: string;
+      tanggal: string;
+      sesi: SesiAbsen;
+      status: StatusAbsen;
+    }[] = [];
+
+    const updatedAbsenMap = { ...absenMap };
+    let filledCount = 0;
+
+    santriList.forEach((s) => {
+      for (let d = start; d <= end; d++) {
+        // Hari Jumat selalu libur, jangan diisi
+        if (isFridayDate(tahun, bulan, d)) continue;
+
+        targetSessions.forEach((sesType) => {
+          const currentStatus = getEffectiveStatus(s.id, d, sesType);
+          // HANYA jika status masih kosong / "-"
+          // Jangan menimpa jika sudah terisi alfa, izin, sakit, atau sudah hadir
+          if (currentStatus === "") {
+            const key = `${s.id}_${d}_${sesType}`;
+            updatedAbsenMap[key] = "hadir";
+            const dateStr = `${tahun}-${String(bulan).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+            recordsToUpsert.push({
+              santri_id: s.id,
+              tanggal: dateStr,
+              sesi: sesType,
+              status: "hadir",
+            });
+            filledCount++;
+          }
+        });
+      }
+    });
+
+    if (recordsToUpsert.length === 0) {
+      showToast(
+        "success",
+        "Tidak ada sel status kosong (-) pada rentang tanggal tersebut. Status santri yang sudah ada tetap aman."
+      );
+      setRangeModalOpen(false);
+      return;
+    }
+
+    setIsSavingRange(true);
+    // Optimistic update
+    setAbsenMap(updatedAbsenMap);
+
+    try {
+      await upsertAbsensiBatch(recordsToUpsert);
+      showToast(
+        "success",
+        `Berhasil menetapkan status Hadir pada ${filledCount} sesi (Tgl ${start} s/d ${end}).`
+      );
+      setRangeModalOpen(false);
+    } catch (err) {
+      console.error(err);
+      showToast("error", "Gagal menyimpan status hadir rentang tanggal.");
+      loadData();
+    } finally {
+      setIsSavingRange(false);
+    }
+  };
+
   const handleExportExcel = () => {
     const rows = santriList.map((s, idx) => {
       const rowObj: Record<string, unknown> = {
@@ -422,7 +501,7 @@ export default function KegiatanAbsensiPage() {
           Kegiatan Tahfidz Umum (Absensi Harian Pagi & Malam)
         </h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Pilih status di dalam sel tanggal (H: Hadir, A: Alfa, I: Izin, S: Sakit). Status Hadir otomatis aktif untuk sesi yang telah/sedang berjalan (Pagi: mulai 04.00 WIB, Malam: mulai 17.00 WIB). Kolom hari Jumat libur.
+          Pilih status di dalam sel tanggal (H: Hadir, A: Alfa, I: Izin, S: Sakit), atau gunakan tombol &quot;Pilih Hadir&quot; untuk merentangkan status Hadir sesuai tanggal yang dikehendaki. Kolom hari Jumat libur.
         </p>
       </div>
 
@@ -636,6 +715,21 @@ export default function KegiatanAbsensiPage() {
           {/* Keterangan Status: Dapat Diklik untuk Penetapan Massal */}
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
             <span className="font-semibold text-slate-700 dark:text-slate-300">Keterangan:</span>
+            {/* Tombol Pilih Hadir: diletakkan disamping kiri tombol Hadir */}
+            <button
+              type="button"
+              onClick={() => {
+                setRangeStartDay(1);
+                setRangeEndDay(Math.min(now.getDate(), totalDays));
+                setRangeSesi(sesi === "malam" ? "malam" : sesi === "pagi" ? "pagi" : "semua");
+                setRangeModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-emerald-600 bg-emerald-700 text-white font-bold hover:bg-emerald-800 active:scale-95 transition shadow-xs cursor-pointer mr-1"
+              title="Rentangkan status Hadir untuk tanggal tertentu tanpa menimpa status yang sudah diisi"
+            >
+              <CalendarRange className="h-3.5 w-3.5" />
+              <span>Pilih Hadir</span>
+            </button>
             <button
               type="button"
               onClick={() => handleOpenBulkModal("hadir")}
@@ -1336,6 +1430,163 @@ export default function KegiatanAbsensiPage() {
                   </span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POP-UP: MODAL PILIH HADIR (RENTANG TANGGAL) */}
+      {rangeModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-range-hadir-title"
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 animate-in fade-in zoom-in-95 duration-150">
+            {/* Header Modal */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                  <CalendarRange className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2
+                    id="modal-range-hadir-title"
+                    className="text-base font-bold text-slate-900 dark:text-white"
+                  >
+                    Pilih Hadir (Rentang Tanggal)
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Bulan {BULAN_NAMES[bulan - 1]} {tahun} • {santriList.length} Santri Terdaftar
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRangeModalOpen(false)}
+                aria-label="Tutup modal rentang hadir"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Isi Form Rentang Tanggal */}
+            <div className="py-4 space-y-4">
+              {/* Pilihan Dari Tanggal & Sampai Tanggal */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                    Dari Tanggal
+                  </label>
+                  <select
+                    value={rangeStartDay}
+                    onChange={(e) => setRangeStartDay(Number(e.target.value))}
+                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    {dayNumbers.map((d) => (
+                      <option key={d} value={d}>
+                        Tanggal {d} {isFridayDate(tahun, bulan, d) ? "(Jumat - Libur)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                    Sampai Tanggal
+                  </label>
+                  <select
+                    value={rangeEndDay}
+                    onChange={(e) => setRangeEndDay(Number(e.target.value))}
+                    className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    {dayNumbers.map((d) => (
+                      <option key={d} value={d}>
+                        Tanggal {d} {isFridayDate(tahun, bulan, d) ? "(Jumat - Libur)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Pilihan Sesi Target */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Terapkan Pada Sesi
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRangeSesi("semua")}
+                    className={`h-9 rounded-xl text-xs font-bold border transition ${
+                      rangeSesi === "semua"
+                        ? "bg-emerald-800 text-white border-emerald-800 shadow-xs"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    }`}
+                  >
+                    Semua (P & M)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRangeSesi("pagi")}
+                    className={`h-9 rounded-xl text-xs font-bold border transition ${
+                      rangeSesi === "pagi"
+                        ? "bg-emerald-800 text-white border-emerald-800 shadow-xs"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    }`}
+                  >
+                    Sesi Pagi
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRangeSesi("malam")}
+                    className={`h-9 rounded-xl text-xs font-bold border transition ${
+                      rangeSesi === "malam"
+                        ? "bg-emerald-800 text-white border-emerald-800 shadow-xs"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    }`}
+                  >
+                    Sesi Malam
+                  </button>
+                </div>
+              </div>
+
+              {/* Kotak Info Ketentuan */}
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-300">
+                <div className="flex items-start gap-2.5">
+                  <Info className="h-4 w-4 shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-400" />
+                  <div className="space-y-1">
+                    <p className="font-bold">Ketentuan Pengisian Hadir:</p>
+                    <ul className="list-disc list-inside space-y-0.5 text-[11px] text-emerald-800 dark:text-emerald-300">
+                      <li>Hanya sel yang masih berstatus <strong>kosong (-)</strong> yang akan diubah menjadi Hadir.</li>
+                      <li>Status <strong>Alfa (A)</strong>, <strong>Izin (I)</strong>, atau <strong>Sakit (S)</strong> yang sudah terisi <strong>tidak akan ditimpa</strong>.</li>
+                      <li>Hari <strong>Jumat (Libur)</strong> dilewati otomatis.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Modal */}
+            <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setRangeModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isSavingRange}
+                onClick={handleApplyRangeHadir}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-emerald-800 text-white hover:bg-emerald-900 active:scale-95 transition shadow-sm disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Check className="h-4 w-4" />
+                <span>{isSavingRange ? "Menyimpan Status Hadir..." : "Simpan Status Hadir"}</span>
+              </button>
             </div>
           </div>
         </div>
