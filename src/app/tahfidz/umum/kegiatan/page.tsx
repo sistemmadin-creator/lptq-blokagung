@@ -16,6 +16,7 @@ import {
   fetchAbsensiBulan,
   upsertAbsensiCell,
 } from "@/lib/services/tahfidz-service";
+import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
@@ -42,10 +43,17 @@ const BULAN_NAMES = [
   "Desember",
 ];
 
+const NAMA_HARI_SINGKAT = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+
 // Mengecek apakah tanggal tertentu adalah hari Jumat (getDay() === 5)
 function isFridayDate(year: number, month1Based: number, day: number): boolean {
   const d = new Date(year, month1Based - 1, day);
   return d.getDay() === 5;
+}
+
+function getDayNameShort(year: number, month1Based: number, day: number): string {
+  const d = new Date(year, month1Based - 1, day);
+  return NAMA_HARI_SINGKAT[d.getDay()];
 }
 
 export default function KegiatanAbsensiPage() {
@@ -55,7 +63,7 @@ export default function KegiatanAbsensiPage() {
   const now = new Date();
   const [tahun, setTahun] = useState(now.getFullYear());
   const [bulan, setBulan] = useState(now.getMonth() + 1);
-  const [sesi, setSesi] = useState<SesiAbsen>("pagi");
+  const [sesi, setSesi] = useState<SesiAbsen | "semua">("pagi");
 
   const [search, setSearch] = useState("");
   const [asramaFilter, setAsramaFilter] = useState("");
@@ -67,7 +75,7 @@ export default function KegiatanAbsensiPage() {
   const [filterModalOpen, setFilterModalOpen] = useState(false);
 
   const [santriList, setSantriList] = useState<Santri[]>([]);
-  // Key absenMap: `${santri_id}_${tgl}` => "hadir" | "alfa" | "izin" | "sakit"
+  // Key format: `${santri_id}_${day}_${sesi}` => "hadir" | "alfa" | "izin" | "sakit"
   const [absenMap, setAbsenMap] = useState<Record<string, StatusAbsen>>({});
   const [loading, setLoading] = useState(true);
 
@@ -87,7 +95,6 @@ export default function KegiatanAbsensiPage() {
           halaqoh_kelas: kelasFilter,
           halaqoh_bagian: bagianFilter,
         }),
-        // Parameter urutan yang benar: tahun dahulu, kemudian bulan, lalu sesi
         fetchAbsensiBulan(tahun, bulan, sesi),
       ]);
 
@@ -95,11 +102,10 @@ export default function KegiatanAbsensiPage() {
 
       const map: Record<string, StatusAbsen> = {};
       for (const row of absensiRows) {
-        // Parsing aman berbasis string 'YYYY-MM-DD' untuk mencegah pergeseran zona waktu
         const parts = row.tanggal.split("-");
         const d = parts.length === 3 ? parseInt(parts[2], 10) : new Date(row.tanggal).getDate();
         if (!isNaN(d)) {
-          map[`${row.santri_id}_${d}`] = row.status;
+          map[`${row.santri_id}_${d}_${row.sesi}`] = row.status;
         }
       }
       setAbsenMap(map);
@@ -139,7 +145,7 @@ export default function KegiatanAbsensiPage() {
   // Hook cetak PDF via react-to-print
   const handlePrint = useReactToPrint({
     content: () => printRef.current,
-    documentTitle: `Absensi_${BULAN_NAMES[bulan - 1]}_${tahun}_${sesi}`,
+    documentTitle: `Absensi_${BULAN_NAMES[bulan - 1]}_${tahun}_${sesi.toUpperCase()}`,
   });
 
   // Hitung filter aktif
@@ -161,31 +167,40 @@ export default function KegiatanAbsensiPage() {
   };
 
   // Simpan nilai absensi per sel secara cepat (in-cell editing)
-  const handleCellChange = async (santriId: string, day: number, newStatus: string) => {
-    const key = `${santriId}_${day}`;
-    const padMonth = String(bulan).padStart(2, "0");
-    const padDay = String(day).padStart(2, "0");
-    const dateStr = `${tahun}-${padMonth}-${padDay}`;
+  const handleCellChange = async (
+    santriId: string,
+    day: number,
+    targetSesi: SesiAbsen,
+    newStatus: string
+  ) => {
+    const key = `${santriId}_${day}_${targetSesi}`;
+    const prevStatus = absenMap[key] || "";
+    if (prevStatus === newStatus) return;
 
-    // Pembaruan optimistik di UI
-    if (!newStatus) {
-      const updated = { ...absenMap };
-      delete updated[key];
-      setAbsenMap(updated);
-    } else {
-      setAbsenMap((prev) => ({ ...prev, [key]: newStatus as StatusAbsen }));
-    }
+    // Optimistic update
+    setAbsenMap((prev) => {
+      const updated = { ...prev };
+      if (!newStatus) delete updated[key];
+      else updated[key] = newStatus as StatusAbsen;
+      return updated;
+    });
 
+    const dateStr = `${tahun}-${String(bulan).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     try {
       await upsertAbsensiCell({
         santri_id: santriId,
         tanggal: dateStr,
-        sesi,
+        sesi: targetSesi,
         status: (newStatus || "") as StatusAbsen | "",
       });
     } catch (err) {
+      setAbsenMap((prev) => {
+        const rollback = { ...prev };
+        if (prevStatus) rollback[key] = prevStatus;
+        else delete rollback[key];
+        return rollback;
+      });
       showToast("error", "Gagal menyimpan absensi tanggal " + day);
-      loadData();
     }
   };
 
@@ -194,7 +209,12 @@ export default function KegiatanAbsensiPage() {
     let c = 0;
     for (const d of dayNumbers) {
       if (isFridayDate(tahun, bulan, d)) continue;
-      if (absenMap[`${santriId}_${d}`] === st) c++;
+      if (sesi === "semua") {
+        if (absenMap[`${santriId}_${d}_pagi`] === st) c++;
+        if (absenMap[`${santriId}_${d}_malam`] === st) c++;
+      } else {
+        if (absenMap[`${santriId}_${d}_${sesi}`] === st) c++;
+      }
     }
     return c;
   };
@@ -205,15 +225,20 @@ export default function KegiatanAbsensiPage() {
         No: idx + 1,
         Kode: s.kode,
         "Nama Santri": s.nama_lengkap,
-        Asrama: s.asrama,
-        Blok: s.blok,
-        Kamar: s.kamar,
+        Kamar: formatKamarDisplay(s.kode_kamar, s.kamar),
         Halaqoh: s.halaqoh,
       };
       for (const d of dayNumbers) {
         const fri = isFridayDate(tahun, bulan, d);
-        const val = absenMap[`${s.id}_${d}`];
-        rowObj[`Tgl_${d}`] = fri ? "JUMAT" : val ? val[0].toUpperCase() : "-";
+        if (sesi === "semua") {
+          const valP = absenMap[`${s.id}_${d}_pagi`];
+          const valM = absenMap[`${s.id}_${d}_malam`];
+          rowObj[`Tgl_${d}_Pagi`] = fri ? "JUMAT" : valP ? valP[0].toUpperCase() : "-";
+          rowObj[`Tgl_${d}_Malam`] = fri ? "JUMAT" : valM ? valM[0].toUpperCase() : "-";
+        } else {
+          const val = absenMap[`${s.id}_${d}_${sesi}`];
+          rowObj[`Tgl_${d}`] = fri ? "JUMAT" : val ? val[0].toUpperCase() : "-";
+        }
       }
       rowObj["Total Hadir"] = countStatus(s.id, "hadir");
       rowObj["Total Alfa"] = countStatus(s.id, "alfa");
@@ -224,7 +249,7 @@ export default function KegiatanAbsensiPage() {
 
     exportJsonToExcel(
       rows,
-      `Absensi_${BULAN_NAMES[bulan - 1]}_${tahun}_Sesi_${sesi}`,
+      `Absensi_${BULAN_NAMES[bulan - 1]}_${tahun}_Sesi_${sesi.toUpperCase()}`,
       "RekapAbsensi"
     );
     showToast("success", "Rekap absensi bulanan berhasil diekspor ke Excel.");
@@ -252,9 +277,9 @@ export default function KegiatanAbsensiPage() {
           aria-label="Pilih Bulan"
           className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         >
-          {BULAN_NAMES.map((name, idx) => (
-            <option key={name} value={idx + 1}>
-              {name}
+          {BULAN_NAMES.map((bName, idx) => (
+            <option key={bName} value={idx + 1}>
+              {bName}
             </option>
           ))}
         </select>
@@ -268,8 +293,19 @@ export default function KegiatanAbsensiPage() {
           className="h-11 w-24 rounded-xl border border-slate-300 bg-white px-3 text-center text-sm font-mono font-bold text-slate-800 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         />
 
-        {/* Toggle Sesi Pagi / Malam */}
+        {/* Toggle Sesi Semua / Pagi / Malam */}
         <div className="flex h-11 items-center rounded-xl border border-slate-300 bg-slate-100 p-1 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+          <button
+            type="button"
+            onClick={() => setSesi("semua")}
+            className={`h-full px-3 rounded-lg text-xs font-bold uppercase transition ${
+              sesi === "semua"
+                ? "bg-emerald-800 text-white shadow"
+                : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+            }`}
+          >
+            Semua
+          </button>
           <button
             type="button"
             onClick={() => setSesi("pagi")}
@@ -332,24 +368,24 @@ export default function KegiatanAbsensiPage() {
         >
           <SlidersHorizontal className="h-5 w-5" />
           {activeFilterCount > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-bold text-white shadow">
+            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-800 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900">
               {activeFilterCount}
             </span>
           )}
         </button>
 
-        {/* Tombol Ekspor Excel (Hanya Logo) */}
+        {/* Tombol Ekspor Excel */}
         <button
           type="button"
           onClick={handleExportExcel}
-          title="Ekspor Rekap Excel"
-          aria-label="Ekspor Rekap Excel"
+          title="Ekspor ke Excel"
+          aria-label="Ekspor ke Excel"
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
         >
           <FileSpreadsheet className="h-5 w-5" />
         </button>
 
-        {/* Tombol Cetak / Unduh PDF (Hanya Logo) */}
+        {/* Tombol Cetak / Unduh PDF */}
         <button
           type="button"
           onClick={handlePrint}
@@ -434,6 +470,9 @@ export default function KegiatanAbsensiPage() {
             <span>I = Izin</span>
             <span>S = Sakit</span>
             <span className="font-semibold text-slate-700 dark:text-slate-300">JUM = Hari Jumat (Libur)</span>
+            {sesi === "semua" && (
+              <span className="text-emerald-700 font-semibold">(P = Pagi, M = Malam)</span>
+            )}
           </div>
         </div>
 
@@ -444,30 +483,108 @@ export default function KegiatanAbsensiPage() {
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-300 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50">
-                  <th className="sticky left-0 z-10 bg-slate-50 dark:bg-slate-800 px-2.5 py-2 font-semibold">No</th>
-                  <th className="sticky left-8 z-10 bg-slate-50 dark:bg-slate-800 min-w-[160px] px-2.5 py-2 font-semibold">
+                  <th
+                    rowSpan={sesi === "semua" ? 2 : 1}
+                    className="sticky left-0 z-10 bg-slate-50 dark:bg-slate-800 px-2.5 py-2 font-semibold"
+                  >
+                    No
+                  </th>
+                  <th
+                    rowSpan={sesi === "semua" ? 2 : 1}
+                    className="sticky left-8 z-10 bg-slate-50 dark:bg-slate-800 min-w-[160px] px-2.5 py-2 font-semibold"
+                  >
                     Nama Santri
                   </th>
-                  <th className="px-2 py-2 font-semibold text-center">Halaqoh</th>
+                  <th
+                    rowSpan={sesi === "semua" ? 2 : 1}
+                    className="px-2 py-2 font-semibold text-center w-16"
+                  >
+                    Kamar
+                  </th>
+                  <th
+                    rowSpan={sesi === "semua" ? 2 : 1}
+                    className="px-2 py-2 font-semibold text-center"
+                  >
+                    Halaqoh
+                  </th>
                   {dayNumbers.map((d) => {
                     const fri = isFridayDate(tahun, bulan, d);
+                    const dayName = getDayNameShort(tahun, bulan, d);
                     return (
                       <th
                         key={d}
-                        className={`min-w-[34px] px-1 py-2 text-center font-mono text-[11px] ${
+                        colSpan={sesi === "semua" ? 2 : 1}
+                        className={`px-1 py-2 text-center font-mono text-[11px] ${
+                          sesi === "semua" ? "min-w-[56px]" : "min-w-[34px]"
+                        } ${
                           fri ? "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 font-bold" : ""
                         }`}
                       >
-                        {d}
-                        {fri && <div className="text-[9px] font-normal">JUM</div>}
+                        <div className="font-bold">{d}</div>
+                        <div
+                          className={`text-[9px] font-semibold uppercase ${
+                            fri
+                              ? "text-rose-600 dark:text-rose-400 font-bold"
+                              : "text-slate-400 dark:text-slate-500"
+                          }`}
+                        >
+                          {dayName}
+                        </div>
                       </th>
                     );
                   })}
-                  <th className="px-2 py-2 text-center font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-300">H</th>
-                  <th className="px-2 py-2 text-center font-semibold bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-300">A</th>
-                  <th className="px-2 py-2 text-center font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300">I</th>
-                  <th className="px-2 py-2 text-center font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-300">S</th>
+                  <th
+                    rowSpan={sesi === "semua" ? 2 : 1}
+                    className="px-2 py-2 text-center font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-300"
+                  >
+                    H
+                  </th>
+                  <th
+                    rowSpan={sesi === "semua" ? 2 : 1}
+                    className="px-2 py-2 text-center font-semibold bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-300"
+                  >
+                    A
+                  </th>
+                  <th
+                    rowSpan={sesi === "semua" ? 2 : 1}
+                    className="px-2 py-2 text-center font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300"
+                  >
+                    I
+                  </th>
+                  <th
+                    rowSpan={sesi === "semua" ? 2 : 1}
+                    className="px-2 py-2 text-center font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-300"
+                  >
+                    S
+                  </th>
                 </tr>
+
+                {/* Sub-header P & M jika Sesi SEMUA */}
+                {sesi === "semua" && (
+                  <tr className="bg-slate-100/80 text-[10px] text-slate-500 dark:bg-slate-800/80 dark:text-slate-400">
+                    {dayNumbers.map((d) => {
+                      const fri = isFridayDate(tahun, bulan, d);
+                      return (
+                        <React.Fragment key={`sub_hdr_${d}`}>
+                          <th
+                            className={`py-0.5 px-0.5 text-center border-b border-r border-slate-200 dark:border-slate-700 font-bold ${
+                              fri ? "bg-rose-100/50 text-rose-800" : ""
+                            }`}
+                          >
+                            P
+                          </th>
+                          <th
+                            className={`py-0.5 px-0.5 text-center border-b border-r border-slate-200 dark:border-slate-700 font-bold ${
+                              fri ? "bg-rose-100/50 text-rose-800" : ""
+                            }`}
+                          >
+                            M
+                          </th>
+                        </React.Fragment>
+                      );
+                    })}
+                  </tr>
+                )}
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {santriList.map((s, idx) => (
@@ -477,16 +594,47 @@ export default function KegiatanAbsensiPage() {
                     </td>
                     <td className="sticky left-8 z-10 bg-white dark:bg-slate-900 px-2.5 py-1.5 font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
                       {s.nama_lengkap}
-                      <span className="block text-[10px] font-normal text-slate-400">
-                        {s.asrama} {s.blok ? `Blok ${s.blok}` : ""} {s.kamar ? `Kamar ${s.kamar}` : ""}
-                      </span>
+                      {((s.asrama && s.asrama !== "-") || (s.blok && s.blok !== "-")) && (
+                        <span className="block text-[10px] font-normal text-slate-400">
+                          {[
+                            s.asrama && s.asrama !== "-" ? s.asrama : "",
+                            s.blok && s.blok !== "-" ? `Blok ${s.blok}` : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                        </span>
+                      )}
+                    </td>
+                    {/* Kolom Kamar (Format E03) */}
+                    <td className="px-2 py-1.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                      {formatKamarDisplay(s.kode_kamar, s.kamar)}
                     </td>
                     <td className="px-2 py-1.5 text-center">
                       <HalaqohBadge kelas={s.halaqoh_kelas} bagian={s.halaqoh_bagian} />
                     </td>
+
+                    {/* Sel Absensi */}
                     {dayNumbers.map((d) => {
                       const fri = isFridayDate(tahun, bulan, d);
                       if (fri) {
+                        if (sesi === "semua") {
+                          return (
+                            <React.Fragment key={d}>
+                              <td
+                                className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
+                                title="Hari Jumat Libur"
+                              >
+                                -
+                              </td>
+                              <td
+                                className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
+                                title="Hari Jumat Libur"
+                              >
+                                -
+                              </td>
+                            </React.Fragment>
+                          );
+                        }
                         return (
                           <td
                             key={d}
@@ -497,23 +645,84 @@ export default function KegiatanAbsensiPage() {
                           </td>
                         );
                       }
-                      const cur = absenMap[`${s.id}_${d}`] || "";
+
+                      if (sesi === "semua") {
+                        const curPagi = absenMap[`${s.id}_${d}_pagi`] || "";
+                        const curMalam = absenMap[`${s.id}_${d}_malam`] || "";
+                        return (
+                          <React.Fragment key={d}>
+                            {/* Sesi Pagi */}
+                            <td className="p-0.5 text-center">
+                              <select
+                                value={curPagi}
+                                onChange={(e) => handleCellChange(s.id, d, "pagi", e.target.value)}
+                                aria-label={`Pagi santri ${s.nama_lengkap} tanggal ${d}`}
+                                className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
+                                  curPagi === "hadir"
+                                    ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
+                                    : curPagi === "alfa"
+                                    ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
+                                    : curPagi === "izin"
+                                    ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+                                    : curPagi === "sakit"
+                                    ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                                    : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                                }`}
+                              >
+                                <option value="">-</option>
+                                <option value="hadir">H</option>
+                                <option value="alfa">A</option>
+                                <option value="izin">I</option>
+                                <option value="sakit">S</option>
+                              </select>
+                            </td>
+                            {/* Sesi Malam */}
+                            <td className="p-0.5 text-center">
+                              <select
+                                value={curMalam}
+                                onChange={(e) => handleCellChange(s.id, d, "malam", e.target.value)}
+                                aria-label={`Malam santri ${s.nama_lengkap} tanggal ${d}`}
+                                className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
+                                  curMalam === "hadir"
+                                    ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
+                                    : curMalam === "alfa"
+                                    ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
+                                    : curMalam === "izin"
+                                    ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+                                    : curMalam === "sakit"
+                                    ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                                    : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                                }`}
+                              >
+                                <option value="">-</option>
+                                <option value="hadir">H</option>
+                                <option value="alfa">A</option>
+                                <option value="izin">I</option>
+                                <option value="sakit">S</option>
+                              </select>
+                            </td>
+                          </React.Fragment>
+                        );
+                      }
+
+                      // Sesi Tunggal
+                      const cur = absenMap[`${s.id}_${d}_${sesi}`] || "";
                       return (
                         <td key={d} className="p-0.5 text-center">
                           <select
                             value={cur}
-                            onChange={(e) => handleCellChange(s.id, d, e.target.value)}
+                            onChange={(e) => handleCellChange(s.id, d, sesi, e.target.value)}
                             aria-label={`Absen santri ${s.nama_lengkap} tanggal ${d}`}
-                            className={`h-7 w-8 rounded text-center font-bold text-[11px] border focus:outline-none ${
+                            className={`h-7 w-8 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
                               cur === "hadir"
                                 ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
-                                : cur === "alfa"
-                                ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
-                                : cur === "izin"
-                                ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
-                                : cur === "sakit"
-                                ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                                : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                              : cur === "alfa"
+                              ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
+                              : cur === "izin"
+                              ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+                              : cur === "sakit"
+                              ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                              : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
                             }`}
                           >
                             <option value="">-</option>
