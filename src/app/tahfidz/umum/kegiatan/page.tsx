@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   FileSpreadsheet,
   Printer,
@@ -9,6 +9,11 @@ import {
   RotateCcw,
   Check,
   Search,
+  ChevronLeft,
+  ChevronRight,
+  CheckSquare,
+  Square,
+  Users,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
@@ -56,6 +61,19 @@ function getDayNameShort(year: number, month1Based: number, day: number): string
   return NAMA_HARI_SINGKAT[d.getDay()];
 }
 
+function getPageNumbers(current: number, total: number): (number | "...")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, "...", total];
+  }
+  if (current >= total - 3) {
+    return [1, "...", total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, "...", current - 1, current, current + 1, "...", total];
+}
+
 export default function KegiatanAbsensiPage() {
   const { showToast } = useToast();
   const printRef = useRef<HTMLDivElement>(null);
@@ -74,10 +92,23 @@ export default function KegiatanAbsensiPage() {
 
   const [filterModalOpen, setFilterModalOpen] = useState(false);
 
+  // Pagination State: default 15 baris
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+
   const [santriList, setSantriList] = useState<Santri[]>([]);
   // Key format: `${santri_id}_${day}_${sesi}` => "hadir" | "alfa" | "izin" | "sakit"
   const [absenMap, setAbsenMap] = useState<Record<string, StatusAbsen>>({});
   const [loading, setLoading] = useState(true);
+
+  // Modal Penetapan Status Massal
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkTargetStatus, setBulkTargetStatus] = useState<StatusAbsen>("hadir");
+  const [bulkSelectedDay, setBulkSelectedDay] = useState<number>(Math.min(now.getDate(), 28));
+  const [bulkSelectedSesi, setBulkSelectedSesi] = useState<SesiAbsen>("pagi");
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
+  const [bulkSearch, setBulkSearch] = useState("");
+  const [isSavingBulk, setIsSavingBulk] = useState(false);
 
   // Jumlah hari dalam bulan terpilih (28 - 31)
   const totalDays = new Date(tahun, bulan, 0).getDate();
@@ -129,18 +160,20 @@ export default function KegiatanAbsensiPage() {
 
   useEffect(() => {
     loadData();
+    setPage(1);
   }, [loadData]);
 
-  // Handle tombol escape untuk modal filter
+  // Handle tombol escape untuk modal filter & bulk modal
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && filterModalOpen) {
-        setFilterModalOpen(false);
+      if (e.key === "Escape") {
+        if (bulkModalOpen) setBulkModalOpen(false);
+        if (filterModalOpen) setFilterModalOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filterModalOpen]);
+  }, [filterModalOpen, bulkModalOpen]);
 
   // Hook cetak PDF via react-to-print
   const handlePrint = useReactToPrint({
@@ -163,6 +196,7 @@ export default function KegiatanAbsensiPage() {
     setKamarFilter("");
     setKelasFilter("");
     setBagianFilter("");
+    setPage(1);
     showToast("success", "Semua filter telah direset.");
   };
 
@@ -219,6 +253,113 @@ export default function KegiatanAbsensiPage() {
     return c;
   };
 
+  // Pagination perhitungan
+  const totalSantri = santriList.length;
+  const totalPages = Math.max(1, Math.ceil(totalSantri / pageSize));
+  const displayedSantri = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return santriList.slice(start, start + pageSize);
+  }, [santriList, page, pageSize]);
+
+  // Buka modal penetapan status massal
+  const handleOpenBulkModal = (status: StatusAbsen) => {
+    setBulkTargetStatus(status);
+    setBulkSelectedDay(Math.min(now.getDate(), totalDays));
+    setBulkSelectedSesi(sesi === "malam" ? "malam" : "pagi");
+    setBulkSelectedIds([]);
+    setBulkSearch("");
+    setBulkModalOpen(true);
+  };
+
+  // Simpan status massal untuk santri yang dipilih
+  const handleApplyBulkStatus = async () => {
+    if (bulkSelectedIds.length === 0) {
+      showToast("error", "Pilih minimal 1 santri untuk diterapkan statusnya.");
+      return;
+    }
+
+    setIsSavingBulk(true);
+    const dateStr = `${tahun}-${String(bulan).padStart(2, "0")}-${String(bulkSelectedDay).padStart(2, "0")}`;
+
+    try {
+      // Optimistic update
+      setAbsenMap((prev) => {
+        const updated = { ...prev };
+        bulkSelectedIds.forEach((id) => {
+          updated[`${id}_${bulkSelectedDay}_${bulkSelectedSesi}`] = bulkTargetStatus;
+        });
+        return updated;
+      });
+
+      await Promise.all(
+        bulkSelectedIds.map((santriId) =>
+          upsertAbsensiCell({
+            santri_id: santriId,
+            tanggal: dateStr,
+            sesi: bulkSelectedSesi,
+            status: bulkTargetStatus,
+          })
+        )
+      );
+
+      showToast(
+        "success",
+        `Status ${bulkTargetStatus.toUpperCase()} berhasil diterapkan ke ${bulkSelectedIds.length} santri.`
+      );
+      setBulkModalOpen(false);
+    } catch (err) {
+      console.error(err);
+      showToast("error", "Gagal menyimpan presensi massal.");
+      loadData();
+    } finally {
+      setIsSavingBulk(false);
+    }
+  };
+
+  // Ubah status 1 santri langsung dari dalam bulk modal
+  const handleQuickChangeInModal = async (santriId: string, newSt: StatusAbsen | "") => {
+    const dateStr = `${tahun}-${String(bulan).padStart(2, "0")}-${String(bulkSelectedDay).padStart(2, "0")}`;
+    const key = `${santriId}_${bulkSelectedDay}_${bulkSelectedSesi}`;
+    const prev = absenMap[key] || "";
+
+    setAbsenMap((p) => {
+      const updated = { ...p };
+      if (!newSt) delete updated[key];
+      else updated[key] = newSt;
+      return updated;
+    });
+
+    try {
+      await upsertAbsensiCell({
+        santri_id: santriId,
+        tanggal: dateStr,
+        sesi: bulkSelectedSesi,
+        status: newSt,
+      });
+      showToast("success", `Status diperbarui menjadi ${newSt.toUpperCase() || "-"}.`);
+    } catch (err) {
+      setAbsenMap((p) => {
+        const rollback = { ...p };
+        if (prev) rollback[key] = prev;
+        else delete rollback[key];
+        return rollback;
+      });
+      showToast("error", "Gagal memperbarui status santri.");
+    }
+  };
+
+  // Filter santri di dalam bulk modal
+  const filteredBulkSantri = useMemo(() => {
+    const q = bulkSearch.trim().toLowerCase();
+    if (!q) return santriList;
+    return santriList.filter(
+      (s) =>
+        s.nama_lengkap.toLowerCase().includes(q) ||
+        (s.halaqoh && s.halaqoh.toLowerCase().includes(q)) ||
+        (s.kamar && s.kamar.toLowerCase().includes(q))
+    );
+  }, [santriList, bulkSearch]);
+
   const handleExportExcel = () => {
     const rows = santriList.map((s, idx) => {
       const rowObj: Record<string, unknown> = {
@@ -273,7 +414,10 @@ export default function KegiatanAbsensiPage() {
         {/* Pemilih Bulan */}
         <select
           value={bulan}
-          onChange={(e) => setBulan(Number(e.target.value))}
+          onChange={(e) => {
+            setBulan(Number(e.target.value));
+            setPage(1);
+          }}
           aria-label="Pilih Bulan"
           className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         >
@@ -288,7 +432,10 @@ export default function KegiatanAbsensiPage() {
         <input
           type="number"
           value={tahun}
-          onChange={(e) => setTahun(Number(e.target.value) || now.getFullYear())}
+          onChange={(e) => {
+            setTahun(Number(e.target.value) || now.getFullYear());
+            setPage(1);
+          }}
           aria-label="Pilih Tahun"
           className="h-11 w-24 rounded-xl border border-slate-300 bg-white px-3 text-center text-sm font-mono font-bold text-slate-800 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         />
@@ -336,7 +483,10 @@ export default function KegiatanAbsensiPage() {
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             placeholder="Cari nama santri..."
             aria-label="Cari nama santri"
             className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-sm text-slate-800 placeholder-slate-400 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
@@ -344,7 +494,10 @@ export default function KegiatanAbsensiPage() {
           {search && (
             <button
               type="button"
-              onClick={() => setSearch("")}
+              onClick={() => {
+                setSearch("");
+                setPage(1);
+              }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               title="Bersihkan pencarian"
               aria-label="Bersihkan pencarian"
@@ -463,13 +616,42 @@ export default function KegiatanAbsensiPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3 text-xs text-slate-500">
-            <span className="font-semibold">Keterangan:</span>
-            <span>H = Hadir</span>
-            <span>A = Alfa</span>
-            <span>I = Izin</span>
-            <span>S = Sakit</span>
-            <span className="font-semibold text-slate-700 dark:text-slate-300">JUM = Hari Jumat (Libur)</span>
+          {/* Keterangan Status: Dapat Diklik untuk Penetapan Massal */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+            <span className="font-semibold text-slate-700 dark:text-slate-300">Keterangan:</span>
+            <button
+              type="button"
+              onClick={() => handleOpenBulkModal("hadir")}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 font-bold hover:bg-emerald-100 transition shadow-xs dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 cursor-pointer"
+              title="Klik untuk menetapkan status Hadir ke beberapa santri sekaligus"
+            >
+              H = Hadir
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOpenBulkModal("alfa")}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-300 bg-rose-50 text-rose-800 font-bold hover:bg-rose-100 transition shadow-xs dark:border-rose-700 dark:bg-rose-950/60 dark:text-rose-300 cursor-pointer"
+              title="Klik untuk menetapkan status Alfa ke beberapa santri sekaligus"
+            >
+              A = Alfa
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOpenBulkModal("izin")}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-blue-300 bg-blue-50 text-blue-800 font-bold hover:bg-blue-100 transition shadow-xs dark:border-blue-700 dark:bg-blue-950/60 dark:text-blue-300 cursor-pointer"
+              title="Klik untuk menetapkan status Izin ke beberapa santri sekaligus"
+            >
+              I = Izin
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOpenBulkModal("sakit")}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 font-bold hover:bg-amber-100 transition shadow-xs dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-300 cursor-pointer"
+              title="Klik untuk menetapkan status Sakit ke beberapa santri sekaligus"
+            >
+              S = Sakit
+            </button>
+            <span className="font-semibold text-slate-700 dark:text-slate-300 ml-1">JUM = Libur</span>
             {sesi === "semua" && (
               <span className="text-emerald-700 font-semibold">(P = Pagi, M = Malam)</span>
             )}
@@ -587,174 +769,560 @@ export default function KegiatanAbsensiPage() {
                 )}
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {santriList.map((s, idx) => (
-                  <tr key={s.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-                    <td className="sticky left-0 z-10 bg-white dark:bg-slate-900 px-2.5 py-1.5 font-mono text-[11px] text-slate-500">
-                      {idx + 1}
-                    </td>
-                    <td className="sticky left-8 z-10 bg-white dark:bg-slate-900 px-2.5 py-1.5 font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
-                      {s.nama_lengkap}
-                      {((s.asrama && s.asrama !== "-") || (s.blok && s.blok !== "-")) && (
-                        <span className="block text-[10px] font-normal text-slate-400">
-                          {[
-                            s.asrama && s.asrama !== "-" ? s.asrama : "",
-                            s.blok && s.blok !== "-" ? `Blok ${s.blok}` : "",
-                          ]
-                            .filter(Boolean)
-                            .join(" ")}
-                        </span>
-                      )}
-                    </td>
-                    {/* Kolom Kamar (Format E03) */}
-                    <td className="px-2 py-1.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
-                      {formatKamarDisplay(s.kode_kamar, s.kamar)}
-                    </td>
-                    <td className="px-2 py-1.5 text-center">
-                      <HalaqohBadge kelas={s.halaqoh_kelas} bagian={s.halaqoh_bagian} />
-                    </td>
+                {displayedSantri.map((s, idx) => {
+                  const realIndex = (page - 1) * pageSize + idx + 1;
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                      <td className="sticky left-0 z-10 bg-white dark:bg-slate-900 px-2.5 py-1.5 font-mono text-[11px] text-slate-500">
+                        {realIndex}
+                      </td>
+                      <td className="sticky left-8 z-10 bg-white dark:bg-slate-900 px-2.5 py-1.5 font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                        {s.nama_lengkap}
+                        {((s.asrama && s.asrama !== "-") || (s.blok && s.blok !== "-")) && (
+                          <span className="block text-[10px] font-normal text-slate-400">
+                            {[
+                              s.asrama && s.asrama !== "-" ? s.asrama : "",
+                              s.blok && s.blok !== "-" ? `Blok ${s.blok}` : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                          </span>
+                        )}
+                      </td>
+                      {/* Kolom Kamar (Format E03) */}
+                      <td className="px-2 py-1.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                        {formatKamarDisplay(s.kode_kamar, s.kamar)}
+                      </td>
+                      <td className="px-2 py-1.5 text-center">
+                        <HalaqohBadge kelas={s.halaqoh_kelas} bagian={s.halaqoh_bagian} />
+                      </td>
 
-                    {/* Sel Absensi */}
-                    {dayNumbers.map((d) => {
-                      const fri = isFridayDate(tahun, bulan, d);
-                      if (fri) {
+                      {/* Sel Absensi */}
+                      {dayNumbers.map((d) => {
+                        const fri = isFridayDate(tahun, bulan, d);
+                        if (fri) {
+                          if (sesi === "semua") {
+                            return (
+                              <React.Fragment key={d}>
+                                <td
+                                  className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
+                                  title="Hari Jumat Libur"
+                                >
+                                  -
+                                </td>
+                                <td
+                                  className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
+                                  title="Hari Jumat Libur"
+                                >
+                                  -
+                                </td>
+                              </React.Fragment>
+                            );
+                          }
+                          return (
+                            <td
+                              key={d}
+                              className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
+                              title="Hari Jumat Libur"
+                            >
+                              -
+                            </td>
+                          );
+                        }
+
                         if (sesi === "semua") {
+                          const curPagi = absenMap[`${s.id}_${d}_pagi`] || "";
+                          const curMalam = absenMap[`${s.id}_${d}_malam`] || "";
                           return (
                             <React.Fragment key={d}>
-                              <td
-                                className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
-                                title="Hari Jumat Libur"
-                              >
-                                -
+                              {/* Sesi Pagi */}
+                              <td className="p-0.5 text-center">
+                                <select
+                                  value={curPagi}
+                                  onChange={(e) => handleCellChange(s.id, d, "pagi", e.target.value)}
+                                  aria-label={`Pagi santri ${s.nama_lengkap} tanggal ${d}`}
+                                  className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
+                                    curPagi === "hadir"
+                                      ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
+                                      : curPagi === "alfa"
+                                      ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
+                                      : curPagi === "izin"
+                                      ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+                                      : curPagi === "sakit"
+                                      ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                                      : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                                  }`}
+                                >
+                                  <option value="">-</option>
+                                  <option value="hadir">H</option>
+                                  <option value="alfa">A</option>
+                                  <option value="izin">I</option>
+                                  <option value="sakit">S</option>
+                                </select>
                               </td>
-                              <td
-                                className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
-                                title="Hari Jumat Libur"
-                              >
-                                -
+                              {/* Sesi Malam */}
+                              <td className="p-0.5 text-center">
+                                <select
+                                  value={curMalam}
+                                  onChange={(e) => handleCellChange(s.id, d, "malam", e.target.value)}
+                                  aria-label={`Malam santri ${s.nama_lengkap} tanggal ${d}`}
+                                  className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
+                                    curMalam === "hadir"
+                                      ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
+                                      : curMalam === "alfa"
+                                      ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
+                                      : curMalam === "izin"
+                                      ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+                                      : curMalam === "sakit"
+                                      ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                                      : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                                  }`}
+                                >
+                                  <option value="">-</option>
+                                  <option value="hadir">H</option>
+                                  <option value="alfa">A</option>
+                                  <option value="izin">I</option>
+                                  <option value="sakit">S</option>
+                                </select>
                               </td>
                             </React.Fragment>
                           );
                         }
+
+                        // Sesi Tunggal
+                        const cur = absenMap[`${s.id}_${d}_${sesi}`] || "";
                         return (
-                          <td
-                            key={d}
-                            className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
-                            title="Hari Jumat Libur"
-                          >
-                            -
+                          <td key={d} className="p-0.5 text-center">
+                            <select
+                              value={cur}
+                              onChange={(e) => handleCellChange(s.id, d, sesi, e.target.value)}
+                              aria-label={`Absen santri ${s.nama_lengkap} tanggal ${d}`}
+                              className={`h-7 w-8 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
+                                cur === "hadir"
+                                  ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
+                                : cur === "alfa"
+                                ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
+                                : cur === "izin"
+                                ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+                                : cur === "sakit"
+                                ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                                : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                              }`}
+                            >
+                              <option value="">-</option>
+                              <option value="hadir">H</option>
+                              <option value="alfa">A</option>
+                              <option value="izin">I</option>
+                              <option value="sakit">S</option>
+                            </select>
                           </td>
                         );
-                      }
-
-                      if (sesi === "semua") {
-                        const curPagi = absenMap[`${s.id}_${d}_pagi`] || "";
-                        const curMalam = absenMap[`${s.id}_${d}_malam`] || "";
-                        return (
-                          <React.Fragment key={d}>
-                            {/* Sesi Pagi */}
-                            <td className="p-0.5 text-center">
-                              <select
-                                value={curPagi}
-                                onChange={(e) => handleCellChange(s.id, d, "pagi", e.target.value)}
-                                aria-label={`Pagi santri ${s.nama_lengkap} tanggal ${d}`}
-                                className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
-                                  curPagi === "hadir"
-                                    ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
-                                    : curPagi === "alfa"
-                                    ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
-                                    : curPagi === "izin"
-                                    ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
-                                    : curPagi === "sakit"
-                                    ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                                    : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
-                                }`}
-                              >
-                                <option value="">-</option>
-                                <option value="hadir">H</option>
-                                <option value="alfa">A</option>
-                                <option value="izin">I</option>
-                                <option value="sakit">S</option>
-                              </select>
-                            </td>
-                            {/* Sesi Malam */}
-                            <td className="p-0.5 text-center">
-                              <select
-                                value={curMalam}
-                                onChange={(e) => handleCellChange(s.id, d, "malam", e.target.value)}
-                                aria-label={`Malam santri ${s.nama_lengkap} tanggal ${d}`}
-                                className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
-                                  curMalam === "hadir"
-                                    ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
-                                    : curMalam === "alfa"
-                                    ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
-                                    : curMalam === "izin"
-                                    ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
-                                    : curMalam === "sakit"
-                                    ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                                    : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
-                                }`}
-                              >
-                                <option value="">-</option>
-                                <option value="hadir">H</option>
-                                <option value="alfa">A</option>
-                                <option value="izin">I</option>
-                                <option value="sakit">S</option>
-                              </select>
-                            </td>
-                          </React.Fragment>
-                        );
-                      }
-
-                      // Sesi Tunggal
-                      const cur = absenMap[`${s.id}_${d}_${sesi}`] || "";
-                      return (
-                        <td key={d} className="p-0.5 text-center">
-                          <select
-                            value={cur}
-                            onChange={(e) => handleCellChange(s.id, d, sesi, e.target.value)}
-                            aria-label={`Absen santri ${s.nama_lengkap} tanggal ${d}`}
-                            className={`h-7 w-8 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
-                              cur === "hadir"
-                                ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
-                              : cur === "alfa"
-                              ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
-                              : cur === "izin"
-                              ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
-                              : cur === "sakit"
-                              ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                              : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
-                            }`}
-                          >
-                            <option value="">-</option>
-                            <option value="hadir">H</option>
-                            <option value="alfa">A</option>
-                            <option value="izin">I</option>
-                            <option value="sakit">S</option>
-                          </select>
-                        </td>
-                      );
-                    })}
-                    <td className="px-2 py-1.5 text-center font-mono font-bold bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-800">
-                      {countStatus(s.id, "hadir")}
-                    </td>
-                    <td className="px-2 py-1.5 text-center font-mono font-bold bg-rose-50/50 dark:bg-rose-950/20 text-rose-800">
-                      {countStatus(s.id, "alfa")}
-                    </td>
-                    <td className="px-2 py-1.5 text-center font-mono font-bold bg-amber-50/50 dark:bg-amber-950/20 text-amber-800">
-                      {countStatus(s.id, "izin")}
-                    </td>
-                    <td className="px-2 py-1.5 text-center font-mono font-bold bg-blue-50/50 dark:bg-blue-950/20 text-blue-800">
-                      {countStatus(s.id, "sakit")}
-                    </td>
-                  </tr>
-                ))}
+                      })}
+                      <td className="px-2 py-1.5 text-center font-mono font-bold bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-800">
+                        {countStatus(s.id, "hadir")}
+                      </td>
+                      <td className="px-2 py-1.5 text-center font-mono font-bold bg-rose-50/50 dark:bg-rose-950/20 text-rose-800">
+                        {countStatus(s.id, "alfa")}
+                      </td>
+                      <td className="px-2 py-1.5 text-center font-mono font-bold bg-amber-50/50 dark:bg-amber-950/20 text-amber-800">
+                        {countStatus(s.id, "izin")}
+                      </td>
+                      <td className="px-2 py-1.5 text-center font-mono font-bold bg-blue-50/50 dark:bg-blue-950/20 text-blue-800">
+                        {countStatus(s.id, "sakit")}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
+
+        {/* Pagination Bar Terpadu (10, 15, 25, 50 & Tombol Halaman 1, 2, 3...) */}
+        {totalSantri > 0 && (
+          <div className="no-print flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400">
+            <div className="flex flex-wrap items-center gap-2">
+              <span>Tampilkan</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                aria-label="Pilih jumlah baris per halaman"
+                className="h-8 rounded-xl border border-slate-300 bg-white px-2.5 text-xs font-bold text-slate-800 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                {[10, 15, 25, 50].map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+              <span>baris per halaman</span>
+              <span className="text-slate-300 dark:text-slate-700">|</span>
+              <span>
+                Menampilkan{" "}
+                <strong className="text-slate-900 dark:text-white">
+                  {(page - 1) * pageSize + 1}
+                </strong>{" "}
+                -{" "}
+                <strong className="text-slate-900 dark:text-white">
+                  {Math.min(page * pageSize, totalSantri)}
+                </strong>{" "}
+                dari <strong className="text-slate-900 dark:text-white">{totalSantri}</strong> santri
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1 font-semibold">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage(page - 1)}
+                title="Halaman Sebelumnya"
+                className="inline-flex h-8 px-2.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              {getPageNumbers(page, totalPages).map((p, idx) =>
+                p === "..." ? (
+                  <span key={`ell-${idx}`} className="px-1 text-slate-400 select-none">
+                    ...
+                  </span>
+                ) : (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPage(Number(p))}
+                    className={`h-8 min-w-[32px] px-2 rounded-xl font-mono text-xs transition ${
+                      page === p
+                        ? "bg-emerald-800 text-white font-bold shadow-xs"
+                        : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                )
+              )}
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage(page + 1)}
+                title="Halaman Berikutnya"
+                className="inline-flex h-8 px-2.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* POP-UP MODAL FILTER */}
+      {/* POP-UP 1: PENETAPAN STATUS MASSAL (Gambar 1 - Klik H, A, I, S) */}
+      {bulkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-2 sm:p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-3xl max-h-[92vh] rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl flex flex-col dark:border-slate-800 dark:bg-slate-900">
+            {/* Header Modal */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-800 text-white shadow">
+                  <Users className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                    Penetapan Presensi Massal
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Pilih santri untuk menetapkan atau mengubah status presensi sekaligus
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                aria-label="Tutup"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Kontrol Tanggal, Sesi, dan Status Target */}
+            <div className="space-y-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex flex-wrap items-center justify-between gap-2.5">
+                {/* Pemilih Tanggal & Sesi */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Tanggal:
+                  </span>
+                  <select
+                    value={bulkSelectedDay}
+                    onChange={(e) => setBulkSelectedDay(Number(e.target.value))}
+                    className="h-8 rounded-xl border border-slate-300 bg-white px-2.5 text-xs font-bold text-slate-800 shadow-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    {dayNumbers.map((d) => (
+                      <option key={d} value={d}>
+                        Tgl {d} ({getDayNameShort(tahun, bulan, d)})
+                      </option>
+                    ))}
+                  </select>
+
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 ml-1">
+                    Sesi:
+                  </span>
+                  <div className="flex items-center rounded-xl bg-slate-100 p-0.5 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setBulkSelectedSesi("pagi")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                        bulkSelectedSesi === "pagi"
+                          ? "bg-emerald-800 text-white shadow-xs"
+                          : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
+                      }`}
+                    >
+                      Pagi
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkSelectedSesi("malam")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                        bulkSelectedSesi === "malam"
+                          ? "bg-emerald-800 text-white shadow-xs"
+                          : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
+                      }`}
+                    >
+                      Malam
+                    </button>
+                  </div>
+                </div>
+
+                {/* Switch Status Target Massal */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-slate-500">Status Target:</span>
+                  <button
+                    type="button"
+                    onClick={() => setBulkTargetStatus("hadir")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${
+                      bulkTargetStatus === "hadir"
+                        ? "bg-emerald-800 text-white border-emerald-800 shadow-xs"
+                        : "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                    }`}
+                  >
+                    H = Hadir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBulkTargetStatus("alfa")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${
+                      bulkTargetStatus === "alfa"
+                        ? "bg-rose-700 text-white border-rose-700 shadow-xs"
+                        : "bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800"
+                    }`}
+                  >
+                    A = Alfa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBulkTargetStatus("izin")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${
+                      bulkTargetStatus === "izin"
+                        ? "bg-blue-700 text-white border-blue-700 shadow-xs"
+                        : "bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800"
+                    }`}
+                  >
+                    I = Izin
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBulkTargetStatus("sakit")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${
+                      bulkTargetStatus === "sakit"
+                        ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                        : "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                    }`}
+                  >
+                    S = Sakit
+                  </button>
+                </div>
+              </div>
+
+              {/* Baris Pencarian & Select All */}
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={bulkSearch}
+                    onChange={(e) => setBulkSearch(e.target.value)}
+                    placeholder="Cari santri..."
+                    className="w-full h-8 pl-8 pr-3 rounded-xl border border-slate-300 bg-white text-xs text-slate-800 placeholder-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (bulkSelectedIds.length === filteredBulkSantri.length) {
+                        setBulkSelectedIds([]);
+                      } else {
+                        setBulkSelectedIds(filteredBulkSantri.map((s) => s.id));
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:text-emerald-900 dark:text-emerald-400"
+                  >
+                    {bulkSelectedIds.length === filteredBulkSantri.length && filteredBulkSantri.length > 0 ? (
+                      <CheckSquare className="h-4 w-4" />
+                    ) : (
+                      <Square className="h-4 w-4" />
+                    )}
+                    <span>Pilih Semua ({filteredBulkSantri.length})</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Daftar Santri */}
+            <div className="flex-1 overflow-auto my-2 border border-slate-200 dark:border-slate-800 rounded-xl">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-slate-50 text-[11px] font-bold uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300 sticky top-0 z-10 shadow-xs">
+                  <tr>
+                    <th className="py-2 px-3 w-10 text-center">Pilih</th>
+                    <th className="py-2 px-3">Nama Santri</th>
+                    <th className="py-2 px-2 text-center w-16">Kamar</th>
+                    <th className="py-2 px-2 text-center w-20">Halaqoh</th>
+                    <th className="py-2 px-2 text-center w-28">Status Saat Ini</th>
+                    <th className="py-2 px-2 text-center w-24">Ubah Langsung</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {filteredBulkSantri.map((s) => {
+                    const isSelected = bulkSelectedIds.includes(s.id);
+                    const curStatus = absenMap[`${s.id}_${bulkSelectedDay}_${bulkSelectedSesi}`] || "";
+
+                    return (
+                      <tr
+                        key={s.id}
+                        onClick={() => {
+                          if (isSelected) {
+                            setBulkSelectedIds(bulkSelectedIds.filter((id) => id !== s.id));
+                          } else {
+                            setBulkSelectedIds([...bulkSelectedIds, s.id]);
+                          }
+                        }}
+                        className={`cursor-pointer transition ${
+                          isSelected
+                            ? "bg-emerald-50/70 dark:bg-emerald-950/40"
+                            : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                        }`}
+                      >
+                        <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setBulkSelectedIds([...bulkSelectedIds, s.id]);
+                              } else {
+                                setBulkSelectedIds(bulkSelectedIds.filter((id) => id !== s.id));
+                              }
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-emerald-800 focus:ring-emerald-500 cursor-pointer"
+                          />
+                        </td>
+                        <td className="py-2 px-3 font-semibold text-slate-900 dark:text-slate-100">
+                          {s.nama_lengkap}
+                        </td>
+                        <td className="py-2 px-2 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                          {formatKamarDisplay(s.kode_kamar, s.kamar)}
+                        </td>
+                        <td className="py-2 px-2 text-center">
+                          <HalaqohBadge kelas={s.halaqoh_kelas} bagian={s.halaqoh_bagian} />
+                        </td>
+                        <td className="py-2 px-2 text-center">
+                          {curStatus === "hadir" ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                              Hadir
+                            </span>
+                          ) : curStatus === "alfa" ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                              Alfa
+                            </span>
+                          ) : curStatus === "izin" ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                              Izin
+                            </span>
+                          ) : curStatus === "sakit" ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                              Sakit
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-mono text-xs">-</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                          <select
+                            value={curStatus}
+                            onChange={(e) =>
+                              handleQuickChangeInModal(s.id, e.target.value as StatusAbsen | "")
+                            }
+                            className="h-7 w-20 text-center rounded-lg border border-slate-300 bg-white text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                          >
+                            <option value="">-</option>
+                            <option value="hadir">Hadir</option>
+                            <option value="alfa">Alfa</option>
+                            <option value="izin">Izin</option>
+                            <option value="sakit">Sakit</option>
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer Modal Bulk */}
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+              <span className="text-xs text-slate-600 dark:text-slate-400">
+                Terpilih:{" "}
+                <strong className="text-emerald-800 dark:text-emerald-300 font-bold">
+                  {bulkSelectedIds.length}
+                </strong>{" "}
+                dari {filteredBulkSantri.length} santri
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkModalOpen(false)}
+                  className="px-3.5 py-1.5 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={bulkSelectedIds.length === 0 || isSavingBulk}
+                  onClick={handleApplyBulkStatus}
+                  className="px-4 py-1.5 text-xs font-bold rounded-xl bg-emerald-800 text-white hover:bg-emerald-900 transition shadow disabled:opacity-40 inline-flex items-center gap-1.5"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>
+                    {isSavingBulk
+                      ? "Menerapkan..."
+                      : `Terapkan ${bulkTargetStatus.toUpperCase()} (${bulkSelectedIds.length})`}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POP-UP 2: MODAL FILTER TERPADU */}
       {filterModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
