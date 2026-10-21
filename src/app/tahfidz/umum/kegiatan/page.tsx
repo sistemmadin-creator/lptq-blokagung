@@ -16,6 +16,10 @@ import {
   Users,
   CalendarRange,
   Info,
+  LayoutGrid,
+  Table as TableIcon,
+  ExternalLink,
+  Loader2,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
@@ -28,11 +32,14 @@ import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
+  PEMETAAN_HALAQOH_KELAS,
   type Santri,
   type SesiAbsen,
   type StatusAbsen,
 } from "@/types/database";
 import { HalaqohBadge } from "@/components/ui/Badges";
+import { HalaqohDetailModal } from "@/components/halaqoh/HalaqohDetailModal";
+import { loadHalaqohFormasi, type FormasiHalaqohItem } from "@/lib/services/halaqoh-service";
 import { exportJsonToExcel } from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
 
@@ -95,6 +102,14 @@ export default function KegiatanAbsensiPage() {
 
   const [filterModalOpen, setFilterModalOpen] = useState(false);
 
+  // Mode Tampilan: Kartu (Default) atau Tabel
+  const [viewMode, setViewMode] = useState<"kartu" | "tabel">("kartu");
+  const [cardPage, setCardPage] = useState(1);
+  const [cardPageSize, setCardPageSize] = useState(15);
+  const [formasiList, setFormasiList] = useState<FormasiHalaqohItem[]>([]);
+  const [selectedHalaqohForDetail, setSelectedHalaqohForDetail] = useState<FormasiHalaqohItem | null>(null);
+  const [halaqohDetailModalOpen, setHalaqohDetailModalOpen] = useState(false);
+
   // Pagination State: default 15 baris
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
@@ -127,7 +142,7 @@ export default function KegiatanAbsensiPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [allSantri, absensiRows] = await Promise.all([
+      const [allSantri, absensiRows, formasiData] = await Promise.all([
         fetchAllSantriFiltered({
           search,
           asrama: asramaFilter,
@@ -137,9 +152,11 @@ export default function KegiatanAbsensiPage() {
           halaqoh_bagian: bagianFilter,
         }),
         fetchAbsensiBulan(tahun, bulan, sesi),
+        loadHalaqohFormasi(),
       ]);
 
       setSantriList(allSantri);
+      setFormasiList(formasiData);
 
       const map: Record<string, StatusAbsen | ""> = {};
       for (const row of absensiRows) {
@@ -167,6 +184,71 @@ export default function KegiatanAbsensiPage() {
     bagianFilter,
     showToast,
   ]);
+
+  // Rekap kehadiran seorang santri pada bulan terpilih
+  const computeSantriAbsenSummary = useCallback(
+    (santriId: string) => {
+      let hadir = 0;
+      let alfa = 0;
+      let izin = 0;
+      let sakit = 0;
+
+      for (let d = 1; d <= totalDays; d++) {
+        if (sesi === "semua") {
+          const sp = absenMap[`${santriId}_${d}_pagi`];
+          const sm = absenMap[`${santriId}_${d}_malam`];
+          [sp, sm].forEach((st) => {
+            if (st === "hadir") hadir++;
+            else if (st === "alfa") alfa++;
+            else if (st === "izin") izin++;
+            else if (st === "sakit") sakit++;
+          });
+        } else {
+          const st = absenMap[`${santriId}_${d}_${sesi}`];
+          if (st === "hadir") hadir++;
+          else if (st === "alfa") alfa++;
+          else if (st === "izin") izin++;
+          else if (st === "sakit") sakit++;
+        }
+      }
+
+      return { hadir, alfa, izin, sakit };
+    },
+    [absenMap, totalDays, sesi]
+  );
+
+  // Pengelompokan santri per halaqoh untuk mode kartu
+  const halaqohGroups = useMemo(() => {
+    const map = new Map<string, { kelas: number; bagian: string; rows: Santri[]; formasi?: FormasiHalaqohItem }>();
+
+    formasiList.forEach((f) => {
+      const key = `${f.kelas}_${f.bagian.toUpperCase()}`;
+      map.set(key, { kelas: f.kelas, bagian: f.bagian.toUpperCase(), rows: [], formasi: f });
+    });
+
+    santriList.forEach((s) => {
+      const k = s.halaqoh_kelas || 1;
+      const b = (s.halaqoh_bagian || "A").toUpperCase();
+      const key = `${k}_${b}`;
+      if (!map.has(key)) {
+        map.set(key, { kelas: k, bagian: b, rows: [] });
+      }
+      map.get(key)!.rows.push(s);
+    });
+
+    return Array.from(map.values())
+      .filter((grp) => grp.rows.length > 0)
+      .sort((a, b) => {
+        if (a.kelas !== b.kelas) return a.kelas - b.kelas;
+        return a.bagian.localeCompare(b.bagian);
+      });
+  }, [santriList, formasiList]);
+
+  const totalHalaqohPages = Math.max(1, Math.ceil(halaqohGroups.length / cardPageSize));
+  const paginatedHalaqohGroups = useMemo(() => {
+    const start = (cardPage - 1) * cardPageSize;
+    return halaqohGroups.slice(start, start + cardPageSize);
+  }, [halaqohGroups, cardPage, cardPageSize]);
 
   useEffect(() => {
     loadData();
@@ -507,6 +589,34 @@ export default function KegiatanAbsensiPage() {
 
       {/* Bilah Toolbar yang Disederhanakan 1 Baris */}
       <div className="no-print flex flex-wrap items-center gap-2">
+        {/* Switch Mode: Kartu (Default) / Tabel */}
+        <div className="inline-flex h-11 items-center rounded-xl border border-slate-300 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-800 shrink-0 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setViewMode("kartu")}
+            className={`flex h-full items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition ${
+              viewMode === "kartu"
+                ? "bg-white text-emerald-800 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
+                : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            <LayoutGrid className="h-4 w-4" />
+            <span>Kartu</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("tabel")}
+            className={`flex h-full items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition ${
+              viewMode === "tabel"
+                ? "bg-white text-emerald-800 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
+                : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            <TableIcon className="h-4 w-4" />
+            <span>Tabel</span>
+          </button>
+        </div>
+
         {/* Pemilih Bulan */}
         <select
           value={bulan}
@@ -769,10 +879,223 @@ export default function KegiatanAbsensiPage() {
           </div>
         </div>
 
-        {loading ? (
-          <div className="py-12 text-center text-sm text-slate-500">Memuat data absensi...</div>
+        {viewMode === "kartu" ? (
+          <div>
+            {loading ? (
+              <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-8 dark:border-slate-800 dark:bg-slate-900">
+                <Loader2 className="h-7 w-7 animate-spin text-emerald-700" />
+                <p className="text-xs text-slate-500">Memuat kartu halaqoh kegiatan...</p>
+              </div>
+            ) : halaqohGroups.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+                Tidak ada data kegiatan santri yang sesuai kriteria pencarian atau filter.
+              </div>
+            ) : (
+              (() => {
+                const renderHalaqohCard = (grp: typeof halaqohGroups[number]) => {
+                  const formasiObj: FormasiHalaqohItem = grp.formasi || {
+                    id: `${grp.kelas}-${grp.bagian}`,
+                    kelas: grp.kelas,
+                    bagian: grp.bagian,
+                    target_juz: PEMETAAN_HALAQOH_KELAS[grp.kelas] || "-",
+                  };
+
+                  return (
+                    <div
+                      key={`${grp.kelas}_${grp.bagian}`}
+                      className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow dark:border-slate-800 dark:bg-slate-900"
+                    >
+                      {/* Header Kartu Halaqoh */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-800/40">
+                        <div className="flex items-center gap-2">
+                          <HalaqohBadge kelas={grp.kelas} bagian={grp.bagian} />
+                          <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                            Target: {PEMETAAN_HALAQOH_KELAS[grp.kelas] || "-"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {formasiObj.pembimbing && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 hidden sm:inline">
+                              {formasiObj.pembimbing}
+                            </span>
+                          )}
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-700 shadow-xs border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                            {grp.rows.length} Santri
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedHalaqohForDetail(formasiObj);
+                              setHalaqohDetailModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px] font-bold hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 transition"
+                            title={`Buka presensi tanggal lengkap Halaqoh ${grp.kelas}${grp.bagian}`}
+                          >
+                            <span>Presensi</span>
+                            <ExternalLink className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Tabel Santri di dalam Kartu Halaqoh */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs table-auto">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20 text-slate-600 dark:text-slate-400">
+                              <th className="px-1.5 py-1.5 font-semibold w-7 text-center text-slate-400 text-[11px]">No</th>
+                              <th className="px-1.5 py-1.5 font-semibold text-slate-700 dark:text-slate-300 text-[11px]">Nama Santri</th>
+                              <th className="px-1 py-1.5 font-semibold text-center w-10 text-[11px]">Kamar</th>
+                              <th className="px-1 py-1.5 font-semibold text-center w-8 text-emerald-700 text-[11px]" title="Total Hadir">H</th>
+                              <th className="px-1 py-1.5 font-semibold text-center w-8 text-rose-700 text-[11px]" title="Total Alfa">A</th>
+                              <th className="px-1 py-1.5 font-semibold text-center w-8 text-blue-700 text-[11px]" title="Total Izin">I</th>
+                              <th className="px-1 py-1.5 font-semibold text-center w-8 text-amber-700 text-[11px]" title="Total Sakit">S</th>
+                              <th className="px-1.5 py-1.5 font-semibold text-center w-16 text-[11px]">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {grp.rows.map((s, idx) => {
+                              const summary = computeSantriAbsenSummary(s.id);
+                              return (
+                                <tr key={s.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                  <td className="px-1.5 py-1 font-mono text-slate-400 text-center text-[11px]">{idx + 1}</td>
+                                  <td className="px-1.5 py-1 font-semibold min-w-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedHalaqohForDetail(formasiObj);
+                                        setHalaqohDetailModalOpen(true);
+                                      }}
+                                      className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400 truncate max-w-[110px] sm:max-w-[130px] block text-xs"
+                                      title={`Klik untuk presensi: ${s.nama_lengkap}`}
+                                    >
+                                      {s.nama_lengkap}
+                                    </button>
+                                  </td>
+                                  <td className="px-1 py-1 text-center font-mono font-bold text-slate-700 dark:text-slate-300 text-[11px]">
+                                    {formatKamarDisplay(s.kode_kamar, s.kamar)}
+                                  </td>
+                                  <td className="px-1 py-1 text-center font-mono font-bold text-emerald-700 text-[11px]">{summary.hadir}</td>
+                                  <td className="px-1 py-1 text-center font-mono font-bold text-rose-700 text-[11px]">{summary.alfa}</td>
+                                  <td className="px-1 py-1 text-center font-mono font-bold text-blue-700 text-[11px]">{summary.izin}</td>
+                                  <td className="px-1 py-1 text-center font-mono font-bold text-amber-700 text-[11px]">{summary.sakit}</td>
+                                  <td className="px-1.5 py-1 text-center whitespace-nowrap">
+                                    {summary.alfa === 0 ? (
+                                      <span className="inline-flex items-center rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                        Tertib
+                                      </span>
+                                    ) : summary.alfa <= 3 ? (
+                                      <span className="inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                        {summary.alfa} Alfa
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                                        {summary.alfa} Alfa
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                };
+
+                return (
+                  <>
+                    {/* Mode Desktop: Masonry 2 Kolom Independen (Merapatkan jarak vertikal antar kartu) */}
+                    <div className="hidden lg:grid lg:grid-cols-2 gap-5 items-start">
+                      <div className="flex flex-col gap-5">
+                        {paginatedHalaqohGroups
+                          .filter((_, idx) => idx % 2 === 0)
+                          .map((grp) => renderHalaqohCard(grp))}
+                      </div>
+                      <div className="flex flex-col gap-5">
+                        {paginatedHalaqohGroups
+                          .filter((_, idx) => idx % 2 === 1)
+                          .map((grp) => renderHalaqohCard(grp))}
+                      </div>
+                    </div>
+
+                    {/* Mode Mobile / Tablet: 1 Kolom */}
+                    <div className="flex flex-col gap-5 lg:hidden">
+                      {paginatedHalaqohGroups.map((grp) => renderHalaqohCard(grp))}
+                    </div>
+
+                    {/* Pagination Kartu Halaqoh Kegiatan */}
+                    {totalHalaqohPages > 1 && (
+                      <div className="no-print flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800">
+                        <span className="text-xs text-slate-500 dark:text-slate-400">
+                          Menampilkan kartu halaqoh{" "}
+                          <strong className="text-slate-800 dark:text-slate-200">
+                            {(cardPage - 1) * cardPageSize + 1}
+                          </strong>{" "}
+                          -{" "}
+                          <strong className="text-slate-800 dark:text-slate-200">
+                            {Math.min(cardPage * cardPageSize, halaqohGroups.length)}
+                          </strong>{" "}
+                          dari{" "}
+                          <strong className="text-slate-800 dark:text-slate-200">
+                            {halaqohGroups.length}
+                          </strong>{" "}
+                          halaqoh
+                        </span>
+
+                        <div className="flex items-center gap-1 font-semibold">
+                          <button
+                            type="button"
+                            disabled={cardPage <= 1}
+                            onClick={() => setCardPage((p) => Math.max(1, p - 1))}
+                            title="Halaman Sebelumnya"
+                            className="inline-flex h-8 px-2.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+                          {getPageNumbers(cardPage, totalHalaqohPages).map((p, idx) =>
+                            p === "..." ? (
+                              <span key={`ell-card-${idx}`} className="px-1 text-slate-400 select-none">
+                                ...
+                              </span>
+                            ) : (
+                              <button
+                                key={`p-card-${p}`}
+                                type="button"
+                                onClick={() => setCardPage(Number(p))}
+                                className={`h-8 min-w-[32px] px-2 rounded-xl font-mono text-xs transition ${
+                                  cardPage === p
+                                    ? "bg-emerald-800 text-white font-bold shadow-xs"
+                                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            )
+                          )}
+                          <button
+                            type="button"
+                            disabled={cardPage >= totalHalaqohPages}
+                            onClick={() => setCardPage((p) => Math.min(totalHalaqohPages, p + 1))}
+                            title="Halaman Berikutnya"
+                            className="inline-flex h-8 px-2.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()
+            )}
+          </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="space-y-4">
+            {loading ? (
+              <div className="py-12 text-center text-sm text-slate-500">Memuat data absensi...</div>
+            ) : (
+              <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-300 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50">
@@ -1124,6 +1447,8 @@ export default function KegiatanAbsensiPage() {
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
+          </div>
+        )}
           </div>
         )}
       </div>
@@ -1729,6 +2054,14 @@ export default function KegiatanAbsensiPage() {
           </div>
         </div>
       )}
+      {/* MODAL DETAIL PRESENSI DAN SETORAN HALAQOH */}
+      <HalaqohDetailModal
+        isOpen={halaqohDetailModalOpen}
+        onClose={() => setHalaqohDetailModalOpen(false)}
+        formasi={selectedHalaqohForDetail}
+        santriList={santriList}
+        onDataChanged={loadData}
+      />
     </div>
   );
 }
