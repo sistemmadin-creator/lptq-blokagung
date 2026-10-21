@@ -11,7 +11,13 @@ import {
   type SesiAbsen,
 } from "@/types/database";
 import { HalaqohBadge } from "@/components/ui/Badges";
-import { toLocalIsoDate } from "@/lib/utils/date";
+
+function toLocalIsoDate(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 interface RecentSetoranItem {
   id: string;
@@ -64,8 +70,7 @@ export default function DashboardPage() {
         supabase
           .from("absensi")
           .select("sesi, status")
-          .eq("tanggal", todayIso)
-          .eq("status", "hadir"),
+          .eq("tanggal", todayIso),
         supabase
           .from("setoran")
           .select("tipe, jumlah_juz_tambahan")
@@ -88,8 +93,11 @@ export default function DashboardPage() {
       if (setoranRes.error) throw setoranRes.error;
       if (khotmilRes.error) throw khotmilRes.error;
 
-      const hadirPagi = (absenRes.data ?? []).filter((a) => a.sesi === "pagi").length;
-      const hadirMalam = (absenRes.data ?? []).filter((a) => a.sesi === "malam").length;
+      const totalSantriCount = santriRes.count ?? 0;
+      const notHadirPagi = (absenRes.data ?? []).filter((a) => a.sesi === "pagi" && a.status !== "hadir").length;
+      const notHadirMalam = (absenRes.data ?? []).filter((a) => a.sesi === "malam" && a.status !== "hadir").length;
+      const hadirPagi = isFriday ? 0 : Math.max(0, totalSantriCount - notHadirPagi);
+      const hadirMalam = isFriday ? 0 : Math.max(0, totalSantriCount - notHadirMalam);
 
       let totalJuzBaru = 0;
       let totalEvaluasi = 0;
