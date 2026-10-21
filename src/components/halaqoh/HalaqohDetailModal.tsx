@@ -21,6 +21,7 @@ import {
   insertSetoranLog,
   fetchSantriSetoranDetailTahun,
   saveSetoranBulanDirect,
+  isSessionPastOrCurrent,
 } from "@/lib/services/tahfidz-service";
 import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
@@ -110,8 +111,8 @@ export function HalaqohDetailModal({
   const [sesi, setSesi] = useState<SesiAbsen | "semua">("semua");
 
   // State untuk Tab Kegiatan (Absensi)
-  // Key format: `${santriId}_${day}_${sesi}` => StatusAbsen
-  const [absenMap, setAbsenMap] = useState<Record<string, StatusAbsen>>({});
+  // Key format: `${santriId}_${day}_${sesi}` => StatusAbsen | ""
+  const [absenMap, setAbsenMap] = useState<Record<string, StatusAbsen | "">>({});
   const [loadingKegiatan, setLoadingKegiatan] = useState(false);
 
   // State untuk Tab Juz Baru (Setoran)
@@ -155,7 +156,7 @@ export function HalaqohDetailModal({
     setLoadingKegiatan(true);
     try {
       const records = await fetchAbsensiBulan(tahun, bulan, sesi);
-      const map: Record<string, StatusAbsen> = {};
+      const map: Record<string, StatusAbsen | ""> = {};
       for (const row of records) {
         const parts = row.tanggal.split("-");
         const d = parts.length === 3 ? parseInt(parts[2], 10) : new Date(row.tanggal).getDate();
@@ -198,6 +199,23 @@ export function HalaqohDetailModal({
     }
   }, [activeTab, loadAbsensiData, loadJuzBaruData]);
 
+  // 1. Jika ada status tersimpan di absenMap (hadir/alfa/izin/sakit/kosong), gunakan itu.
+  // 2. Jika sesi telah/sedang berjalan (Pagi >= 04.00 WIB, Malam >= 17.00 WIB): otomatis Hadir.
+  // 3. Jika sesi mendatang/belum dimulai: kosong ("").
+  const getEffectiveStatus = useCallback(
+    (santriId: string, day: number, sesiType: SesiAbsen): StatusAbsen | "" => {
+      const key = `${santriId}_${day}_${sesiType}`;
+      if (key in absenMap) {
+        return absenMap[key];
+      }
+      if (isSessionPastOrCurrent(tahun, bulan, day, sesiType)) {
+        return "hadir";
+      }
+      return "";
+    },
+    [absenMap, tahun, bulan]
+  );
+
   // Update status absen santri per tanggal dan sesi
   const handleCellStatusChange = async (
     santriId: string,
@@ -206,13 +224,13 @@ export function HalaqohDetailModal({
     newStatus: StatusAbsen | ""
   ) => {
     const key = `${santriId}_${day}_${targetSesi}`;
-    const oldStatus = absenMap[key] ?? "";
+    const oldStatus = getEffectiveStatus(santriId, day, targetSesi);
     if (oldStatus === newStatus) return;
 
     // Optimistic update
     setAbsenMap((prev) => {
       const copy = { ...prev };
-      if (!newStatus) delete copy[key];
+      if (!newStatus) copy[key] = "";
       else copy[key] = newStatus;
       return copy;
     });
@@ -230,8 +248,7 @@ export function HalaqohDetailModal({
       // Rollback
       setAbsenMap((prev) => {
         const copy = { ...prev };
-        if (oldStatus) copy[key] = oldStatus as StatusAbsen;
-        else delete copy[key];
+        copy[key] = oldStatus;
         return copy;
       });
       showToast("error", "Gagal menyimpan perubahan presensi.");
@@ -686,7 +703,7 @@ export function HalaqohDetailModal({
                       let countI = 0;
                       let countS = 0;
 
-                      const checkAndIncrement = (statusVal?: StatusAbsen) => {
+                      const checkAndIncrement = (statusVal?: StatusAbsen | "") => {
                         if (statusVal === "hadir") countH++;
                         else if (statusVal === "alfa") countA++;
                         else if (statusVal === "izin") countI++;
@@ -694,11 +711,12 @@ export function HalaqohDetailModal({
                       };
 
                       dayNumbers.forEach((d) => {
+                        if (isFridayDate(tahun, bulan, d)) return;
                         if (sesi === "semua") {
-                          checkAndIncrement(absenMap[`${s.id}_${d}_pagi`]);
-                          checkAndIncrement(absenMap[`${s.id}_${d}_malam`]);
+                          checkAndIncrement(getEffectiveStatus(s.id, d, "pagi"));
+                          checkAndIncrement(getEffectiveStatus(s.id, d, "malam"));
                         } else {
-                          checkAndIncrement(absenMap[`${s.id}_${d}_${sesi}`]);
+                          checkAndIncrement(getEffectiveStatus(s.id, d, sesi as SesiAbsen));
                         }
                       });
 
@@ -748,8 +766,8 @@ export function HalaqohDetailModal({
                             }
 
                             if (sesi === "semua") {
-                              const currentValPagi = absenMap[`${s.id}_${d}_pagi`] || "";
-                              const currentValMalam = absenMap[`${s.id}_${d}_malam`] || "";
+                              const currentValPagi = getEffectiveStatus(s.id, d, "pagi");
+                              const currentValMalam = getEffectiveStatus(s.id, d, "malam");
                               return (
                                 <React.Fragment key={d}>
                                   {/* Sesi Pagi */}
@@ -774,7 +792,7 @@ export function HalaqohDetailModal({
                                           ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
                                           : currentValPagi === "sakit"
                                           ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
-                                          : "bg-white text-slate-300 border-transparent hover:border-slate-200 dark:bg-slate-900 dark:text-slate-600"
+                                          : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
                                       }`}
                                     >
                                       <option value="">-</option>
@@ -806,7 +824,7 @@ export function HalaqohDetailModal({
                                           ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
                                           : currentValMalam === "sakit"
                                           ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
-                                          : "bg-white text-slate-300 border-transparent hover:border-slate-200 dark:bg-slate-900 dark:text-slate-600"
+                                          : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
                                       }`}
                                     >
                                       <option value="">-</option>
@@ -821,7 +839,7 @@ export function HalaqohDetailModal({
                             }
 
                             // Sesi Tunggal (Pagi atau Malam)
-                            const currentVal = absenMap[`${s.id}_${d}_${sesi}`] || "";
+                            const currentVal = getEffectiveStatus(s.id, d, sesi as SesiAbsen);
                             return (
                               <td
                                 key={d}
@@ -833,7 +851,7 @@ export function HalaqohDetailModal({
                                     handleCellStatusChange(
                                       s.id,
                                       d,
-                                      sesi,
+                                      sesi as SesiAbsen,
                                       e.target.value as StatusAbsen | ""
                                     )
                                   }
@@ -847,7 +865,7 @@ export function HalaqohDetailModal({
                                       ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
                                       : currentVal === "sakit"
                                       ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
-                                      : "bg-white text-slate-300 border-transparent hover:border-slate-200 dark:bg-slate-900 dark:text-slate-600"
+                                      : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
                                   }`}
                                 >
                                   <option value="">-</option>
