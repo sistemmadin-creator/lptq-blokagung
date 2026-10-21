@@ -684,6 +684,20 @@ export async function fetchKhotmilTahapNilai(jenis: JenisKhotmil, tahap: number)
   return (data ?? []) as KhotmilNilaiRecord[];
 }
 
+/**
+ * Mengambil seluruh catatan nilai khotmil untuk semua tahap pada jenis tertentu (15 Juz / 30 Juz).
+ */
+export async function fetchKhotmilAllNilai(jenis: JenisKhotmil): Promise<KhotmilNilaiRecord[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("khotmil_nilai")
+    .select("id, santri_id, jenis, tahap, juz, nilai")
+    .eq("jenis", jenis);
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as KhotmilNilaiRecord[];
+}
+
 export async function upsertKhotmilNilaiBatch(
   santri_id: string,
   jenis: JenisKhotmil,
