@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   FileSpreadsheet,
   Printer,
@@ -14,6 +14,8 @@ import {
   FileDown,
   Loader2,
   Pencil,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
@@ -50,6 +52,19 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+function getPageNumbers(current: number, total: number): (number | "...")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, "...", total];
+  }
+  if (current >= total - 3) {
+    return [1, "...", total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, "...", current - 1, current, current + 1, "...", total];
+}
+
 export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
   const { showToast } = useToast();
   const printRef = useRef<HTMLDivElement>(null);
@@ -58,6 +73,9 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
   const [activeTahap, setActiveTahap] = useState<number>(tahapList[0]?.tahap ?? 1);
   const [search, setSearch] = useState("");
   const [asramaFilter, setAsramaFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+  const pageSizeOptions = [10, 15, 25, 50];
 
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
@@ -70,6 +88,13 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
   const [nilaiMap, setNilaiMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const totalRows = santriList.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const paginatedSantri = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return santriList.slice(start, start + pageSize);
+  }, [santriList, page, pageSize]);
 
   // Santri yang sedang dinilai di modal
   const [editingSantri, setEditingSantri] = useState<Santri | null>(null);
@@ -129,6 +154,7 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
 
   const resetAllFilters = () => {
     setAsramaFilter("");
+    setPage(1);
     showToast("success", "Filter asrama telah direset.");
   };
 
@@ -308,7 +334,10 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
               type="button"
               role="tab"
               aria-selected={active}
-              onClick={() => setActiveTahap(t.tahap)}
+              onClick={() => {
+                setActiveTahap(t.tahap);
+                setPage(1);
+              }}
               className={`h-10 rounded-xl px-4 text-xs font-bold transition shadow-sm ${
                 active
                   ? "bg-emerald-800 text-white shadow"
@@ -329,7 +358,10 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             placeholder="Cari nama atau kode santri..."
             aria-label="Cari santri"
             className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-sm text-slate-800 placeholder-slate-400 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
@@ -337,7 +369,10 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
           {search && (
             <button
               type="button"
-              onClick={() => setSearch("")}
+              onClick={() => {
+                setSearch("");
+                setPage(1);
+              }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               title="Bersihkan pencarian"
               aria-label="Bersihkan pencarian"
@@ -461,11 +496,11 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {santriList.map((s, idx) => {
+                {paginatedSantri.map((s, idx) => {
                   const summary = computeRowSummary(s.id);
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-                      <td className="px-3 py-2 font-mono text-slate-500">{idx + 1}</td>
+                      <td className="px-3 py-2 font-mono text-slate-500">{(page - 1) * pageSize + idx + 1}</td>
                       <td className="px-3 py-2 font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
                         {s.nama_lengkap}
                         <span className="block text-[10px] font-normal font-mono text-slate-400">{s.kode}</span>
@@ -517,6 +552,87 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                 })}
               </tbody>
             </table>
+
+            {/* Pagination Controls Khotmil */}
+            <div className="no-print mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+                <div className="flex items-center gap-1.5">
+                  <span>Tampilkan:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 shadow-sm transition focus:border-emerald-600 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  >
+                    {pageSizeOptions.map((sz) => (
+                      <option key={sz} value={sz}>
+                        {sz} baris
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <span>
+                  Menampilkan{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {totalRows > 0 ? (page - 1) * pageSize + 1 : 0}
+                  </strong>{" "}
+                  -{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {Math.min(page * pageSize, totalRows)}
+                  </strong>{" "}
+                  dari{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">{totalRows}</strong> santri
+                </span>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    title="Halaman Sebelumnya"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+
+                  {getPageNumbers(page, totalPages).map((p, idx) =>
+                    p === "..." ? (
+                      <span key={`dots-${idx}`} className="px-2 text-xs text-slate-400">
+                        ...
+                      </span>
+                    ) : (
+                      <button
+                        key={`page-${p}`}
+                        type="button"
+                        onClick={() => setPage(p as number)}
+                        className={`h-8 min-w-[32px] rounded-lg px-2 text-xs font-bold transition ${
+                          p === page
+                            ? "bg-emerald-800 text-white shadow"
+                            : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    )
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    title="Halaman Berikutnya"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
