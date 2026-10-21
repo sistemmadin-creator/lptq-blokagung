@@ -277,18 +277,27 @@ export async function deleteAllSetoran(params: {
   if (error) throw new Error(error.message);
 }
 
-export async function fetchAbsensiBulan(tahun: number, bulan: number, sesi: SesiAbsen) {
+export async function fetchAbsensiBulan(
+  tahun: number,
+  bulan: number,
+  sesi?: SesiAbsen | "semua"
+) {
   const supabase = createClient();
   const startDate = `${tahun}-${String(bulan).padStart(2, "0")}-01`;
   const lastDay = new Date(tahun, bulan, 0).getDate();
   const endDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("absensi")
     .select("id, santri_id, tanggal, sesi, status, penginput")
-    .eq("sesi", sesi)
     .gte("tanggal", startDate)
     .lte("tanggal", endDate);
+
+  if (sesi && sesi !== "semua") {
+    query = query.eq("sesi", sesi);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
   return (data ?? []) as AbsensiRecord[];
@@ -421,6 +430,7 @@ export async function fetchSetoranBulananMerged(
       nama_lengkap: s.nama_lengkap,
       blok: s.blok,
       asrama: s.asrama,
+      kode_kamar: s.kode_kamar,
       kamar: s.kamar,
       halaqoh_kelas: s.halaqoh_kelas,
       halaqoh_bagian: s.halaqoh_bagian,
@@ -440,6 +450,115 @@ export async function fetchSetoranBulananMerged(
       total_setoran: val?.total_setoran ?? 0,
     };
   });
+}
+
+/**
+ * Mengambil seluruh log setoran santri untuk 1 tahun tertentu, lengkap dengan catatan per tanggal.
+ */
+export async function fetchSantriSetoranDetailTahun(
+  santri_id: string,
+  tahun: number,
+  tipe: TipeSetoran = "juz_baru"
+) {
+  const supabase = createClient();
+  const startYear = `${tahun}-01-01`;
+  const endYear = `${tahun}-12-31`;
+
+  const { data, error } = await supabase
+    .from("setoran")
+    .select("id, santri_id, tanggal, tipe, jumlah_juz_tambahan, catatan, created_at")
+    .eq("santri_id", santri_id)
+    .eq("tipe", tipe)
+    .gte("tanggal", startYear)
+    .lte("tanggal", endYear)
+    .order("tanggal", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as {
+    id: string;
+    santri_id: string;
+    tanggal: string;
+    tipe: TipeSetoran;
+    jumlah_juz_tambahan: number;
+    catatan: string | null;
+    created_at: string;
+  }[];
+}
+
+/**
+ * Menyimpan / memperbarui jumlah juz dan catatan untuk bulan tertentu secara langsung tanpa membuka pop-up tambah log.
+ */
+export async function saveSetoranBulanDirect(params: {
+  santri_id: string;
+  tahun: number;
+  bulan: number; // 1 - 12
+  tipe: TipeSetoran;
+  jumlah_juz_tambahan: number;
+  catatan?: string;
+}) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const startDate = `${params.tahun}-${String(params.bulan).padStart(2, "0")}-01`;
+  const lastDay = new Date(params.tahun, params.bulan, 0).getDate();
+  const endDate = `${params.tahun}-${String(params.bulan).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+  // Ambil record yang sudah ada di bulan tersebut
+  const { data: existing, error: fetchErr } = await supabase
+    .from("setoran")
+    .select("id, jumlah_juz_tambahan, catatan")
+    .eq("santri_id", params.santri_id)
+    .eq("tipe", params.tipe)
+    .gte("tanggal", startDate)
+    .lte("tanggal", endDate);
+
+  if (fetchErr) throw new Error(fetchErr.message);
+
+  if (params.jumlah_juz_tambahan <= 0) {
+    // Jika diset ke 0 atau negatif, hapus record di bulan ini
+    if (existing && existing.length > 0) {
+      const ids = existing.map((r) => r.id);
+      const { error: delErr } = await supabase.from("setoran").delete().in("id", ids);
+      if (delErr) throw new Error(delErr.message);
+    }
+    return;
+  }
+
+  if (existing && existing.length > 0) {
+    // Update record pertama
+    const firstId = existing[0].id;
+    const updatePayload: Record<string, unknown> = {
+      jumlah_juz_tambahan: params.jumlah_juz_tambahan,
+      penginput: user?.id ?? null,
+    };
+    if (params.catatan !== undefined) {
+      updatePayload.catatan = params.catatan.trim() || null;
+    }
+    const { error: updErr } = await supabase
+      .from("setoran")
+      .update(updatePayload)
+      .eq("id", firstId);
+    if (updErr) throw new Error(updErr.message);
+
+    // Bersihkan duplikat jika ada lebih dari 1 record di bulan yang sama
+    if (existing.length > 1) {
+      const duplicateIds = existing.slice(1).map((r) => r.id);
+      await supabase.from("setoran").delete().in("id", duplicateIds);
+    }
+  } else {
+    // Insert baru
+    const { error: insErr } = await supabase.from("setoran").insert({
+      santri_id: params.santri_id,
+      tanggal: startDate,
+      tipe: params.tipe,
+      jumlah_juz_tambahan: params.jumlah_juz_tambahan,
+      catatan: params.catatan?.trim() || null,
+      penginput: user?.id ?? null,
+    });
+    if (insErr) throw new Error(insErr.message);
+  }
 }
 
 export async function insertSetoranLog(payload: {
