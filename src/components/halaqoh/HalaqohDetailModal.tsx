@@ -12,12 +12,15 @@ import {
   ChevronRight,
   RotateCcw,
   Sparkles,
+  FileText,
 } from "lucide-react";
 import {
   fetchAbsensiBulan,
   upsertAbsensiCell,
   fetchSetoranBulananMerged,
   insertSetoranLog,
+  fetchSantriSetoranDetailTahun,
+  saveSetoranBulanDirect,
 } from "@/lib/services/tahfidz-service";
 import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
@@ -45,9 +48,31 @@ const BULAN_NAMES = [
   "Desember",
 ];
 
+const NAMA_HARI_SINGKAT = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+
+const MONTH_KEYS = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "mei",
+  "jun",
+  "jul",
+  "agu",
+  "sep",
+  "okt",
+  "nov",
+  "des",
+] as const;
+
 function isFridayDate(year: number, month1Based: number, day: number): boolean {
   const d = new Date(year, month1Based - 1, day);
   return d.getDay() === 5;
+}
+
+function getDayNameShort(year: number, month1Based: number, day: number): string {
+  const d = new Date(year, month1Based - 1, day);
+  return NAMA_HARI_SINGKAT[d.getDay()];
 }
 
 function toLocalIsoDate(date: Date = new Date()): string {
@@ -82,9 +107,10 @@ export function HalaqohDetailModal({
   const now = new Date();
   const [tahun, setTahun] = useState(now.getFullYear());
   const [bulan, setBulan] = useState(now.getMonth() + 1);
-  const [sesi, setSesi] = useState<SesiAbsen>("pagi");
+  const [sesi, setSesi] = useState<SesiAbsen | "semua">("semua");
 
   // State untuk Tab Kegiatan (Absensi)
+  // Key format: `${santriId}_${day}_${sesi}` => StatusAbsen
   const [absenMap, setAbsenMap] = useState<Record<string, StatusAbsen>>({});
   const [loadingKegiatan, setLoadingKegiatan] = useState(false);
 
@@ -92,13 +118,22 @@ export function HalaqohDetailModal({
   const [setoranRows, setSetoranRows] = useState<SetoranBulananRow[]>([]);
   const [loadingJuzBaru, setLoadingJuzBaru] = useState(false);
 
-  // Modal Input Setoran Baru
+  // Modal Input Setoran Baru (Gambar 5)
   const [inputSetoranOpen, setInputSetoranOpen] = useState(false);
   const [selectedSantriId, setSelectedSantriId] = useState("");
   const [tanggalSetoran, setTanggalSetoran] = useState(toLocalIsoDate(now));
   const [jumlahJuz, setJumlahJuz] = useState<number>(0.5);
   const [catatanSetoran, setCatatanSetoran] = useState("");
   const [isSavingSetoran, setIsSavingSetoran] = useState(false);
+
+  // Modal Detail Santri Seluruh Bulan (Input Tambah Juz & Keterangan per santri)
+  const [santriDetailModalOpen, setSantriDetailModalOpen] = useState(false);
+  const [selectedSantriDetail, setSelectedSantriDetail] = useState<SetoranBulananRow | null>(null);
+  const [santriMonthInputs, setSantriMonthInputs] = useState<
+    { bulan: number; namaBulan: string; jumlahJuz: number | ""; catatan: string }[]
+  >([]);
+  const [loadingSantriDetail, setLoadingSantriDetail] = useState(false);
+  const [isSavingSantriDetail, setIsSavingSantriDetail] = useState(false);
 
   // Santri yang tergabung dalam halaqoh ini
   const halaqohSantri = useMemo(() => {
@@ -125,7 +160,7 @@ export function HalaqohDetailModal({
         const parts = row.tanggal.split("-");
         const d = parts.length === 3 ? parseInt(parts[2], 10) : new Date(row.tanggal).getDate();
         if (!isNaN(d)) {
-          map[`${row.santri_id}_${d}`] = row.status;
+          map[`${row.santri_id}_${d}_${row.sesi}`] = row.status;
         }
       }
       setAbsenMap(map);
@@ -163,13 +198,14 @@ export function HalaqohDetailModal({
     }
   }, [activeTab, loadAbsensiData, loadJuzBaruData]);
 
-  // Update status absen santri per tanggal
+  // Update status absen santri per tanggal dan sesi
   const handleCellStatusChange = async (
     santriId: string,
     day: number,
+    targetSesi: SesiAbsen,
     newStatus: StatusAbsen | ""
   ) => {
-    const key = `${santriId}_${day}`;
+    const key = `${santriId}_${day}_${targetSesi}`;
     const oldStatus = absenMap[key] ?? "";
     if (oldStatus === newStatus) return;
 
@@ -186,7 +222,7 @@ export function HalaqohDetailModal({
       await upsertAbsensiCell({
         santri_id: santriId,
         tanggal: dateStr,
-        sesi,
+        sesi: targetSesi,
         status: newStatus,
       });
       if (onDataChanged) onDataChanged();
@@ -202,7 +238,7 @@ export function HalaqohDetailModal({
     }
   };
 
-  // Simpan setoran juz baru
+  // Simpan setoran juz baru via pop-up tunggal
   const handleSaveSetoran = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSantriId) {
@@ -233,6 +269,119 @@ export function HalaqohDetailModal({
       showToast("error", err instanceof Error ? err.message : "Gagal menyimpan setoran.");
     } finally {
       setIsSavingSetoran(false);
+    }
+  };
+
+  // Handle pengisian langsung nilai setoran per bulan pada tabel (tanpa buka pop-up)
+  const handleDirectMonthChange = async (
+    santriId: string,
+    monthNum: number,
+    newVal: number,
+    santriName: string
+  ) => {
+    const monthKey = MONTH_KEYS[monthNum - 1];
+
+    // Optimistic update di local state
+    setSetoranRows((prev) =>
+      prev.map((row) => {
+        if (row.santri_id !== santriId) return row;
+        const updatedRow = { ...row, [monthKey]: newVal };
+        const newTotal = MONTH_KEYS.reduce((sum, k) => sum + (Number(updatedRow[k]) || 0), 0);
+        return { ...updatedRow, total_setoran: Math.round(newTotal * 100) / 100 };
+      })
+    );
+
+    try {
+      await saveSetoranBulanDirect({
+        santri_id: santriId,
+        tahun,
+        bulan: monthNum,
+        tipe: "juz_baru",
+        jumlah_juz_tambahan: newVal,
+      });
+      showToast("success", `Setoran ${santriName} bulan ${BULAN_NAMES[monthNum - 1]} tersimpan.`);
+      if (onDataChanged) onDataChanged();
+    } catch (err) {
+      console.error(err);
+      showToast("error", "Gagal menyimpan setoran langsung.");
+      loadJuzBaruData();
+    }
+  };
+
+  // Buka modal detail santri seluruh bulan saat nama diklik di tab Juz Baru
+  const handleOpenSantriDetail = async (santriRow: SetoranBulananRow) => {
+    setSelectedSantriDetail(santriRow);
+    setSantriDetailModalOpen(true);
+    setLoadingSantriDetail(true);
+
+    try {
+      const logs = await fetchSantriSetoranDetailTahun(santriRow.santri_id, tahun, "juz_baru");
+
+      // Kelompokkan catatan logs per bulan
+      const notesByMonth: Record<number, string[]> = {};
+      logs.forEach((log) => {
+        const parts = log.tanggal.split("-");
+        const m = parts.length >= 2 ? parseInt(parts[1], 10) : new Date(log.tanggal).getMonth() + 1;
+        if (!isNaN(m)) {
+          if (!notesByMonth[m]) notesByMonth[m] = [];
+          if (log.catatan && log.catatan.trim()) {
+            notesByMonth[m].push(log.catatan.trim());
+          }
+        }
+      });
+
+      const initialInputs = BULAN_NAMES.map((namaBulan, idx) => {
+        const m = idx + 1;
+        const mKey = MONTH_KEYS[idx];
+        const currentJuz = santriRow[mKey] || 0;
+        const existingNotes = notesByMonth[m]?.join("; ") || "";
+        return {
+          bulan: m,
+          namaBulan,
+          jumlahJuz: currentJuz > 0 ? currentJuz : ("" as const),
+          catatan: existingNotes,
+        };
+      });
+
+      setSantriMonthInputs(initialInputs);
+    } catch (err) {
+      console.error(err);
+      showToast("error", "Gagal memuat rincian setoran santri.");
+    } finally {
+      setLoadingSantriDetail(false);
+    }
+  };
+
+  // Simpan setoran dan keterangan seluruh bulan untuk santri terpilih
+  const handleSaveSantriDetailAllMonths = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSantriDetail) return;
+
+    setIsSavingSantriDetail(true);
+    try {
+      for (const item of santriMonthInputs) {
+        const val = item.jumlahJuz === "" ? 0 : Number(item.jumlahJuz);
+        await saveSetoranBulanDirect({
+          santri_id: selectedSantriDetail.santri_id,
+          tahun,
+          bulan: item.bulan,
+          tipe: "juz_baru",
+          jumlah_juz_tambahan: val,
+          catatan: item.catatan,
+        });
+      }
+      showToast(
+        "success",
+        `Setoran dan keterangan ${selectedSantriDetail.nama_lengkap} berhasil disimpan.`
+      );
+      setSantriDetailModalOpen(false);
+      loadJuzBaruData();
+      if (onDataChanged) onDataChanged();
+    } catch (err) {
+      console.error(err);
+      showToast("error", "Gagal menyimpan setoran seluruh bulan.");
+    } finally {
+      setIsSavingSantriDetail(false);
     }
   };
 
@@ -314,6 +463,7 @@ export function HalaqohDetailModal({
               type="button"
               onClick={onClose}
               className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 dark:hover:text-white transition"
+              aria-label="Tutup Modal"
             >
               <X className="h-5 w-5" />
             </button>
@@ -321,15 +471,26 @@ export function HalaqohDetailModal({
         </div>
 
         {/* ========================================================================= */}
-        {/* BODY 1: TAB KEGIATAN (PRESENSI HARIAN PAGI & MALAM)                       */}
+        {/* BODY 1: TAB KEGIATAN (PRESENSI HARIAN: SEMUA / PAGI / MALAM)               */}
         {/* ========================================================================= */}
         {activeTab === "kegiatan" && (
           <div className="flex-1 flex flex-col min-h-0 pt-3 space-y-3">
-            {/* Filter Sesi, Bulan, & Tahun */}
+            {/* Filter Sesi (SEMUA / PAGI / MALAM), Bulan, & Tahun */}
             <div className="flex flex-wrap items-center justify-between gap-2.5">
               <div className="flex items-center gap-2">
-                {/* Sesi Pagi / Malam */}
+                {/* Switch 3 Tombol: SEMUA / PAGI / MALAM */}
                 <div className="flex items-center rounded-xl bg-slate-100 p-0.5 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setSesi("semua")}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                      sesi === "semua"
+                        ? "bg-emerald-800 text-white shadow-xs"
+                        : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
+                    }`}
+                  >
+                    SEMUA
+                  </button>
                   <button
                     type="button"
                     onClick={() => setSesi("pagi")}
@@ -392,6 +553,11 @@ export function HalaqohDetailModal({
                 </span>
                 <span className="text-slate-400">|</span>
                 <span className="text-rose-600 font-semibold">JUM = Libur</span>
+                {sesi === "semua" && (
+                  <span className="text-emerald-700 font-semibold">
+                    (P = Pagi, M = Malam)
+                  </span>
+                )}
               </div>
             </div>
 
@@ -409,48 +575,108 @@ export function HalaqohDetailModal({
                 <table className="w-full text-left text-xs border-collapse">
                   <thead className="bg-slate-50 text-[11px] font-bold uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300 sticky top-0 z-10 shadow-xs">
                     <tr>
-                      <th className="py-2 px-2.5 border-b border-r border-slate-200 dark:border-slate-700 w-10 text-center">
+                      <th
+                        rowSpan={sesi === "semua" ? 2 : 1}
+                        className="py-2 px-2.5 border-b border-r border-slate-200 dark:border-slate-700 w-10 text-center"
+                      >
                         NO
                       </th>
-                      <th className="py-2 px-3 border-b border-r border-slate-200 dark:border-slate-700 min-w-[170px]">
+                      <th
+                        rowSpan={sesi === "semua" ? 2 : 1}
+                        className="py-2 px-3 border-b border-r border-slate-200 dark:border-slate-700 min-w-[170px]"
+                      >
                         NAMA SANTRI
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 w-16 text-center">
+                      <th
+                        rowSpan={sesi === "semua" ? 2 : 1}
+                        className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 w-16 text-center"
+                      >
                         KAMAR
                       </th>
 
-                      {/* Kolom Tanggal 1 s.d. Akhir Bulan */}
+                      {/* Kolom Tanggal 1 s.d. Akhir Bulan dengan Nama Hari Singkat */}
                       {dayNumbers.map((d) => {
                         const isFriday = isFridayDate(tahun, bulan, d);
+                        const dayName = getDayNameShort(tahun, bulan, d);
                         return (
                           <th
                             key={d}
-                            className={`py-1.5 px-1 border-b border-r border-slate-200 dark:border-slate-700 text-center w-8 ${
+                            colSpan={sesi === "semua" ? 2 : 1}
+                            className={`py-1.5 px-1 border-b border-r border-slate-200 dark:border-slate-700 text-center ${
+                              sesi === "semua" ? "min-w-[56px]" : "w-8"
+                            } ${
                               isFriday
                                 ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 font-extrabold"
                                 : ""
                             }`}
                           >
-                            <div>{d}</div>
-                            {isFriday && <div className="text-[9px] font-bold">JUM</div>}
+                            <div className="font-bold">{d}</div>
+                            <div
+                              className={`text-[9px] font-semibold uppercase ${
+                                isFriday
+                                  ? "text-rose-600 dark:text-rose-400 font-bold"
+                                  : "text-slate-400 dark:text-slate-500"
+                              }`}
+                            >
+                              {dayName}
+                            </div>
                           </th>
                         );
                       })}
 
                       {/* Rekap H / A / I / S */}
-                      <th className="py-2 px-1.5 border-b border-r border-slate-200 dark:border-slate-700 text-center w-9 bg-emerald-50 text-emerald-800 font-bold dark:bg-emerald-950/40 dark:text-emerald-300">
+                      <th
+                        rowSpan={sesi === "semua" ? 2 : 1}
+                        className="py-2 px-1.5 border-b border-r border-slate-200 dark:border-slate-700 text-center w-9 bg-emerald-50 text-emerald-800 font-bold dark:bg-emerald-950/40 dark:text-emerald-300"
+                      >
                         H
                       </th>
-                      <th className="py-2 px-1.5 border-b border-r border-slate-200 dark:border-slate-700 text-center w-9 bg-rose-50 text-rose-800 font-bold dark:bg-rose-950/40 dark:text-rose-300">
+                      <th
+                        rowSpan={sesi === "semua" ? 2 : 1}
+                        className="py-2 px-1.5 border-b border-r border-slate-200 dark:border-slate-700 text-center w-9 bg-rose-50 text-rose-800 font-bold dark:bg-rose-950/40 dark:text-rose-300"
+                      >
                         A
                       </th>
-                      <th className="py-2 px-1.5 border-b border-r border-slate-200 dark:border-slate-700 text-center w-9 bg-blue-50 text-blue-800 font-bold dark:bg-blue-950/40 dark:text-blue-300">
+                      <th
+                        rowSpan={sesi === "semua" ? 2 : 1}
+                        className="py-2 px-1.5 border-b border-r border-slate-200 dark:border-slate-700 text-center w-9 bg-blue-50 text-blue-800 font-bold dark:bg-blue-950/40 dark:text-blue-300"
+                      >
                         I
                       </th>
-                      <th className="py-2 px-1.5 border-b border-slate-200 dark:border-slate-700 text-center w-9 bg-amber-50 text-amber-800 font-bold dark:bg-amber-950/40 dark:text-amber-300">
+                      <th
+                        rowSpan={sesi === "semua" ? 2 : 1}
+                        className="py-2 px-1.5 border-b border-slate-200 dark:border-slate-700 text-center w-9 bg-amber-50 text-amber-800 font-bold dark:bg-amber-950/40 dark:text-amber-300"
+                      >
                         S
                       </th>
                     </tr>
+
+                    {/* Jika Sesi "SEMUA", render sub-header Pagi (P) & Malam (M) */}
+                    {sesi === "semua" && (
+                      <tr className="bg-slate-100/90 text-[10px] text-slate-500 dark:bg-slate-800/90 dark:text-slate-400">
+                        {dayNumbers.map((d) => {
+                          const isFriday = isFridayDate(tahun, bulan, d);
+                          return (
+                            <React.Fragment key={`sub_${d}`}>
+                              <th
+                                className={`py-0.5 px-0.5 text-center border-b border-r border-slate-200 dark:border-slate-700 font-bold ${
+                                  isFriday ? "bg-rose-100/50 text-rose-800" : ""
+                                }`}
+                              >
+                                P
+                              </th>
+                              <th
+                                className={`py-0.5 px-0.5 text-center border-b border-r border-slate-200 dark:border-slate-700 font-bold ${
+                                  isFriday ? "bg-rose-100/50 text-rose-800" : ""
+                                }`}
+                              >
+                                M
+                              </th>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tr>
+                    )}
                   </thead>
 
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -460,12 +686,20 @@ export function HalaqohDetailModal({
                       let countI = 0;
                       let countS = 0;
 
+                      const checkAndIncrement = (statusVal?: StatusAbsen) => {
+                        if (statusVal === "hadir") countH++;
+                        else if (statusVal === "alfa") countA++;
+                        else if (statusVal === "izin") countI++;
+                        else if (statusVal === "sakit") countS++;
+                      };
+
                       dayNumbers.forEach((d) => {
-                        const st = absenMap[`${s.id}_${d}`];
-                        if (st === "hadir") countH++;
-                        else if (st === "alfa") countA++;
-                        else if (st === "izin") countI++;
-                        else if (st === "sakit") countS++;
+                        if (sesi === "semua") {
+                          checkAndIncrement(absenMap[`${s.id}_${d}_pagi`]);
+                          checkAndIncrement(absenMap[`${s.id}_${d}_malam`]);
+                        } else {
+                          checkAndIncrement(absenMap[`${s.id}_${d}_${sesi}`]);
+                        }
                       });
 
                       return (
@@ -489,9 +723,20 @@ export function HalaqohDetailModal({
                           {/* Sel Kalender Presensi Tiap Hari */}
                           {dayNumbers.map((d) => {
                             const isFriday = isFridayDate(tahun, bulan, d);
-                            const currentVal = absenMap[`${s.id}_${d}`] || "";
 
                             if (isFriday) {
+                              if (sesi === "semua") {
+                                return (
+                                  <React.Fragment key={d}>
+                                    <td className="py-1 px-0.5 text-center border-r border-slate-200 bg-slate-100/70 text-slate-400 font-mono text-[10px] dark:border-slate-800 dark:bg-slate-800/40">
+                                      -
+                                    </td>
+                                    <td className="py-1 px-0.5 text-center border-r border-slate-200 bg-slate-100/70 text-slate-400 font-mono text-[10px] dark:border-slate-800 dark:bg-slate-800/40">
+                                      -
+                                    </td>
+                                  </React.Fragment>
+                                );
+                              }
                               return (
                                 <td
                                   key={d}
@@ -502,6 +747,81 @@ export function HalaqohDetailModal({
                               );
                             }
 
+                            if (sesi === "semua") {
+                              const currentValPagi = absenMap[`${s.id}_${d}_pagi`] || "";
+                              const currentValMalam = absenMap[`${s.id}_${d}_malam`] || "";
+                              return (
+                                <React.Fragment key={d}>
+                                  {/* Sesi Pagi */}
+                                  <td className="py-1 px-0.5 text-center border-r border-slate-200 dark:border-slate-800 p-0">
+                                    <select
+                                      value={currentValPagi}
+                                      onChange={(e) =>
+                                        handleCellStatusChange(
+                                          s.id,
+                                          d,
+                                          "pagi",
+                                          e.target.value as StatusAbsen | ""
+                                        )
+                                      }
+                                      title={`Pagi - Tgl ${d}: ${s.nama_lengkap}`}
+                                      className={`h-7 w-7 text-center rounded text-[11px] font-bold border cursor-pointer focus:outline-none transition appearance-none [&::-ms-expand]:hidden ${
+                                        currentValPagi === "hadir"
+                                          ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700"
+                                          : currentValPagi === "alfa"
+                                          ? "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700"
+                                          : currentValPagi === "izin"
+                                          ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
+                                          : currentValPagi === "sakit"
+                                          ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
+                                          : "bg-white text-slate-300 border-transparent hover:border-slate-200 dark:bg-slate-900 dark:text-slate-600"
+                                      }`}
+                                    >
+                                      <option value="">-</option>
+                                      <option value="hadir">H</option>
+                                      <option value="alfa">A</option>
+                                      <option value="izin">I</option>
+                                      <option value="sakit">S</option>
+                                    </select>
+                                  </td>
+                                  {/* Sesi Malam */}
+                                  <td className="py-1 px-0.5 text-center border-r border-slate-200 dark:border-slate-800 p-0">
+                                    <select
+                                      value={currentValMalam}
+                                      onChange={(e) =>
+                                        handleCellStatusChange(
+                                          s.id,
+                                          d,
+                                          "malam",
+                                          e.target.value as StatusAbsen | ""
+                                        )
+                                      }
+                                      title={`Malam - Tgl ${d}: ${s.nama_lengkap}`}
+                                      className={`h-7 w-7 text-center rounded text-[11px] font-bold border cursor-pointer focus:outline-none transition appearance-none [&::-ms-expand]:hidden ${
+                                        currentValMalam === "hadir"
+                                          ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700"
+                                          : currentValMalam === "alfa"
+                                          ? "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700"
+                                          : currentValMalam === "izin"
+                                          ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
+                                          : currentValMalam === "sakit"
+                                          ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
+                                          : "bg-white text-slate-300 border-transparent hover:border-slate-200 dark:bg-slate-900 dark:text-slate-600"
+                                      }`}
+                                    >
+                                      <option value="">-</option>
+                                      <option value="hadir">H</option>
+                                      <option value="alfa">A</option>
+                                      <option value="izin">I</option>
+                                      <option value="sakit">S</option>
+                                    </select>
+                                  </td>
+                                </React.Fragment>
+                              );
+                            }
+
+                            // Sesi Tunggal (Pagi atau Malam)
+                            const currentVal = absenMap[`${s.id}_${d}_${sesi}`] || "";
                             return (
                               <td
                                 key={d}
@@ -513,10 +833,12 @@ export function HalaqohDetailModal({
                                     handleCellStatusChange(
                                       s.id,
                                       d,
+                                      sesi,
                                       e.target.value as StatusAbsen | ""
                                     )
                                   }
-                                  className={`h-7 w-7 text-center rounded text-[11px] font-bold border cursor-pointer focus:outline-none transition ${
+                                  title={`${sesi.toUpperCase()} - Tgl ${d}: ${s.nama_lengkap}`}
+                                  className={`h-7 w-7 text-center rounded text-[11px] font-bold border cursor-pointer focus:outline-none transition appearance-none [&::-ms-expand]:hidden ${
                                     currentVal === "hadir"
                                       ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700"
                                       : currentVal === "alfa"
@@ -566,16 +888,21 @@ export function HalaqohDetailModal({
         {/* ========================================================================= */}
         {activeTab === "juz_baru" && (
           <div className="flex-1 flex flex-col min-h-0 pt-3 space-y-3">
-            {/* Filter Tahun & Tombol Tambah Setoran */}
+            {/* Filter Tahun, Petunjuk, & Tombol Tambah Setoran */}
             <div className="flex flex-wrap items-center justify-between gap-2.5">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500 font-semibold">Tahun:</span>
-                <input
-                  type="number"
-                  value={tahun}
-                  onChange={(e) => setTahun(Number(e.target.value))}
-                  className="h-8 w-20 rounded-xl border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                />
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-semibold">Tahun:</span>
+                  <input
+                    type="number"
+                    value={tahun}
+                    onChange={(e) => setTahun(Number(e.target.value))}
+                    className="h-8 w-20 rounded-xl border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                  />
+                </div>
+                <span className="text-[11px] text-slate-500 hidden sm:inline">
+                  Tip: Sel bulan dapat diketik langsung. Klik <strong>Nama Santri</strong> untuk input seluruh bulan + catatan.
+                </span>
               </div>
 
               {/* Tombol Tambah Setoran Baru */}
@@ -617,40 +944,40 @@ export function HalaqohDetailModal({
                       <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 w-16 text-center">
                         KAMAR
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         JAN
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         FEB
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         MAR
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         APR
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         MEI
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         JUN
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         JUL
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         AGU
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         SEP
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         OKT
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         NOV
                       </th>
-                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-12">
+                      <th className="py-2 px-2 border-b border-r border-slate-200 dark:border-slate-700 text-center w-14">
                         DES
                       </th>
                       <th className="py-2 px-3 border-b border-slate-200 dark:border-slate-700 text-center w-24 bg-emerald-50 text-emerald-900 font-extrabold dark:bg-emerald-950/60 dark:text-emerald-300">
@@ -667,48 +994,62 @@ export function HalaqohDetailModal({
                         <td className="py-2 px-2 text-center font-mono text-slate-500 border-r border-slate-200 dark:border-slate-800">
                           {idx + 1}
                         </td>
-                        <td className="py-2 px-3 font-semibold text-slate-900 border-r border-slate-200 dark:border-slate-800 dark:text-slate-100">
-                          {r.nama_lengkap}
+                        {/* Nama Santri dapat diklik untuk membuka modal input seluruh bulan */}
+                        <td
+                          onClick={() => handleOpenSantriDetail(r)}
+                          className="py-2 px-3 font-semibold text-slate-900 border-r border-slate-200 dark:border-slate-800 dark:text-slate-100 hover:text-emerald-700 hover:underline cursor-pointer group"
+                          title="Klik untuk input tambah juz dan keterangan santri untuk seluruh bulan"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span>{r.nama_lengkap}</span>
+                            <FileText className="h-3 w-3 text-slate-400 group-hover:text-emerald-600 transition shrink-0 opacity-0 group-hover:opacity-100 ml-1" />
+                          </div>
                         </td>
+                        {/* Kolom Kamar (Format E03) */}
                         <td className="py-2 px-2 text-center font-mono font-bold text-slate-700 border-r border-slate-200 dark:border-slate-800 dark:text-slate-300">
-                          {formatKamarDisplay(r.kode, r.kamar)}
+                          {formatKamarDisplay(r.kode_kamar, r.kamar)}
                         </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.jan > 0 ? r.jan : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.feb > 0 ? r.feb : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.mar > 0 ? r.mar : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.apr > 0 ? r.apr : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.mei > 0 ? r.mei : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.jun > 0 ? r.jun : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.jul > 0 ? r.jul : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.agu > 0 ? r.agu : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.sep > 0 ? r.sep : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.okt > 0 ? r.okt : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.nov > 0 ? r.nov : "-"}
-                        </td>
-                        <td className="py-2 px-2 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                          {r.des > 0 ? r.des : "-"}
-                        </td>
+
+                        {/* 12 Kolom Bulan (JAN - DES): Dapat diinput langsung tanpa buka popup */}
+                        {MONTH_KEYS.map((mKey, mIdx) => {
+                          const val = Number(r[mKey]) || 0;
+                          return (
+                            <td
+                              key={mKey}
+                              className="py-1 px-1 text-center font-mono border-r border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 p-0"
+                            >
+                              <input
+                                type="number"
+                                step="0.05"
+                                min="0"
+                                max="30"
+                                key={`${r.santri_id}_${mKey}_${val}`}
+                                defaultValue={val > 0 ? val : ""}
+                                placeholder="-"
+                                onBlur={(e) => {
+                                  const text = e.target.value.trim();
+                                  const num = text === "" ? 0 : Number(text);
+                                  if (num !== val) {
+                                    handleDirectMonthChange(
+                                      r.santri_id,
+                                      mIdx + 1,
+                                      num,
+                                      r.nama_lengkap
+                                    );
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
+                                className="h-8 w-12 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
+                                title={`Isi/ubah setoran ${r.nama_lengkap} bulan ${BULAN_NAMES[mIdx]}`}
+                              />
+                            </td>
+                          );
+                        })}
+
                         <td className="py-2 px-3 text-center font-extrabold font-mono text-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/40 dark:text-emerald-300">
                           {r.total_setoran > 0 ? `${r.total_setoran} Juz` : "0"}
                         </td>
@@ -722,11 +1063,11 @@ export function HalaqohDetailModal({
         )}
 
         {/* ========================================================================= */}
-        {/* SUB-MODAL: INPUT SETORAN JUZ BARU SANTRI                                  */}
+        {/* SUB-MODAL 1: INPUT SETORAN JUZ BARU TUNGGAL (Gambar 5 - FIXED Z-INDEX)    */}
         {/* ========================================================================= */}
         {inputSetoranOpen && (
           <div
-            className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in duration-150"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
             role="dialog"
             aria-modal="true"
           >
@@ -740,6 +1081,7 @@ export function HalaqohDetailModal({
                   type="button"
                   onClick={() => setInputSetoranOpen(false)}
                   className="text-slate-400 hover:text-slate-600"
+                  aria-label="Tutup"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -826,6 +1168,137 @@ export function HalaqohDetailModal({
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* SUB-MODAL 2: DETAIL SETORAN SANTRI SELURUH BULAN (INPUT JUZ & CATATAN)    */}
+        {/* ========================================================================= */}
+        {santriDetailModalOpen && selectedSantriDetail && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-2 sm:p-4 backdrop-blur-xs animate-in fade-in duration-150"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="w-full max-w-2xl max-h-[90vh] rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl flex flex-col dark:border-slate-800 dark:bg-slate-900">
+              {/* Header Modal Detail Santri */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                      {selectedSantriDetail.nama_lengkap}
+                    </h3>
+                    <span className="rounded-lg bg-emerald-50 px-2 py-0.5 text-xs font-mono font-bold text-emerald-800 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+                      Kamar {formatKamarDisplay(selectedSantriDetail.kode_kamar, selectedSantriDetail.kamar)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Input Tambah Juz & Keterangan untuk Seluruh Bulan (Tahun {tahun})
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSantriDetailModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                  aria-label="Tutup"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Form Input Seluruh Bulan (Januari - Desember) */}
+              {loadingSantriDetail ? (
+                <div className="py-20 text-center text-xs font-bold text-slate-500">
+                  Memuat rincian setoran santri...
+                </div>
+              ) : (
+                <form onSubmit={handleSaveSantriDetailAllMonths} className="flex-1 flex flex-col min-h-0">
+                  <div className="flex-1 overflow-auto pr-1 space-y-2">
+                    <div className="grid grid-cols-12 gap-2 text-[11px] font-bold uppercase text-slate-500 px-2 pb-1 border-b border-slate-200 dark:border-slate-700">
+                      <div className="col-span-3">Bulan</div>
+                      <div className="col-span-3">Tambah (Juz)</div>
+                      <div className="col-span-6">Keterangan / Catatan</div>
+                    </div>
+
+                    {santriMonthInputs.map((item, idx) => (
+                      <div
+                        key={item.bulan}
+                        className="grid grid-cols-12 gap-2 items-center rounded-xl bg-slate-50 p-2 border border-slate-200/80 dark:bg-slate-800/40 dark:border-slate-700/60"
+                      >
+                        <div className="col-span-3 text-xs font-bold text-slate-800 dark:text-slate-200">
+                          {item.namaBulan}
+                        </div>
+                        <div className="col-span-3">
+                          <input
+                            type="number"
+                            step="0.05"
+                            min="0"
+                            max="30"
+                            placeholder="0"
+                            value={item.jumlahJuz}
+                            onChange={(e) => {
+                              const val = e.target.value === "" ? "" : Number(e.target.value);
+                              setSantriMonthInputs((prev) =>
+                                prev.map((m, i) => (i === idx ? { ...m, jumlahJuz: val } : m))
+                              );
+                            }}
+                            className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2 text-center text-xs font-mono font-bold text-slate-900 shadow-xs focus:ring-1 focus:ring-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                        </div>
+                        <div className="col-span-6">
+                          <input
+                            type="text"
+                            placeholder="Contoh: Juz 3 lancar, khatam..."
+                            value={item.catatan}
+                            onChange={(e) => {
+                              const note = e.target.value;
+                              setSantriMonthInputs((prev) =>
+                                prev.map((m, i) => (i === idx ? { ...m, catatan: note } : m))
+                              );
+                            }}
+                            className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-800 shadow-xs focus:ring-1 focus:ring-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Footer Total & Tombol Aksi */}
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800 mt-3">
+                    <div className="text-xs text-slate-600 dark:text-slate-300">
+                      Total Setoran:{" "}
+                      <strong className="text-emerald-800 dark:text-emerald-300 font-extrabold text-sm">
+                        {Math.round(
+                          santriMonthInputs.reduce(
+                            (sum, m) => sum + (Number(m.jumlahJuz) || 0),
+                            0
+                          ) * 100
+                        ) / 100}{" "}
+                        Juz
+                      </strong>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSantriDetailModalOpen(false)}
+                        className="px-3.5 py-1.5 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingSantriDetail}
+                        className="px-4 py-1.5 text-xs font-bold rounded-xl bg-emerald-800 text-white hover:bg-emerald-900 transition shadow disabled:opacity-50 inline-flex items-center gap-1.5"
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                        <span>{isSavingSantriDetail ? "Menyimpan..." : "Simpan Semua Bulan"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         )}
