@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,8 +14,20 @@ import {
   Search,
   RotateCcw,
   Check,
+  LayoutGrid,
+  Table as TableIcon,
+  TrendingUp,
+  Star,
+  Award,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Sparkles,
+  Calendar,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
+import { createClient } from "@/lib/supabase/client";
 import {
   fetchAllSantriFiltered,
   fetchSetoranBulananMerged,
@@ -27,6 +39,8 @@ import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
+  PEMETAAN_HALAQOH_KELAS,
+  type HalaqohBagian,
   type Santri,
   type SetoranBulananRow,
   type TipeSetoran,
@@ -74,6 +88,20 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
 
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+
+  // Mode Tampilan: Kartu vs Tabel (Default Kartu)
+  const [viewMode, setViewMode] = useState<"kartu" | "tabel">("kartu");
+  const [pageSize, setPageSize] = useState(15);
+  const [cardPage, setCardPage] = useState(1);
+  const cardPageSize = 6;
+
+  // Status Modal Detail Evaluasi & Naik Halaqoh (Khusus Evaluasi)
+  const [evaluasiModalOpen, setEvaluasiModalOpen] = useState(false);
+  const [selectedEvaluasiSantri, setSelectedEvaluasiSantri] = useState<SetoranBulananRow | null>(null);
+  const [naikHalaqohModalOpen, setNaikHalaqohModalOpen] = useState(false);
+  const [selectedNaikHalaqohSantri, setSelectedNaikHalaqohSantri] = useState<SetoranBulananRow | null>(null);
+  const [targetHalaqohChoice, setTargetHalaqohChoice] = useState<{ kelas: number; bagian: HalaqohBagian } | null>(null);
+  const [submittingNaikHalaqoh, setSubmittingNaikHalaqoh] = useState(false);
 
   const [santriOptions, setSantriOptions] = useState<Santri[]>([]);
   const [rows, setRows] = useState<SetoranBulananRow[]>([]);
@@ -125,13 +153,114 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (modalOpen) setModalOpen(false);
-        if (filterModalOpen) setFilterModalOpen(false);
+        if (naikHalaqohModalOpen) setNaikHalaqohModalOpen(false);
+        else if (evaluasiModalOpen) setEvaluasiModalOpen(false);
+        else if (modalOpen) setModalOpen(false);
+        else if (filterModalOpen) setFilterModalOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, filterModalOpen]);
+  }, [modalOpen, filterModalOpen, evaluasiModalOpen, naikHalaqohModalOpen]);
+
+  // Kelompokkan data santri dan setoran per halaqoh untuk mode Kartu
+  const halaqohGroups = useMemo(() => {
+    const map = new Map<string, { kelas: number; bagian: HalaqohBagian; rows: SetoranBulananRow[] }>();
+
+    rows.forEach((r) => {
+      const k = Number(r.halaqoh_kelas) || 1;
+      const b = (r.halaqoh_bagian || "A") as HalaqohBagian;
+      const key = `${k}_${b}`;
+      if (!map.has(key)) {
+        map.set(key, { kelas: k, bagian: b, rows: [] });
+      }
+      map.get(key)!.rows.push(r);
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.kelas !== b.kelas) return a.kelas - b.kelas;
+      return a.bagian.localeCompare(b.bagian);
+    });
+  }, [rows]);
+
+  const totalHalaqohPages = Math.max(1, Math.ceil(halaqohGroups.length / cardPageSize));
+  const paginatedHalaqohGroups = useMemo(() => {
+    const start = (cardPage - 1) * cardPageSize;
+    return halaqohGroups.slice(start, start + cardPageSize);
+  }, [halaqohGroups, cardPage, cardPageSize]);
+
+  // Daftar pilihan halaqoh di atas halaqoh santri saat ini (kelas > currentKelas)
+  // Dilengkapi indikator Rekomendasi (< 5 santri)
+  const availableHigherHalaqoh = useMemo(() => {
+    if (!selectedNaikHalaqohSantri) return [];
+    const currentK = Number(selectedNaikHalaqohSantri.halaqoh_kelas) || 1;
+    const candidates: {
+      kelas: number;
+      bagian: HalaqohBagian;
+      santriCount: number;
+      isRekomendasi: boolean;
+      targetJuz: string;
+    }[] = [];
+
+    HALAQOH_KELAS_LIST.filter((k) => k > currentK).forEach((k) => {
+      HALAQOH_BAGIAN_LIST.forEach((b) => {
+        const count = santriOptions.filter(
+          (s) => Number(s.halaqoh_kelas) === k && s.halaqoh_bagian === b
+        ).length;
+        candidates.push({
+          kelas: k,
+          bagian: b,
+          santriCount: count,
+          isRekomendasi: count < 5, // Kriteria rekomendasi: kurang dari 5 orang
+          targetJuz: PEMETAAN_HALAQOH_KELAS[k] || "-",
+        });
+      });
+    });
+
+    // Urutkan: Rekomendasi di atas, lalu urut kelas ASC, bagian ASC
+    return candidates.sort((a, b) => {
+      if (a.isRekomendasi && !b.isRekomendasi) return -1;
+      if (!a.isRekomendasi && b.isRekomendasi) return 1;
+      if (a.kelas !== b.kelas) return a.kelas - b.kelas;
+      return a.bagian.localeCompare(b.bagian);
+    });
+  }, [selectedNaikHalaqohSantri, santriOptions]);
+
+  const handleConfirmNaikHalaqoh = async () => {
+    if (!selectedNaikHalaqohSantri || !targetHalaqohChoice) {
+      showToast("error", "Pilih halaqoh tujuan terlebih dahulu.");
+      return;
+    }
+
+    setSubmittingNaikHalaqoh(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("santri")
+        .update({
+          halaqoh_kelas: targetHalaqohChoice.kelas,
+          halaqoh_bagian: targetHalaqohChoice.bagian,
+          halaqoh: `Kelas ${targetHalaqohChoice.kelas} - Bagian ${targetHalaqohChoice.bagian}`,
+        })
+        .eq("id", selectedNaikHalaqohSantri.santri_id);
+
+      if (error) throw error;
+
+      showToast(
+        "success",
+        `Alhamdulillah! ${selectedNaikHalaqohSantri.nama_lengkap} berhasil dipindahkan ke Halaqoh Kelas ${targetHalaqohChoice.kelas} - Bagian ${targetHalaqohChoice.bagian}.`
+      );
+      setNaikHalaqohModalOpen(false);
+      setEvaluasiModalOpen(false);
+      setSelectedNaikHalaqohSantri(null);
+      setTargetHalaqohChoice(null);
+      loadData();
+    } catch (err: any) {
+      showToast("error", err.message || "Gagal memperbarui halaqoh santri.");
+    } finally {
+      setSubmittingNaikHalaqoh(false);
+    }
+  };
 
   // Hook cetak PDF via react-to-print
   const handlePrint = useReactToPrint({
@@ -222,7 +351,41 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     {
       accessorKey: "nama_lengkap",
       header: "NAMA",
-      cell: ({ row }) => <span className="font-semibold text-slate-800 dark:text-slate-100">{row.original.nama_lengkap}</span>,
+      cell: ({ row }) => {
+        if (tipe === "evaluasi") {
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedEvaluasiSantri(row.original);
+                setEvaluasiModalOpen(true);
+              }}
+              className="text-left font-semibold text-emerald-800 hover:text-emerald-950 hover:underline dark:text-emerald-400 dark:hover:text-emerald-300"
+              title="Klik untuk detail Evaluasi Hafalan & Kenaikan Halaqoh"
+            >
+              {row.original.nama_lengkap}
+            </button>
+          );
+        }
+        return (
+          <button
+            type="button"
+            onClick={() => {
+              reset({
+                santri_id: row.original.santri_id,
+                tanggal: toLocalIsoDate(now),
+                jumlah_juz_tambahan: 0.5,
+                catatan: "",
+              });
+              setModalOpen(true);
+            }}
+            className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400"
+            title="Klik untuk tambah catatan setoran santri"
+          >
+            {row.original.nama_lengkap}
+          </button>
+        );
+      },
     },
     {
       id: "kamar",
@@ -261,6 +424,48 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         </span>
       ),
     },
+    ...(tipe === "evaluasi"
+      ? [
+          {
+            id: "status_evaluasi",
+            header: "STATUS TARGET",
+            cell: ({ row }: { row: { original: SetoranBulananRow } }) => {
+              const isTargetMet = row.original.total_setoran >= 3;
+              return (
+                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                  {isTargetMet ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                      <CheckCircle2 className="h-3 w-3" />
+                      <span>Selesai</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      Berjalan
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedNaikHalaqohSantri(row.original);
+                      setNaikHalaqohModalOpen(true);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${
+                      isTargetMet
+                        ? "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                        : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    }`}
+                    title="Naikkan ke Halaqoh Baru"
+                  >
+                    <TrendingUp className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                    <span>Naik</span>
+                  </button>
+                </div>
+              );
+            },
+          },
+        ]
+      : []),
   ];
 
   const handleDeleteSelected = async (selectedIds: string[]) => {
@@ -311,7 +516,35 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       </div>
 
       {/* Bilah Toolbar yang Disederhanakan 1 Baris */}
-      <div className="no-print flex items-center gap-2">
+      <div className="no-print flex flex-wrap sm:flex-nowrap items-center gap-2">
+        {/* Switch Mode: Kartu vs Tabel */}
+        <div className="inline-flex h-11 items-center rounded-xl border border-slate-300 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-800 shrink-0 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setViewMode("kartu")}
+            className={`flex h-full items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition ${
+              viewMode === "kartu"
+                ? "bg-white text-emerald-800 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
+                : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            <LayoutGrid className="h-4 w-4" />
+            <span>Kartu</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("tabel")}
+            className={`flex h-full items-center gap-1.5 rounded-lg px-3 text-xs font-bold transition ${
+              viewMode === "tabel"
+                ? "bg-white text-emerald-800 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
+                : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            <TableIcon className="h-4 w-4" />
+            <span>Tabel</span>
+          </button>
+        </div>
+
         {/* Input Tahun */}
         <input
           type="number"
@@ -445,8 +678,8 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         </div>
       )}
 
-      {/* Tabel Data Setoran */}
-      <div ref={printRef}>
+      {/* Area Tampilan Setoran (Kartu Halaqoh / Tabel Utama) */}
+      <div ref={printRef} className="space-y-4">
         <div className="hidden print:block mb-4">
           <h2 className="text-lg font-bold">LPTQ Pondok Pesantren Darussalam Blokagung</h2>
           <p className="text-xs">
@@ -454,16 +687,242 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
           </p>
         </div>
 
-        <DataTable
-          columns={columns}
-          data={rows}
-          loading={loading}
-          error={error}
-          onRetry={loadData}
-          getRowId={(row) => row.santri_id}
-          onDeleteSelected={handleDeleteSelected}
-          onDeleteAll={handleDeleteAll}
-        />
+        {viewMode === "kartu" ? (
+          <div className="space-y-5">
+            {loading ? (
+              <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-8 dark:border-slate-800 dark:bg-slate-900">
+                <Loader2 className="h-7 w-7 animate-spin text-emerald-700" />
+                <p className="text-xs text-slate-500">Memuat kartu halaqoh setoran...</p>
+              </div>
+            ) : error ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30">
+                <p className="text-sm font-semibold">{error}</p>
+                <button
+                  type="button"
+                  onClick={loadData}
+                  className="mt-2 inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span>Coba Lagi</span>
+                </button>
+              </div>
+            ) : halaqohGroups.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+                Tidak ada data setoran santri yang sesuai kriteria pencarian atau filter.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-5">
+                {paginatedHalaqohGroups.map((grp) => (
+                  <div
+                    key={`${grp.kelas}_${grp.bagian}`}
+                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow dark:border-slate-800 dark:bg-slate-900"
+                  >
+                    {/* Header Kartu Halaqoh */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/70 px-5 py-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+                      <div className="flex items-center gap-2.5">
+                        <HalaqohBadge kelas={grp.kelas} bagian={grp.bagian} />
+                        <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                          Target: {PEMETAAN_HALAQOH_KELAS[grp.kelas] || "-"}
+                        </span>
+                      </div>
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 shadow-sm border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                        {grp.rows.length} Santri
+                      </span>
+                    </div>
+
+                    {/* Tabel Santri di dalam Kartu Halaqoh */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20 text-slate-600 dark:text-slate-400">
+                            <th className="px-3 py-2.5 font-semibold">No</th>
+                            <th className="px-3 py-2.5 font-semibold">Nama Santri</th>
+                            <th className="px-3 py-2.5 font-semibold">Kamar</th>
+                            {monthKeys.map((m) => (
+                              <th key={String(m.key)} className="px-2 py-2.5 text-center font-semibold">
+                                {m.label}
+                              </th>
+                            ))}
+                            <th className="px-3 py-2.5 font-semibold text-center">Total Setoran</th>
+                            {tipe === "evaluasi" && (
+                              <th className="no-print px-3 py-2.5 font-semibold text-center">Aksi / Status</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {grp.rows.map((r, idx) => {
+                            const isTargetMet = r.total_setoran >= 3;
+                            return (
+                              <tr key={r.santri_id} className="transition hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                <td className="px-3 py-2.5 font-mono text-slate-400">{idx + 1}</td>
+                                <td className="px-3 py-2.5 font-semibold whitespace-nowrap">
+                                  {tipe === "evaluasi" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedEvaluasiSantri(r);
+                                        setEvaluasiModalOpen(true);
+                                      }}
+                                      className="text-left font-semibold text-emerald-800 hover:text-emerald-950 hover:underline dark:text-emerald-400 dark:hover:text-emerald-300"
+                                      title="Klik untuk detail Evaluasi Hafalan & Naik Halaqoh"
+                                    >
+                                      {r.nama_lengkap}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        reset({
+                                          santri_id: r.santri_id,
+                                          tanggal: toLocalIsoDate(now),
+                                          jumlah_juz_tambahan: 0.5,
+                                          catatan: "",
+                                        });
+                                        setModalOpen(true);
+                                      }}
+                                      className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400"
+                                      title="Klik untuk tambah setoran juz"
+                                    >
+                                      {r.nama_lengkap}
+                                    </button>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5 font-mono font-bold text-slate-700 dark:text-slate-300">
+                                  {formatKamarDisplay(r.kode_kamar, r.kamar)}
+                                </td>
+                                {monthKeys.map((m) => {
+                                  const val = Number(r[m.key] ?? 0);
+                                  return (
+                                    <td key={String(m.key)} className="px-2 py-2.5 text-center font-mono">
+                                      <span
+                                        className={
+                                          val > 0
+                                            ? "font-bold text-emerald-800 dark:text-emerald-300"
+                                            : "text-slate-400"
+                                        }
+                                      >
+                                        {val > 0 ? val : "-"}
+                                      </span>
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-3 py-2.5 text-center font-mono font-bold text-emerald-900 dark:text-emerald-300">
+                                  {r.total_setoran} Juz
+                                </td>
+                                {tipe === "evaluasi" && (
+                                  <td className="no-print px-3 py-2.5 text-center">
+                                    <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                                      {isTargetMet ? (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                          <CheckCircle2 className="h-3 w-3" />
+                                          <span>Selesai</span>
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                          Berjalan
+                                        </span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedNaikHalaqohSantri(r);
+                                          setNaikHalaqohModalOpen(true);
+                                        }}
+                                        className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${
+                                          isTargetMet
+                                            ? "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                            : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                                        }`}
+                                        title="Naikkan ke Halaqoh Baru"
+                                      >
+                                        <TrendingUp className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                        <span>Naik</span>
+                                      </button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pagination untuk Kartu Halaqoh */}
+            {totalHalaqohPages > 1 && (
+              <div className="no-print flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  Menampilkan kartu halaqoh{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {(cardPage - 1) * cardPageSize + 1}
+                  </strong>{" "}
+                  -{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {Math.min(cardPage * cardPageSize, halaqohGroups.length)}
+                  </strong>{" "}
+                  dari{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {halaqohGroups.length}
+                  </strong>{" "}
+                  halaqoh
+                </span>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setCardPage((p) => Math.max(1, p - 1))}
+                    disabled={cardPage <= 1}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+
+                  {Array.from({ length: totalHalaqohPages }, (_, i) => i + 1).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setCardPage(p)}
+                      className={`h-8 min-w-[32px] rounded-lg px-2 text-xs font-bold transition ${
+                        p === cardPage
+                          ? "bg-emerald-800 text-white shadow"
+                          : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() => setCardPage((p) => Math.min(totalHalaqohPages, p + 1))}
+                    disabled={cardPage >= totalHalaqohPages}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <DataTable
+            columns={columns}
+            data={rows}
+            loading={loading}
+            error={error}
+            onRetry={loadData}
+            pageSize={pageSize}
+            pageSizeOptions={[10, 15, 25, 50]}
+            onPageSizeChange={setPageSize}
+            getRowId={(row) => row.santri_id}
+            onDeleteSelected={handleDeleteSelected}
+            onDeleteAll={handleDeleteAll}
+          />
+        )}
       </div>
 
       {/* POP-UP 1: MODAL FILTER TERPADU */}
@@ -684,6 +1143,336 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* POP-UP 3: DETAIL EVALUASI HAFALAN SANTRI (GAMBAR 4)                       */}
+      {/* ========================================================================= */}
+      {evaluasiModalOpen && selectedEvaluasiSantri && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-evaluasi-title"
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            {/* Header Dialog */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  <Award className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 id="modal-evaluasi-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    Detail Evaluasi Hafalan
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    LPTQ Pondok Pesantren Darussalam Blokagung
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEvaluasiModalOpen(false)}
+                aria-label="Tutup dialog evaluasi"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Biodata Santri */}
+            <div className="my-4 space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                      {selectedEvaluasiSantri.nama_lengkap}
+                    </h3>
+                    <p className="text-xs text-slate-500 font-mono">
+                      NIS: {selectedEvaluasiSantri.kode || "-"} • Kamar: {formatKamarDisplay(selectedEvaluasiSantri.kode_kamar, selectedEvaluasiSantri.kamar)} • {selectedEvaluasiSantri.asrama}
+                    </p>
+                  </div>
+                  <HalaqohBadge
+                    kelas={selectedEvaluasiSantri.halaqoh_kelas}
+                    bagian={selectedEvaluasiSantri.halaqoh_bagian}
+                    showMapping
+                  />
+                </div>
+
+                <div className="mt-3 flex items-center justify-between border-t border-slate-200/80 pt-2.5 text-xs dark:border-slate-700/60">
+                  <span className="text-slate-500">Target Halaqoh Ini:</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    {PEMETAAN_HALAQOH_KELAS[selectedEvaluasiSantri.halaqoh_kelas] || "-"} (Minimal 3 Juz)
+                  </span>
+                </div>
+              </div>
+
+              {/* Status & Progress Target */}
+              {(() => {
+                const targetMin = 3;
+                const isCompleted = selectedEvaluasiSantri.total_setoran >= targetMin;
+                const progressPct = Math.min(100, Math.round((selectedEvaluasiSantri.total_setoran / targetMin) * 100));
+
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        Capaian Setoran Evaluasi:
+                      </span>
+                      <span className="font-mono font-bold text-emerald-800 dark:text-emerald-300">
+                        {selectedEvaluasiSantri.total_setoran} / {targetMin} Juz ({progressPct}%)
+                      </span>
+                    </div>
+
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                      <div
+                        className={`h-full transition-all duration-500 ${
+                          isCompleted ? "bg-emerald-600" : "bg-emerald-500"
+                        }`}
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+
+                    {isCompleted ? (
+                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/80 p-3.5 dark:border-emerald-800/60 dark:bg-emerald-950/40">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          <div className="text-xs">
+                            <p className="font-bold text-emerald-900 dark:text-emerald-200">
+                              Target Halaqoh Selesai!
+                            </p>
+                            <p className="text-emerald-700 dark:text-emerald-400">
+                              Santri telah memenuhi target hafalan dan siap dinaikkan ke halaqoh berikutnya.
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
+                            setNaikHalaqohModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-emerald-800 px-3.5 py-2 text-xs font-bold text-white shadow hover:bg-emerald-900 transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
+                        >
+                          <TrendingUp className="h-4 w-4" />
+                          <span>Naik Halaqoh</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-800/60 dark:bg-amber-950/30">
+                        <div className="text-xs text-amber-900 dark:text-amber-200">
+                          <p className="font-semibold">Masih dalam proses hafalan</p>
+                          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                            Kurang {(targetMin - selectedEvaluasiSantri.total_setoran).toFixed(2)} Juz untuk menyelesaikan target halaqoh ini.
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
+                            setNaikHalaqohModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300"
+                          title="Buka opsi kenaikan halaqoh manual oleh penguji"
+                        >
+                          <TrendingUp className="h-3.5 w-3.5" />
+                          <span>Naik Halaqoh Manual</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Rincian Evaluasi Bulanan (Jan - Des) */}
+              <div>
+                <p className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Rincian Setoran Bulanan ({tahun}):
+                </p>
+                <div className="grid grid-cols-6 gap-1.5 text-center text-xs">
+                  {monthKeys.map((m) => {
+                    const val = Number(selectedEvaluasiSantri[m.key] ?? 0);
+                    return (
+                      <div
+                        key={String(m.key)}
+                        className={`rounded-lg p-1.5 border ${
+                          val > 0
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 font-bold"
+                            : "border-slate-200 bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-800/30"
+                        }`}
+                      >
+                        <div className="text-[10px] uppercase text-slate-500">{m.label}</div>
+                        <div className="font-mono">{val > 0 ? val : "-"}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEvaluasiModalOpen(false)}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* POP-UP 4: MODAL NAIK HALAQOH (DENGAN REKOMENDASI < 5 SANTRI)              */}
+      {/* ========================================================================= */}
+      {naikHalaqohModalOpen && selectedNaikHalaqohSantri && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/70 p-4 animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-naik-halaqoh-title"
+        >
+          <div className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            {/* Header Modal */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  <TrendingUp className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 id="modal-naik-halaqoh-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    Naik Halaqoh Baru
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Santri: <strong className="text-slate-800 dark:text-slate-200">{selectedNaikHalaqohSantri.nama_lengkap}</strong> (Saat ini: Kelas {selectedNaikHalaqohSantri.halaqoh_kelas} - Bagian {selectedNaikHalaqohSantri.halaqoh_bagian})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setNaikHalaqohModalOpen(false);
+                  setTargetHalaqohChoice(null);
+                }}
+                aria-label="Tutup dialog naik halaqoh"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Keterangan & Kriteria Rekomendasi */}
+            <div className="py-3 border-b border-slate-100 dark:border-slate-800 text-xs shrink-0 space-y-1">
+              <p className="text-slate-600 dark:text-slate-300">
+                Pilih halaqoh tingkat di atasnya untuk memindahkan santri ini.
+              </p>
+              <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold dark:bg-emerald-950">
+                  <Star className="h-3 w-3 fill-emerald-600 text-emerald-600 dark:fill-emerald-400 dark:text-emerald-400" />
+                  Rekomendasi
+                </span>
+                <span>Halaqoh dengan jumlah anggota kurang dari 5 orang santri.</span>
+              </div>
+            </div>
+
+            {/* Daftar Halaqoh di Atasnya */}
+            <div className="flex-1 overflow-y-auto py-4 space-y-2.5 pr-1">
+              {availableHigherHalaqoh.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-xs text-slate-500 dark:border-slate-700">
+                  Santri telah berada pada jenjang halaqoh tertinggi (Kelas 10 - Khotmil 30 Juz).
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {availableHigherHalaqoh.map((item) => {
+                    const isSelected =
+                      targetHalaqohChoice?.kelas === item.kelas &&
+                      targetHalaqohChoice?.bagian === item.bagian;
+
+                    return (
+                      <div
+                        key={`${item.kelas}_${item.bagian}`}
+                        onClick={() => setTargetHalaqohChoice({ kelas: item.kelas, bagian: item.bagian })}
+                        className={`cursor-pointer rounded-xl border p-3 transition flex flex-col justify-between ${
+                          isSelected
+                            ? "border-emerald-600 bg-emerald-50/90 ring-2 ring-emerald-600 dark:border-emerald-500 dark:bg-emerald-950/60 dark:ring-emerald-500"
+                            : item.isRekomendasi
+                            ? "border-emerald-300 bg-emerald-50/40 hover:border-emerald-500 hover:bg-emerald-50 dark:border-emerald-800/80 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40"
+                            : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-850 dark:hover:bg-slate-800"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <HalaqohBadge kelas={item.kelas} bagian={item.bagian} />
+                          {item.isRekomendasi && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
+                              <Star className="h-3 w-3 fill-emerald-600 text-emerald-600 dark:fill-emerald-400 dark:text-emerald-400" />
+                              Rekomendasi
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-2.5 flex items-center justify-between text-xs">
+                          <span className="text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                            {item.targetJuz}
+                          </span>
+                          <span
+                            className={`rounded-md px-2 py-0.5 text-[11px] font-bold font-mono ${
+                              item.isRekomendasi
+                                ? "bg-emerald-200/80 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100"
+                                : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                            }`}
+                          >
+                            {item.santriCount} Santri
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer Modal */}
+            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setNaikHalaqohModalOpen(false);
+                  setTargetHalaqohChoice(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Batal
+              </button>
+
+              <button
+                type="button"
+                disabled={!targetHalaqohChoice || submittingNaikHalaqoh}
+                onClick={handleConfirmNaikHalaqoh}
+                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl shadow transition disabled:opacity-40 disabled:cursor-not-allowed dark:bg-emerald-700 dark:hover:bg-emerald-800"
+              >
+                {submittingNaikHalaqoh ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Memproses Kenaikan...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-4 w-4" />
+                    <span>
+                      {targetHalaqohChoice
+                        ? `Pindahkan ke Kelas ${targetHalaqohChoice.kelas} - Bagian ${targetHalaqohChoice.bagian}`
+                        : "Pilih Halaqoh Terlebih Dahulu"}
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
