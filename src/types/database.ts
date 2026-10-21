@@ -59,6 +59,7 @@ export interface SetoranBulananRow {
   nama_lengkap: string;
   blok: string;
   asrama: string;
+  kode_kamar?: string | null;
   kamar: string;
   halaqoh_kelas: number;
   halaqoh_bagian: HalaqohBagian;
