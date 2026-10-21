@@ -23,6 +23,7 @@ import {
   deleteSetoranBatch,
   deleteAllSetoran,
 } from "@/lib/services/tahfidz-service";
+import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
@@ -177,7 +178,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       No: idx + 1,
       Kode: r.kode,
       Nama: r.nama_lengkap,
-      Kamar: r.kamar,
+      Kamar: formatKamarDisplay(r.kode_kamar, r.kamar),
       Halaqoh: r.halaqoh,
       Jan: r.jan,
       Feb: r.feb,
@@ -223,7 +224,15 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       header: "NAMA",
       cell: ({ row }) => <span className="font-semibold text-slate-800 dark:text-slate-100">{row.original.nama_lengkap}</span>,
     },
-    { accessorKey: "kamar", header: "KAMAR" },
+    {
+      id: "kamar",
+      header: "KAMAR",
+      cell: ({ row }) => (
+        <span className="font-mono font-bold text-xs text-slate-700 dark:text-slate-300">
+          {formatKamarDisplay(row.original.kode_kamar, row.original.kamar)}
+        </span>
+      ),
+    },
     {
       id: "halaqoh",
       header: "HALAQOH",
