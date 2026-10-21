@@ -19,6 +19,7 @@ import {
   TrendingUp,
   Star,
   Award,
+  BookOpen,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -34,6 +35,7 @@ import {
   insertSetoranLog,
   deleteSetoranBatch,
   deleteAllSetoran,
+  saveSetoranBulanDirect,
 } from "@/lib/services/tahfidz-service";
 import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
@@ -327,20 +329,78 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     showToast("success", "Rekap setoran berhasil diekspor ke Excel.");
   };
 
-  const monthKeys: { key: keyof SetoranBulananRow; label: string }[] = [
-    { key: "jan", label: "Jan" },
-    { key: "feb", label: "Feb" },
-    { key: "mar", label: "Mar" },
-    { key: "apr", label: "Apr" },
-    { key: "mei", label: "Mei" },
-    { key: "jun", label: "Jun" },
-    { key: "jul", label: "Jul" },
-    { key: "agu", label: "Agu" },
-    { key: "sep", label: "Sep" },
-    { key: "okt", label: "Okt" },
-    { key: "nov", label: "Nov" },
-    { key: "des", label: "Des" },
-  ];
+  const monthKeys: { key: keyof SetoranBulananRow; label: string }[] = useMemo(
+    () => [
+      { key: "jan", label: "Jan" },
+      { key: "feb", label: "Feb" },
+      { key: "mar", label: "Mar" },
+      { key: "apr", label: "Apr" },
+      { key: "mei", label: "Mei" },
+      { key: "jun", label: "Jun" },
+      { key: "jul", label: "Jul" },
+      { key: "agu", label: "Agu" },
+      { key: "sep", label: "Sep" },
+      { key: "okt", label: "Okt" },
+      { key: "nov", label: "Nov" },
+      { key: "des", label: "Des" },
+    ],
+    []
+  );
+
+  // 3 bulan terakhir untuk Mode Kartu agar ringkas dan muat dalam grid 2 kolom
+  const cardMonthKeys = useMemo(() => {
+    const today = new Date();
+    const currentMonthNum = today.getFullYear() === tahun ? today.getMonth() + 1 : 12;
+    const endMonth = Math.min(12, Math.max(3, currentMonthNum));
+    return monthKeys.slice(endMonth - 3, endMonth);
+  }, [tahun, monthKeys]);
+
+  // Handle pengisian langsung nilai setoran per bulan pada tabel & kartu (otomatis simpan)
+  const handleDirectMonthChange = async (
+    santriId: string,
+    monthNum: number,
+    newVal: number,
+    santriName: string
+  ) => {
+    const monthKey = monthKeys[monthNum - 1]?.key;
+    if (!monthKey) return;
+
+    // Optimistic update di list rows utama
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.santri_id !== santriId) return row;
+        const updatedRow = { ...row, [monthKey]: newVal };
+        const newTotal = monthKeys.reduce((sum, k) => sum + (Number(updatedRow[k.key]) || 0), 0);
+        return { ...updatedRow, total_setoran: Math.round(newTotal * 100) / 100 };
+      })
+    );
+
+    // Optimistic update di selectedEvaluasiSantri (jika modal detail sedang terbuka)
+    setSelectedEvaluasiSantri((prev) => {
+      if (!prev || prev.santri_id !== santriId) return prev;
+      const updatedRow = { ...prev, [monthKey]: newVal };
+      const newTotal = monthKeys.reduce((sum, k) => sum + (Number(updatedRow[k.key]) || 0), 0);
+      return { ...updatedRow, total_setoran: Math.round(newTotal * 100) / 100 };
+    });
+
+    try {
+      await saveSetoranBulanDirect({
+        santri_id: santriId,
+        tahun,
+        bulan: monthNum,
+        tipe,
+        jumlah_juz_tambahan: newVal,
+      });
+      showToast(
+        "success",
+        `Setoran ${santriName} bulan ${monthKeys[monthNum - 1].label} (${newVal} Juz) tersimpan.`
+      );
+    } catch (err) {
+      console.error(err);
+      showToast("error", "Gagal menyimpan setoran langsung.");
+      loadData();
+    }
+  };
 
   const columns: ColumnDef<SetoranBulananRow>[] = [
     {
@@ -351,41 +411,19 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     {
       accessorKey: "nama_lengkap",
       header: "NAMA",
-      cell: ({ row }) => {
-        if (tipe === "evaluasi") {
-          return (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedEvaluasiSantri(row.original);
-                setEvaluasiModalOpen(true);
-              }}
-              className="text-left font-semibold text-emerald-800 hover:text-emerald-950 hover:underline dark:text-emerald-400 dark:hover:text-emerald-300"
-              title="Klik untuk detail Evaluasi Hafalan & Kenaikan Halaqoh"
-            >
-              {row.original.nama_lengkap}
-            </button>
-          );
-        }
-        return (
-          <button
-            type="button"
-            onClick={() => {
-              reset({
-                santri_id: row.original.santri_id,
-                tanggal: toLocalIsoDate(now),
-                jumlah_juz_tambahan: 0.5,
-                catatan: "",
-              });
-              setModalOpen(true);
-            }}
-            className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400"
-            title="Klik untuk tambah catatan setoran santri"
-          >
-            {row.original.nama_lengkap}
-          </button>
-        );
-      },
+      cell: ({ row }) => (
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedEvaluasiSantri(row.original);
+            setEvaluasiModalOpen(true);
+          }}
+          className="text-left font-semibold text-emerald-800 hover:text-emerald-950 hover:underline dark:text-emerald-400 dark:hover:text-emerald-300"
+          title={tipe === "evaluasi" ? "Klik untuk detail Evaluasi Hafalan & Kenaikan Halaqoh" : "Klik untuk Detail Setoran Juz Baru"}
+        >
+          {row.original.nama_lengkap}
+        </button>
+      ),
     },
     {
       id: "kamar",
@@ -403,15 +441,42 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         <HalaqohBadge kelas={row.original.halaqoh_kelas} bagian={row.original.halaqoh_bagian} />
       ),
     },
-    ...monthKeys.map((m) => ({
+    ...monthKeys.map((m, mIdx) => ({
       id: String(m.key),
       header: m.label,
       cell: ({ row }: { row: { original: SetoranBulananRow } }) => {
         const val = Number(row.original[m.key] ?? 0);
         return (
-          <span className={`font-mono text-xs ${val > 0 ? "font-bold text-emerald-800 dark:text-emerald-300" : "text-slate-400"}`}>
-            {val > 0 ? val : "-"}
-          </span>
+          <div className="flex items-center justify-center p-0">
+            <input
+              type="number"
+              step="0.05"
+              min="0"
+              max="30"
+              key={`${row.original.santri_id}_${String(m.key)}_${val}`}
+              defaultValue={val > 0 ? val : ""}
+              placeholder="-"
+              onBlur={(e) => {
+                const text = e.target.value.trim();
+                const num = text === "" ? 0 : Number(text);
+                if (num !== val) {
+                  handleDirectMonthChange(
+                    row.original.santri_id,
+                    mIdx + 1,
+                    num,
+                    row.original.nama_lengkap
+                  );
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+              className="h-7 w-11 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
+              title={`Isi/ubah setoran ${row.original.nama_lengkap} bulan ${m.label}`}
+            />
+          </div>
         );
       },
     })),
@@ -711,23 +776,28 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                 Tidak ada data setoran santri yang sesuai kriteria pencarian atau filter.
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-5">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 {paginatedHalaqohGroups.map((grp) => (
                   <div
                     key={`${grp.kelas}_${grp.bagian}`}
                     className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow dark:border-slate-800 dark:bg-slate-900"
                   >
                     {/* Header Kartu Halaqoh */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/70 px-5 py-3.5 dark:border-slate-800 dark:bg-slate-800/40">
-                      <div className="flex items-center gap-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/40">
+                      <div className="flex items-center gap-2">
                         <HalaqohBadge kelas={grp.kelas} bagian={grp.bagian} />
-                        <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
                           Target: {PEMETAAN_HALAQOH_KELAS[grp.kelas] || "-"}
                         </span>
                       </div>
-                      <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 shadow-sm border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                        {grp.rows.length} Santri
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 hidden sm:inline">
+                          (3 Bulan Terakhir: {cardMonthKeys.map((m) => m.label).join(", ")})
+                        </span>
+                        <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-bold text-slate-700 shadow-xs border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                          {grp.rows.length} Santri
+                        </span>
+                      </div>
                     </div>
 
                     {/* Tabel Santri di dalam Kartu Halaqoh */}
@@ -735,17 +805,17 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                       <table className="w-full text-left text-xs">
                         <thead>
                           <tr className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20 text-slate-600 dark:text-slate-400">
-                            <th className="px-3 py-2.5 font-semibold">No</th>
-                            <th className="px-3 py-2.5 font-semibold">Nama Santri</th>
-                            <th className="px-3 py-2.5 font-semibold">Kamar</th>
-                            {monthKeys.map((m) => (
-                              <th key={String(m.key)} className="px-2 py-2.5 text-center font-semibold">
+                            <th className="px-2.5 py-2 font-semibold w-8 text-center">No</th>
+                            <th className="px-2.5 py-2 font-semibold">Nama Santri</th>
+                            <th className="px-2 py-2 font-semibold text-center w-12">Kamar</th>
+                            {cardMonthKeys.map((m) => (
+                              <th key={String(m.key)} className="px-1.5 py-2 text-center font-semibold w-14">
                                 {m.label}
                               </th>
                             ))}
-                            <th className="px-3 py-2.5 font-semibold text-center">Total Setoran</th>
+                            <th className="px-2 py-2 font-semibold text-center w-16">Total</th>
                             {tipe === "evaluasi" && (
-                              <th className="no-print px-3 py-2.5 font-semibold text-center">Aksi / Status</th>
+                              <th className="no-print px-2 py-2 font-semibold text-center w-24">Aksi / Status</th>
                             )}
                           </tr>
                         </thead>
@@ -754,64 +824,65 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                             const isTargetMet = r.total_setoran >= 3;
                             return (
                               <tr key={r.santri_id} className="transition hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                                <td className="px-3 py-2.5 font-mono text-slate-400">{idx + 1}</td>
-                                <td className="px-3 py-2.5 font-semibold whitespace-nowrap">
-                                  {tipe === "evaluasi" ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setSelectedEvaluasiSantri(r);
-                                        setEvaluasiModalOpen(true);
-                                      }}
-                                      className="text-left font-semibold text-emerald-800 hover:text-emerald-950 hover:underline dark:text-emerald-400 dark:hover:text-emerald-300"
-                                      title="Klik untuk detail Evaluasi Hafalan & Naik Halaqoh"
-                                    >
-                                      {r.nama_lengkap}
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        reset({
-                                          santri_id: r.santri_id,
-                                          tanggal: toLocalIsoDate(now),
-                                          jumlah_juz_tambahan: 0.5,
-                                          catatan: "",
-                                        });
-                                        setModalOpen(true);
-                                      }}
-                                      className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400"
-                                      title="Klik untuk tambah setoran juz"
-                                    >
-                                      {r.nama_lengkap}
-                                    </button>
-                                  )}
+                                <td className="px-2.5 py-1.5 font-mono text-slate-400 text-center">{idx + 1}</td>
+                                <td className="px-2.5 py-1.5 font-semibold whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedEvaluasiSantri(r);
+                                      setEvaluasiModalOpen(true);
+                                    }}
+                                    className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400"
+                                    title={tipe === "evaluasi" ? "Klik untuk Detail Evaluasi Hafalan" : "Klik untuk Detail Setoran Juz Baru"}
+                                  >
+                                    {r.nama_lengkap}
+                                  </button>
                                 </td>
-                                <td className="px-3 py-2.5 font-mono font-bold text-slate-700 dark:text-slate-300">
+                                <td className="px-2 py-1.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
                                   {formatKamarDisplay(r.kode_kamar, r.kamar)}
                                 </td>
-                                {monthKeys.map((m) => {
+                                {cardMonthKeys.map((m) => {
                                   const val = Number(r[m.key] ?? 0);
+                                  const mIdx = monthKeys.findIndex((mk) => mk.key === m.key);
                                   return (
-                                    <td key={String(m.key)} className="px-2 py-2.5 text-center font-mono">
-                                      <span
-                                        className={
-                                          val > 0
-                                            ? "font-bold text-emerald-800 dark:text-emerald-300"
-                                            : "text-slate-400"
-                                        }
-                                      >
-                                        {val > 0 ? val : "-"}
-                                      </span>
+                                    <td key={String(m.key)} className="px-1 py-1 text-center font-mono p-0">
+                                      <input
+                                        type="number"
+                                        step="0.05"
+                                        min="0"
+                                        max="30"
+                                        key={`${r.santri_id}_${String(m.key)}_${val}`}
+                                        defaultValue={val > 0 ? val : ""}
+                                        placeholder="-"
+                                        onBlur={(e) => {
+                                          const text = e.target.value.trim();
+                                          const num = text === "" ? 0 : Number(text);
+                                          if (num !== val) {
+                                            handleDirectMonthChange(
+                                              r.santri_id,
+                                              mIdx + 1,
+                                              num,
+                                              r.nama_lengkap
+                                            );
+                                          }
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") {
+                                            (e.target as HTMLInputElement).blur();
+                                          }
+                                        }}
+                                        className="h-7 w-12 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
+                                        title={`Isi/ubah setoran ${r.nama_lengkap} bulan ${m.label}`}
+                                      />
                                     </td>
                                   );
                                 })}
-                                <td className="px-3 py-2.5 text-center font-mono font-bold text-emerald-900 dark:text-emerald-300">
+                                <td className="px-2 py-1.5 text-center font-mono font-bold text-emerald-900 dark:text-emerald-300 whitespace-nowrap">
                                   {r.total_setoran} Juz
                                 </td>
                                 {tipe === "evaluasi" && (
-                                  <td className="no-print px-3 py-2.5 text-center">
-                                    <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                                  <td className="no-print px-2 py-1.5 text-center">
+                                    <div className="inline-flex items-center gap-1 whitespace-nowrap">
                                       {isTargetMet ? (
                                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                                           <CheckCircle2 className="h-3 w-3" />
@@ -1162,11 +1233,11 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
             <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                  <Award className="h-5 w-5" />
+                  {tipe === "evaluasi" ? <Award className="h-5 w-5" /> : <BookOpen className="h-5 w-5" />}
                 </div>
                 <div>
                   <h2 id="modal-evaluasi-title" className="text-base font-bold text-slate-900 dark:text-white">
-                    Detail Evaluasi Hafalan
+                    {tipe === "evaluasi" ? "Detail Evaluasi Hafalan" : "Detail Setoran Juz Baru"}
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     LPTQ Pondok Pesantren Darussalam Blokagung
@@ -1176,7 +1247,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
               <button
                 type="button"
                 onClick={() => setEvaluasiModalOpen(false)}
-                aria-label="Tutup dialog evaluasi"
+                aria-label="Tutup dialog"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 <X className="h-5 w-5" />
@@ -1220,7 +1291,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-slate-700 dark:text-slate-300">
-                        Capaian Setoran Evaluasi:
+                        {tipe === "evaluasi" ? "Capaian Setoran Evaluasi:" : "Capaian Setoran Juz Baru:"}
                       </span>
                       <span className="font-mono font-bold text-emerald-800 dark:text-emerald-300">
                         {selectedEvaluasiSantri.total_setoran} / {targetMin} Juz ({progressPct}%)
@@ -1242,47 +1313,55 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                           <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                           <div className="text-xs">
                             <p className="font-bold text-emerald-900 dark:text-emerald-200">
-                              Target Halaqoh Selesai!
+                              {tipe === "evaluasi" ? "Target Halaqoh Selesai!" : "Target Hafalan Tercapai!"}
                             </p>
                             <p className="text-emerald-700 dark:text-emerald-400">
-                              Santri telah memenuhi target hafalan dan siap dinaikkan ke halaqoh berikutnya.
+                              {tipe === "evaluasi"
+                                ? "Santri telah memenuhi target hafalan dan siap dinaikkan ke halaqoh berikutnya."
+                                : `Santri telah mencapai total ${selectedEvaluasiSantri.total_setoran} Juz hafalan baru.`}
                             </p>
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
-                            setNaikHalaqohModalOpen(true);
-                          }}
-                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-emerald-800 px-3.5 py-2 text-xs font-bold text-white shadow hover:bg-emerald-900 transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
-                        >
-                          <TrendingUp className="h-4 w-4" />
-                          <span>Naik Halaqoh</span>
-                        </button>
+                        {tipe === "evaluasi" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
+                              setNaikHalaqohModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-emerald-800 px-3.5 py-2 text-xs font-bold text-white shadow hover:bg-emerald-900 transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
+                          >
+                            <TrendingUp className="h-4 w-4" />
+                            <span>Naik Halaqoh</span>
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-800/60 dark:bg-amber-950/30">
                         <div className="text-xs text-amber-900 dark:text-amber-200">
-                          <p className="font-semibold">Masih dalam proses hafalan</p>
+                          <p className="font-semibold">
+                            {tipe === "evaluasi" ? "Masih dalam proses hafalan" : "Masih dalam proses setoran juz baru"}
+                          </p>
                           <p className="text-[11px] text-amber-700 dark:text-amber-400">
                             Kurang {(targetMin - selectedEvaluasiSantri.total_setoran).toFixed(2)} Juz untuk menyelesaikan target halaqoh ini.
                           </p>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
-                            setNaikHalaqohModalOpen(true);
-                          }}
-                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300"
-                          title="Buka opsi kenaikan halaqoh manual oleh penguji"
-                        >
-                          <TrendingUp className="h-3.5 w-3.5" />
-                          <span>Naik Halaqoh Manual</span>
-                        </button>
+                        {tipe === "evaluasi" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
+                              setNaikHalaqohModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300"
+                            title="Buka opsi kenaikan halaqoh manual oleh penguji"
+                          >
+                            <TrendingUp className="h-3.5 w-3.5" />
+                            <span>Naik Halaqoh Manual</span>
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1291,23 +1370,55 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
 
               {/* Rincian Evaluasi Bulanan (Jan - Des) */}
               <div>
-                <p className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Rincian Setoran Bulanan ({tahun}):
-                </p>
-                <div className="grid grid-cols-6 gap-1.5 text-center text-xs">
-                  {monthKeys.map((m) => {
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Rincian Setoran Bulanan ({tahun}):
+                  </p>
+                  <span className="text-[11px] text-slate-400">
+                    Dapat diisi langsung & otomatis simpan
+                  </span>
+                </div>
+                <div className="grid grid-cols-6 gap-2 text-center text-xs">
+                  {monthKeys.map((m, mIdx) => {
                     const val = Number(selectedEvaluasiSantri[m.key] ?? 0);
                     return (
                       <div
                         key={String(m.key)}
-                        className={`rounded-lg p-1.5 border ${
+                        className={`rounded-xl p-2 border transition ${
                           val > 0
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 font-bold"
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 font-bold"
                             : "border-slate-200 bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-800/30"
                         }`}
                       >
-                        <div className="text-[10px] uppercase text-slate-500">{m.label}</div>
-                        <div className="font-mono">{val > 0 ? val : "-"}</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-500 mb-1">{m.label}</div>
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0"
+                          max="30"
+                          key={`${selectedEvaluasiSantri.santri_id}_${String(m.key)}_${val}`}
+                          defaultValue={val > 0 ? val : ""}
+                          placeholder="-"
+                          onBlur={(e) => {
+                            const text = e.target.value.trim();
+                            const num = text === "" ? 0 : Number(text);
+                            if (num !== val) {
+                              handleDirectMonthChange(
+                                selectedEvaluasiSantri.santri_id,
+                                mIdx + 1,
+                                num,
+                                selectedEvaluasiSantri.nama_lengkap
+                              );
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                          className="w-full h-8 text-center font-mono text-sm font-bold bg-white/70 dark:bg-slate-900/70 rounded-lg border border-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-700"
+                          title={`Ubah setoran bulan ${m.label}`}
+                        />
                       </div>
                     );
                   })}
