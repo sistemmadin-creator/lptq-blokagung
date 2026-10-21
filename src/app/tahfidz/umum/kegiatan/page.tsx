@@ -20,6 +20,7 @@ import {
   fetchAllSantriFiltered,
   fetchAbsensiBulan,
   upsertAbsensiCell,
+  isSessionPastOrCurrent,
 } from "@/lib/services/tahfidz-service";
 import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
@@ -97,8 +98,8 @@ export default function KegiatanAbsensiPage() {
   const [pageSize, setPageSize] = useState(15);
 
   const [santriList, setSantriList] = useState<Santri[]>([]);
-  // Key format: `${santri_id}_${day}_${sesi}` => "hadir" | "alfa" | "izin" | "sakit"
-  const [absenMap, setAbsenMap] = useState<Record<string, StatusAbsen>>({});
+  // Key format: `${santri_id}_${day}_${sesi}` => "hadir" | "alfa" | "izin" | "sakit" | ""
+  const [absenMap, setAbsenMap] = useState<Record<string, StatusAbsen | "">>({});
   const [loading, setLoading] = useState(true);
 
   // Modal Penetapan Status Massal
@@ -131,7 +132,7 @@ export default function KegiatanAbsensiPage() {
 
       setSantriList(allSantri);
 
-      const map: Record<string, StatusAbsen> = {};
+      const map: Record<string, StatusAbsen | ""> = {};
       for (const row of absensiRows) {
         const parts = row.tanggal.split("-");
         const d = parts.length === 3 ? parseInt(parts[2], 10) : new Date(row.tanggal).getDate();
@@ -200,6 +201,24 @@ export default function KegiatanAbsensiPage() {
     showToast("success", "Semua filter telah direset.");
   };
 
+  // Status absensi:
+  // 1. Jika ada status tercatat di database (alfa, izin, sakit, hadir, atau ""), gunakan itu.
+  // 2. Jika sesi telah/sedang berjalan (Pagi >= 04.00 WIB, Malam >= 17.00 WIB): otomatis HADIR.
+  // 3. Jika sesi belum berjalan / hari mendatang: kosong (-).
+  const getEffectiveStatus = useCallback(
+    (santriId: string, day: number, sesiType: SesiAbsen): StatusAbsen | "" => {
+      const key = `${santriId}_${day}_${sesiType}`;
+      if (key in absenMap) {
+        return absenMap[key];
+      }
+      if (isSessionPastOrCurrent(tahun, bulan, day, sesiType)) {
+        return "hadir";
+      }
+      return "";
+    },
+    [absenMap, tahun, bulan]
+  );
+
   // Simpan nilai absensi per sel secara cepat (in-cell editing)
   const handleCellChange = async (
     santriId: string,
@@ -208,13 +227,13 @@ export default function KegiatanAbsensiPage() {
     newStatus: string
   ) => {
     const key = `${santriId}_${day}_${targetSesi}`;
-    const prevStatus = absenMap[key] || "";
+    const prevStatus = getEffectiveStatus(santriId, day, targetSesi);
     if (prevStatus === newStatus) return;
 
     // Optimistic update
     setAbsenMap((prev) => {
       const updated = { ...prev };
-      if (!newStatus) delete updated[key];
+      if (!newStatus) updated[key] = "";
       else updated[key] = newStatus as StatusAbsen;
       return updated;
     });
@@ -230,24 +249,23 @@ export default function KegiatanAbsensiPage() {
     } catch (err) {
       setAbsenMap((prev) => {
         const rollback = { ...prev };
-        if (prevStatus) rollback[key] = prevStatus;
-        else delete rollback[key];
+        rollback[key] = prevStatus;
         return rollback;
       });
       showToast("error", "Gagal menyimpan absensi tanggal " + day);
     }
   };
 
-  // Hitung rekap status per santri
+  // Hitung rekap status per santri (otomatis Hadir sebagai default)
   const countStatus = (santriId: string, st: StatusAbsen): number => {
     let c = 0;
     for (const d of dayNumbers) {
       if (isFridayDate(tahun, bulan, d)) continue;
       if (sesi === "semua") {
-        if (absenMap[`${santriId}_${d}_pagi`] === st) c++;
-        if (absenMap[`${santriId}_${d}_malam`] === st) c++;
+        if (getEffectiveStatus(santriId, d, "pagi") === st) c++;
+        if (getEffectiveStatus(santriId, d, "malam") === st) c++;
       } else {
-        if (absenMap[`${santriId}_${d}_${sesi}`] === st) c++;
+        if (getEffectiveStatus(santriId, d, sesi as SesiAbsen) === st) c++;
       }
     }
     return c;
@@ -320,11 +338,12 @@ export default function KegiatanAbsensiPage() {
   const handleQuickChangeInModal = async (santriId: string, newSt: StatusAbsen | "") => {
     const dateStr = `${tahun}-${String(bulan).padStart(2, "0")}-${String(bulkSelectedDay).padStart(2, "0")}`;
     const key = `${santriId}_${bulkSelectedDay}_${bulkSelectedSesi}`;
-    const prev = absenMap[key] || "";
+    const prev = getEffectiveStatus(santriId, bulkSelectedDay, bulkSelectedSesi);
+    if (prev === newSt) return;
 
     setAbsenMap((p) => {
       const updated = { ...p };
-      if (!newSt) delete updated[key];
+      if (!newSt) updated[key] = "";
       else updated[key] = newSt;
       return updated;
     });
@@ -336,12 +355,11 @@ export default function KegiatanAbsensiPage() {
         sesi: bulkSelectedSesi,
         status: newSt,
       });
-      showToast("success", `Status diperbarui menjadi ${newSt.toUpperCase() || "-"}.`);
+      showToast("success", `Status diperbarui menjadi ${newSt ? newSt.toUpperCase() : "-"}.`);
     } catch (err) {
       setAbsenMap((p) => {
         const rollback = { ...p };
-        if (prev) rollback[key] = prev;
-        else delete rollback[key];
+        rollback[key] = prev;
         return rollback;
       });
       showToast("error", "Gagal memperbarui status santri.");
@@ -372,12 +390,12 @@ export default function KegiatanAbsensiPage() {
       for (const d of dayNumbers) {
         const fri = isFridayDate(tahun, bulan, d);
         if (sesi === "semua") {
-          const valP = absenMap[`${s.id}_${d}_pagi`];
-          const valM = absenMap[`${s.id}_${d}_malam`];
+          const valP = getEffectiveStatus(s.id, d, "pagi");
+          const valM = getEffectiveStatus(s.id, d, "malam");
           rowObj[`Tgl_${d}_Pagi`] = fri ? "JUMAT" : valP ? valP[0].toUpperCase() : "-";
           rowObj[`Tgl_${d}_Malam`] = fri ? "JUMAT" : valM ? valM[0].toUpperCase() : "-";
         } else {
-          const val = absenMap[`${s.id}_${d}_${sesi}`];
+          const val = getEffectiveStatus(s.id, d, sesi as SesiAbsen);
           rowObj[`Tgl_${d}`] = fri ? "JUMAT" : val ? val[0].toUpperCase() : "-";
         }
       }
@@ -404,8 +422,7 @@ export default function KegiatanAbsensiPage() {
           Kegiatan Tahfidz Umum (Absensi Harian Pagi & Malam)
         </h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Pilih status di dalam sel tanggal (H: Hadir, A: Alfa, I: Izin, S: Sakit). Kolom hari
-          Jumat otomatis diarsir dan dinonaktifkan.
+          Pilih status di dalam sel tanggal (H: Hadir, A: Alfa, I: Izin, S: Sakit). Status Hadir otomatis aktif untuk sesi yang telah/sedang berjalan (Pagi: mulai 04.00 WIB, Malam: mulai 17.00 WIB). Kolom hari Jumat libur.
         </p>
       </div>
 
@@ -831,8 +848,8 @@ export default function KegiatanAbsensiPage() {
                         }
 
                         if (sesi === "semua") {
-                          const curPagi = absenMap[`${s.id}_${d}_pagi`] || "";
-                          const curMalam = absenMap[`${s.id}_${d}_malam`] || "";
+                          const curPagi = getEffectiveStatus(s.id, d, "pagi");
+                          const curMalam = getEffectiveStatus(s.id, d, "malam");
                           return (
                             <React.Fragment key={d}>
                               {/* Sesi Pagi */}
@@ -850,7 +867,7 @@ export default function KegiatanAbsensiPage() {
                                       ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
                                       : curPagi === "sakit"
                                       ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                                      : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                                      : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
                                   }`}
                                 >
                                   <option value="">-</option>
@@ -875,7 +892,7 @@ export default function KegiatanAbsensiPage() {
                                       ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
                                       : curMalam === "sakit"
                                       ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                                      : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                                      : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
                                   }`}
                                 >
                                   <option value="">-</option>
@@ -890,12 +907,12 @@ export default function KegiatanAbsensiPage() {
                         }
 
                         // Sesi Tunggal
-                        const cur = absenMap[`${s.id}_${d}_${sesi}`] || "";
+                        const cur = getEffectiveStatus(s.id, d, sesi as SesiAbsen);
                         return (
                           <td key={d} className="p-0.5 text-center">
                             <select
                               value={cur}
-                              onChange={(e) => handleCellChange(s.id, d, sesi, e.target.value)}
+                              onChange={(e) => handleCellChange(s.id, d, sesi as SesiAbsen, e.target.value)}
                               aria-label={`Absen santri ${s.nama_lengkap} tanggal ${d}`}
                               className={`h-7 w-8 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
                                 cur === "hadir"
@@ -906,7 +923,7 @@ export default function KegiatanAbsensiPage() {
                                 ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
                                 : cur === "sakit"
                                 ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                                : "bg-white text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                                : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
                               }`}
                             >
                               <option value="">-</option>
@@ -1201,7 +1218,7 @@ export default function KegiatanAbsensiPage() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {filteredBulkSantri.map((s) => {
                     const isSelected = bulkSelectedIds.includes(s.id);
-                    const curStatus = absenMap[`${s.id}_${bulkSelectedDay}_${bulkSelectedSesi}`] || "";
+                    const curStatus = getEffectiveStatus(s.id, bulkSelectedDay, bulkSelectedSesi);
 
                     return (
                       <tr
@@ -1260,7 +1277,9 @@ export default function KegiatanAbsensiPage() {
                               Sakit
                             </span>
                           ) : (
-                            <span className="text-slate-400 font-mono text-xs">-</span>
+                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-800 dark:text-slate-400">
+                              - Belum
+                            </span>
                           )}
                         </td>
                         <td className="py-2 px-2 text-center" onClick={(e) => e.stopPropagation()}>
@@ -1271,7 +1290,7 @@ export default function KegiatanAbsensiPage() {
                             }
                             className="h-7 w-20 text-center rounded-lg border border-slate-300 bg-white text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                           >
-                            <option value="">-</option>
+                            <option value="">- (Belum)</option>
                             <option value="hadir">Hadir</option>
                             <option value="alfa">Alfa</option>
                             <option value="izin">Izin</option>
