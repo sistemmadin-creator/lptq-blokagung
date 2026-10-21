@@ -434,6 +434,43 @@ export async function upsertAbsensiCell(params: {
   if (error) throw new Error(error.message);
 }
 
+/**
+ * Menyimpan beberapa status absensi sekaligus secara batch ke tabel absensi Supabase.
+ * Menggunakan upsert dengan onConflict: "santri_id,tanggal,sesi".
+ */
+export async function upsertAbsensiBatch(
+  records: {
+    santri_id: string;
+    tanggal: string;
+    sesi: SesiAbsen;
+    status: StatusAbsen;
+  }[]
+) {
+  if (!records || records.length === 0) return;
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const rows = records.map((r) => ({
+    santri_id: r.santri_id,
+    tanggal: r.tanggal,
+    sesi: r.sesi,
+    status: r.status,
+    penginput: user?.id ?? null,
+  }));
+
+  // Batch dalam chunk 200 baris agar tidak melebihi batasan ukuran payload Supabase
+  const CHUNK_SIZE = 200;
+  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + CHUNK_SIZE);
+    const { error } = await supabase
+      .from("absensi")
+      .upsert(chunk, { onConflict: "santri_id,tanggal,sesi" });
+    if (error) throw new Error(error.message);
+  }
+}
+
 export async function fetchSetoranBulananMerged(
   tahun: number,
   tipe: TipeSetoran,
