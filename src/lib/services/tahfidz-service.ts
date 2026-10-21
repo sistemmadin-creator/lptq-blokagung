@@ -348,6 +348,56 @@ export async function fetchSantriAlfaCounts(
   }
 }
 
+/**
+ * Mendapatkan objek waktu saat ini dalam zona waktu WIB (UTC+7).
+ */
+export function getWibNow(): Date {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utc + 7 * 3600000);
+}
+
+/**
+ * Memeriksa apakah suatu tanggal dan sesi absensi sudah atau sedang berjalan (WIB).
+ * Aturan waktu:
+ * - Pagi: aktif mulai pukul 04.00 WIB
+ * - Malam: aktif mulai pukul 17.00 WIB
+ * Hari sebelum hari ini: sudah lewat (true).
+ * Hari ini: aktif sesuai jam sesi (Pagi >= 04.00 WIB, Malam >= 17.00 WIB).
+ * Hari mendatang: belum berjalan (false).
+ */
+export function isSessionPastOrCurrent(
+  targetYear: number,
+  targetMonth: number, // 1 - 12
+  targetDay: number,
+  sesi: SesiAbsen,
+  nowWib: Date = getWibNow()
+): boolean {
+  const currentYear = nowWib.getFullYear();
+  const currentMonth = nowWib.getMonth() + 1;
+  const currentDay = nowWib.getDate();
+  const currentHour = nowWib.getHours();
+
+  if (targetYear < currentYear) return true;
+  if (targetYear > currentYear) return false;
+
+  if (targetMonth < currentMonth) return true;
+  if (targetMonth > currentMonth) return false;
+
+  if (targetDay < currentDay) return true;
+  if (targetDay > currentDay) return false;
+
+  // targetDay === currentDay (Hari Ini)
+  if (sesi === "pagi") {
+    return currentHour >= 4;
+  }
+  if (sesi === "malam") {
+    return currentHour >= 17;
+  }
+
+  return false;
+}
+
 export async function upsertAbsensiCell(params: {
   santri_id: string;
   tanggal: string;
