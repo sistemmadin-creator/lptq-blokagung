@@ -242,7 +242,6 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         .update({
           halaqoh_kelas: targetHalaqohChoice.kelas,
           halaqoh_bagian: targetHalaqohChoice.bagian,
-          halaqoh: `Kelas ${targetHalaqohChoice.kelas} - Bagian ${targetHalaqohChoice.bagian}`,
         })
         .eq("id", selectedNaikHalaqohSantri.santri_id);
 
@@ -776,25 +775,25 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                 Tidak ada data setoran santri yang sesuai kriteria pencarian atau filter.
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {paginatedHalaqohGroups.map((grp) => (
+              (() => {
+                const renderHalaqohCard = (grp: typeof paginatedHalaqohGroups[number]) => (
                   <div
                     key={`${grp.kelas}_${grp.bagian}`}
                     className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow dark:border-slate-800 dark:bg-slate-900"
                   >
                     {/* Header Kartu Halaqoh */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/40">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-800/40">
                       <div className="flex items-center gap-2">
                         <HalaqohBadge kelas={grp.kelas} bagian={grp.bagian} />
-                        <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
                           Target: {PEMETAAN_HALAQOH_KELAS[grp.kelas] || "-"}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-slate-500 dark:text-slate-400 hidden sm:inline">
-                          (3 Bulan Terakhir: {cardMonthKeys.map((m) => m.label).join(", ")})
+                          (3 Bln: {cardMonthKeys.map((m) => m.label).join(", ")})
                         </span>
-                        <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-bold text-slate-700 shadow-xs border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                        <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-700 shadow-xs border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                           {grp.rows.length} Santri
                         </span>
                       </div>
@@ -802,20 +801,20 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
 
                     {/* Tabel Santri di dalam Kartu Halaqoh */}
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
+                      <table className="w-full text-left text-xs table-auto">
                         <thead>
                           <tr className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20 text-slate-600 dark:text-slate-400">
-                            <th className="px-2.5 py-2 font-semibold w-8 text-center">No</th>
-                            <th className="px-2.5 py-2 font-semibold">Nama Santri</th>
-                            <th className="px-2 py-2 font-semibold text-center w-12">Kamar</th>
+                            <th className="px-1.5 py-1.5 font-semibold w-7 text-center text-slate-400 text-[11px]">No</th>
+                            <th className="px-1.5 py-1.5 font-semibold text-slate-700 dark:text-slate-300 text-[11px]">Nama Santri</th>
+                            <th className="px-1 py-1.5 font-semibold text-center w-10 text-[11px]">Kamar</th>
                             {cardMonthKeys.map((m) => (
-                              <th key={String(m.key)} className="px-1.5 py-2 text-center font-semibold w-14">
+                              <th key={String(m.key)} className="px-0.5 py-1.5 text-center font-semibold w-10 text-[11px]">
                                 {m.label}
                               </th>
                             ))}
-                            <th className="px-2 py-2 font-semibold text-center w-16">Total</th>
+                            <th className="px-1 py-1.5 font-semibold text-center w-11 text-[11px]">Total</th>
                             {tipe === "evaluasi" && (
-                              <th className="no-print px-2 py-2 font-semibold text-center w-24">Aksi / Status</th>
+                              <th className="no-print px-1.5 py-1.5 font-semibold text-center w-24 text-[11px]">Aksi</th>
                             )}
                           </tr>
                         </thead>
@@ -824,28 +823,28 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                             const isTargetMet = r.total_setoran >= 3;
                             return (
                               <tr key={r.santri_id} className="transition hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                                <td className="px-2.5 py-1.5 font-mono text-slate-400 text-center">{idx + 1}</td>
-                                <td className="px-2.5 py-1.5 font-semibold whitespace-nowrap">
+                                <td className="px-1.5 py-1 font-mono text-slate-400 text-center text-[11px]">{idx + 1}</td>
+                                <td className="px-1.5 py-1 font-semibold min-w-0">
                                   <button
                                     type="button"
                                     onClick={() => {
                                       setSelectedEvaluasiSantri(r);
                                       setEvaluasiModalOpen(true);
                                     }}
-                                    className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400"
-                                    title={tipe === "evaluasi" ? "Klik untuk Detail Evaluasi Hafalan" : "Klik untuk Detail Setoran Juz Baru"}
+                                    className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400 truncate max-w-[110px] sm:max-w-[130px] block text-xs"
+                                    title={tipe === "evaluasi" ? `Klik detail Evaluasi: ${r.nama_lengkap}` : `Klik detail Setoran: ${r.nama_lengkap}`}
                                   >
                                     {r.nama_lengkap}
                                   </button>
                                 </td>
-                                <td className="px-2 py-1.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                                <td className="px-1 py-1 text-center font-mono font-bold text-slate-700 dark:text-slate-300 text-[11px]">
                                   {formatKamarDisplay(r.kode_kamar, r.kamar)}
                                 </td>
                                 {cardMonthKeys.map((m) => {
                                   const val = Number(r[m.key] ?? 0);
                                   const mIdx = monthKeys.findIndex((mk) => mk.key === m.key);
                                   return (
-                                    <td key={String(m.key)} className="px-1 py-1 text-center font-mono p-0">
+                                    <td key={String(m.key)} className="px-0.5 py-1 text-center font-mono p-0">
                                       <input
                                         type="number"
                                         step="0.05"
@@ -871,26 +870,26 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                                             (e.target as HTMLInputElement).blur();
                                           }
                                         }}
-                                        className="h-7 w-12 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
+                                        className="h-6 w-9 text-center font-mono text-[11px] font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
                                         title={`Isi/ubah setoran ${r.nama_lengkap} bulan ${m.label}`}
                                       />
                                     </td>
                                   );
                                 })}
-                                <td className="px-2 py-1.5 text-center font-mono font-bold text-emerald-900 dark:text-emerald-300 whitespace-nowrap">
-                                  {r.total_setoran} Juz
+                                <td className="px-1 py-1 text-center font-mono font-bold text-emerald-900 dark:text-emerald-300 whitespace-nowrap text-[11px]">
+                                  {r.total_setoran} <span className="text-[10px] text-emerald-600 font-normal">Jz</span>
                                 </td>
                                 {tipe === "evaluasi" && (
-                                  <td className="no-print px-2 py-1.5 text-center">
+                                  <td className="no-print px-1.5 py-1 text-center">
                                     <div className="inline-flex items-center gap-1 whitespace-nowrap">
                                       {isTargetMet ? (
-                                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                          <CheckCircle2 className="h-3 w-3" />
+                                        <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                          <CheckCircle2 className="h-2.5 w-2.5" />
                                           <span>Selesai</span>
                                         </span>
                                       ) : (
-                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                                          Berjalan
+                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                          Proses
                                         </span>
                                       )}
                                       <button
@@ -899,14 +898,14 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                                           setSelectedNaikHalaqohSantri(r);
                                           setNaikHalaqohModalOpen(true);
                                         }}
-                                        className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${
+                                        className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold transition ${
                                           isTargetMet
                                             ? "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
                                             : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                                         }`}
                                         title="Naikkan ke Halaqoh Baru"
                                       >
-                                        <TrendingUp className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                        <TrendingUp className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
                                         <span>Naik</span>
                                       </button>
                                     </div>
@@ -919,8 +918,31 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                       </table>
                     </div>
                   </div>
-                ))}
-              </div>
+                );
+
+                return (
+                  <>
+                    {/* Mode Desktop: Masonry 2 Kolom Independen (Merapatkan jarak vertikal antar kartu) */}
+                    <div className="hidden lg:grid lg:grid-cols-2 gap-5 items-start">
+                      <div className="flex flex-col gap-5">
+                        {paginatedHalaqohGroups
+                          .filter((_, idx) => idx % 2 === 0)
+                          .map((grp) => renderHalaqohCard(grp))}
+                      </div>
+                      <div className="flex flex-col gap-5">
+                        {paginatedHalaqohGroups
+                          .filter((_, idx) => idx % 2 === 1)
+                          .map((grp) => renderHalaqohCard(grp))}
+                      </div>
+                    </div>
+
+                    {/* Mode Mobile / Tablet: 1 Kolom */}
+                    <div className="flex flex-col gap-5 lg:hidden">
+                      {paginatedHalaqohGroups.map((grp) => renderHalaqohCard(grp))}
+                    </div>
+                  </>
+                );
+              })()
             )}
 
             {/* Pagination untuk Kartu Halaqoh */}
