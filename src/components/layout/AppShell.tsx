@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -20,7 +20,9 @@ import {
   Pin,
   PinOff,
   ChevronRight,
+  ChevronUp,
   GraduationCap,
+  FileSpreadsheet,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
@@ -85,7 +87,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [isPinned, setIsPinned] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
 
+  // State untuk Dropdown Buka Rekap Khotmil (15 Juz & 30 Juz)
+  const [rekapDropdownOpen, setRekapDropdownOpen] = useState(false);
+  const rekapDropdownRef = useRef<HTMLDivElement>(null);
+
   const isLoginPage = pathname.startsWith("/login");
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        rekapDropdownRef.current &&
+        !rekapDropdownRef.current.contains(e.target as Node)
+      ) {
+        setRekapDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    setRekapDropdownOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("lptq_theme");
@@ -313,7 +336,76 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Kartu Standar KKM di Bawah Sidebar (Menyesuaikan Mode Terbuka / Ikon) */}
-        <div className="mt-4">
+        <div className="mt-4 relative" ref={rekapDropdownRef}>
+          {/* Popover Dropdown Rekap Khotmil (15 Juz & 30 Juz) */}
+          {rekapDropdownOpen && (
+            <div
+              className={`absolute z-50 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-2 animate-in fade-in zoom-in-95 duration-150 ${
+                sidebarOpen
+                  ? "bottom-full left-0 right-0 mb-2 w-full"
+                  : "left-full bottom-0 ml-3 w-64"
+              }`}
+            >
+              <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Pilih Rekap Khotmil
+                </span>
+                <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded">
+                  KKM: 85
+                </span>
+              </div>
+              <div className="space-y-1 pt-1.5">
+                <Link
+                  href="/tahfidz/khotmil/rekap/15"
+                  onClick={() => {
+                    setRekapDropdownOpen(false);
+                    handleDesktopNavClick();
+                  }}
+                  className="flex items-center justify-between gap-3 p-2.5 rounded-xl hover:bg-emerald-50 dark:hover:bg-slate-800 transition group text-slate-800 dark:text-slate-100"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                      <Award className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-emerald-800 dark:group-hover:text-emerald-400 truncate">
+                        Rekap 15 Juz
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        5 Tahap • Nilai Sempurna • Remidi
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-700 group-hover:translate-x-0.5 transition shrink-0" />
+                </Link>
+
+                <Link
+                  href="/tahfidz/khotmil/rekap/30"
+                  onClick={() => {
+                    setRekapDropdownOpen(false);
+                    handleDesktopNavClick();
+                  }}
+                  className="flex items-center justify-between gap-3 p-2.5 rounded-xl hover:bg-emerald-50 dark:hover:bg-slate-800 transition group text-slate-800 dark:text-slate-100"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                      <Award className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-emerald-800 dark:group-hover:text-emerald-400 truncate">
+                        Rekap 30 Juz
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        9 Tahap • Nilai Sempurna • Remidi
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-700 group-hover:translate-x-0.5 transition shrink-0" />
+                </Link>
+              </div>
+            </div>
+          )}
+
           {sidebarOpen ? (
             <div className="bg-emerald-950/40 border border-white/15 rounded-2xl p-3.5 text-center">
               <div className="w-8 h-8 mx-auto rounded-full bg-white/15 flex items-center justify-center text-white mb-2">
@@ -325,24 +417,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <p className="text-[11px] text-emerald-100 mb-2.5 leading-snug">
                 Kelulusan Khotmil 15 & 30 Juz dihitung otomatis.
               </p>
-              <Link
-                href="/tahfidz/khotmil/15"
-                onClick={handleDesktopNavClick}
-                className="inline-flex min-h-[38px] w-full items-center justify-center py-1.5 bg-white text-brand-dark font-bold text-xs rounded-xl hover:bg-emerald-50 transition shadow-sm"
+              <button
+                type="button"
+                onClick={() => setRekapDropdownOpen((prev) => !prev)}
+                aria-expanded={rekapDropdownOpen}
+                aria-label="Buka Menu Dropdown Rekap Khotmil"
+                className="inline-flex min-h-[38px] w-full items-center justify-center gap-1.5 py-1.5 bg-white text-brand-dark font-bold text-xs rounded-xl hover:bg-emerald-50 transition shadow-sm"
               >
-                Buka Rekap Khotmil
-              </Link>
+                <span>Buka Rekap Khotmil</span>
+                <ChevronUp
+                  className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                    rekapDropdownOpen ? "rotate-180" : ""
+                  }`}
+                  aria-hidden="true"
+                />
+              </button>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2">
-              <Link
-                href="/tahfidz/khotmil/15"
+              <button
+                type="button"
+                onClick={() => setRekapDropdownOpen((prev) => !prev)}
                 title="Standar KKM 85 - Buka Rekap Khotmil"
                 aria-label="Standar KKM 85 - Buka Rekap Khotmil"
-                className="w-11 h-11 rounded-xl bg-emerald-950/50 border border-white/15 flex items-center justify-center text-amber-300 hover:bg-white/15 transition"
+                aria-expanded={rekapDropdownOpen}
+                className="w-11 h-11 rounded-xl bg-emerald-950/50 border border-white/15 flex items-center justify-center text-amber-300 hover:bg-white/15 transition relative"
               >
                 <ShieldCheck className="w-5 h-5" aria-hidden="true" />
-              </Link>
+              </button>
               <button
                 type="button"
                 onClick={() => setIsExpanded(true)}
@@ -504,6 +606,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </div>
                 ))}
               </nav>
+
+              <div className="pt-3 pb-4 border-t border-white/15">
+                <p className="px-1 mb-2 text-[10px] font-bold uppercase tracking-wider text-emerald-200">
+                  Rekapitulasi Khotmil
+                </p>
+                <div className="space-y-1.5">
+                  <Link
+                    href="/tahfidz/khotmil/rekap/15"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs text-white font-bold transition"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Award className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Rekap 15 Juz (5 Tahap)</span>
+                    </span>
+                    <ChevronRight className="w-3.5 h-3.5 text-emerald-200" />
+                  </Link>
+                  <Link
+                    href="/tahfidz/khotmil/rekap/30"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs text-white font-bold transition"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Award className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Rekap 30 Juz (9 Tahap)</span>
+                    </span>
+                    <ChevronRight className="w-3.5 h-3.5 text-emerald-200" />
+                  </Link>
+                </div>
+              </div>
             </div>
           </div>
         )}
