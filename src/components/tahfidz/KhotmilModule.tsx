@@ -3,50 +3,60 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import {
-  Search,
-  SlidersHorizontal,
-  Printer,
   FileSpreadsheet,
+  Printer,
+  SlidersHorizontal,
+  X,
+  Search,
+  RotateCcw,
+  Check,
+  Download,
+  Upload,
+  FileDown,
+  Loader2,
+  Pencil,
   ChevronLeft,
   ChevronRight,
-  CheckCircle2,
-  AlertTriangle,
-  Award,
-  Sparkles,
-  X,
-  ArrowLeft,
-  UserCheck,
-  BookOpen,
-  Info,
-  Loader2,
+  UserPlus,
+  Trash2,
   Calendar,
-  Check,
+  BookOpen,
+  Clock,
+  CheckSquare,
+  Square,
+  Eye,
+  Info,
+  Award,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
   fetchAllSantriFiltered,
-  fetchKhotmilAllNilai,
-  fetchKhotmilRegisteredSantriIds,
+  fetchKhotmilTahapNilai,
+  upsertKhotmilNilaiBatch,
+  fetchSantriAbsensiDetail,
   fetchPembimbingMap,
+  fetchKhotmilRegisteredSantriIds,
+  fetchSantriSetoranDetailTahun,
 } from "@/lib/services/tahfidz-service";
 import {
   KKM_DEFAULT,
   type JenisKhotmil,
   type Santri,
   type TahapConfig,
-  type KhotmilNilaiRecord,
 } from "@/types/database";
 import { HalaqohBadge } from "@/components/ui/Badges";
-import { exportJsonToExcel } from "@/lib/utils/excel";
+import {
+  downloadKhotmilTemplateExcel,
+  exportJsonToExcel,
+  parseExcelFileWithValidation,
+} from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
 
-export interface RekapKhotmilModuleProps {
-  jenis: JenisKhotmil; // "khotmil15" | "khotmil30"
+export interface KhotmilModuleProps {
+  jenis: JenisKhotmil;
   judul: string;
   tahapList: TahapConfig[];
 }
-
-type RekapMode = "semua_tahap" | "nilai_100" | "dibawah_kkm";
 
 function formatKamarDisplay(kodeKamar?: string | null, kamar?: string | null): string {
   const kKode = (kodeKamar || "").trim();
@@ -59,6 +69,15 @@ function formatKamarDisplay(kodeKamar?: string | null, kamar?: string | null): s
     return `${kKode}${kKamar}`;
   }
   return kKode || kKamar;
+}
+
+// Memotong array menjadi batch @100 baris agar aman dari batas 10s serverless Vercel
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 function getPageNumbers(current: number, total: number): (number | "...")[] {
@@ -74,1253 +93,1464 @@ function getPageNumbers(current: number, total: number): (number | "...")[] {
   return [1, "...", current - 1, current, current + 1, "...", total];
 }
 
-interface SantriTahapSummary {
-  tahap: number;
-  label: string;
-  rentangLabel: string;
-  scores: { juz: number; nilai: number }[];
-  average: number | null;
-  isComplete: boolean;
-  isLulus: boolean;
-  hasRemidi: boolean;
-  has100: boolean;
-}
-
-interface SantriRekapRow {
-  santri: Santri;
-  tahapSummaries: SantriTahapSummary[];
-  totalEvaluatedJuz: number;
-  totalRequiredJuz: number;
-  overallAverage: number | null;
-  overallStatus: "lulus" | "remidi" | "proses";
-  count100: number;
-  countBawahKKM: number;
-}
-
-interface ItemNilaiDetail {
-  id: string;
-  santri: Santri;
-  tahap: TahapConfig;
-  juz: number;
-  nilai: number;
-  selisihKKM?: number;
-}
-
-export function RekapKhotmilModule({ jenis, judul, tahapList }: RekapKhotmilModuleProps) {
+export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
   const { showToast } = useToast();
   const printRef = useRef<HTMLDivElement>(null);
+  const excelFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Switch Poin Rekap (Sesuai permintaan: a. Semua Tahap, b. Nilai 100, c. Nilai dibawah KKM)
-  const [rekapMode, setRekapMode] = useState<RekapMode>("semua_tahap");
-
+  const [activeTahap, setActiveTahap] = useState<number>(tahapList[0]?.tahap ?? 1);
   const [search, setSearch] = useState("");
   const [asramaFilter, setAsramaFilter] = useState("");
-  const [filterModalOpen, setFilterModalOpen] = useState(false);
-
-  // Pagination
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const pageSizeOptions = [10, 15, 25, 50];
 
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const [excelModalOpen, setExcelModalOpen] = useState(false);
+
+  // Status Impor Excel
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState("");
+
   const [santriList, setSantriList] = useState<Santri[]>([]);
-  const [allNilaiRecords, setAllNilaiRecords] = useState<KhotmilNilaiRecord[]>([]);
-  const [pembimbingMap, setPembimbingMap] = useState<Record<string, string>>({});
+  const [nilaiMap, setNilaiMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Modal Detail Rincian Santri
-  const [selectedSantriDetail, setSelectedSantriDetail] = useState<SantriRekapRow | null>(null);
+  // State Modal Pendaftaran Khotmil
+  const [daftarModalOpen, setDaftarModalOpen] = useState(false);
+  const [allSantriData, setAllSantriData] = useState<Santri[]>([]);
+  const [pembimbingMap, setPembimbingMap] = useState<Record<string, string>>({});
+  const [loadingDaftarList, setLoadingDaftarList] = useState(false);
+  const [daftarSearch, setDaftarSearch] = useState("");
+  const [selectedSantriIds, setSelectedSantriIds] = useState<Set<string>>(new Set());
+  const [previewSantri, setPreviewSantri] = useState<Santri | null>(null);
+  const [previewTab, setPreviewTab] = useState<"kegiatan" | "juz_baru">("kegiatan");
+  const [previewAbsensi, setPreviewAbsensi] = useState<any[]>([]);
+  const [previewSetoran, setPreviewSetoran] = useState<any[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
-  const totalTahapCount = tahapList.length;
-  const is15Juz = jenis === "khotmil15";
+  const totalRows = santriList.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const paginatedSantri = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return santriList.slice(start, start + pageSize);
+  }, [santriList, page, pageSize]);
 
-  // Muat data terdaftar & seluruh nilai dari Supabase
+  // Santri yang sedang dinilai di modal
+  const [editingSantri, setEditingSantri] = useState<Santri | null>(null);
+  const [formScores, setFormScores] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  const currentTahapCfg =
+    tahapList.find((t) => t.tahap === activeTahap) ?? tahapList[0];
+
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [allSantri, nilaiData, scoredSantriIds, pbMap] = await Promise.all([
+      const [allSantri, nilaiData, scoredSantriIds] = await Promise.all([
         fetchAllSantriFiltered({ search, asrama: asramaFilter }),
-        fetchKhotmilAllNilai(jenis),
+        fetchKhotmilTahapNilai(jenis, activeTahap),
         fetchKhotmilRegisteredSantriIds(jenis),
-        fetchPembimbingMap(),
       ]);
 
-      // Ambil daftar santri terdaftar dari localStorage jika ada
+      // Ambil daftar santri terdaftar dari localStorage
       let localRegistered: string[] = [];
       try {
         const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
-        if (stored) localRegistered = JSON.parse(stored);
+        if (stored) {
+          localRegistered = JSON.parse(stored);
+        }
       } catch (e) {
-        console.error("Gagal membaca localStorage:", e);
+        console.error("Gagal membaca local storage khotmil:", e);
       }
 
       const registeredSet = new Set([...localRegistered, ...scoredSantriIds]);
-      const registeredSantri = allSantri.filter((s) => registeredSet.has(s.id));
 
-      setSantriList(registeredSantri);
-      setAllNilaiRecords(nilaiData);
-      setPembimbingMap(pbMap);
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || "Gagal memuat rekapitulasi nilai khotmil");
+      // Filter santri: HANYA yang sudah terdaftar yang tampil di tabel
+      const filteredRegisteredSantri = allSantri.filter((s) => registeredSet.has(s.id));
+
+      const map: Record<string, number> = {};
+      nilaiData.forEach((n) => {
+        map[`${n.santri_id}_${n.juz}`] = n.nilai;
+      });
+
+      setSantriList(filteredRegisteredSantri);
+      setNilaiMap(map);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal memuat nilai khotmil.");
     } finally {
       setLoading(false);
     }
-  }, [jenis, search, asramaFilter]);
+  }, [jenis, activeTahap, search, asramaFilter]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Reset page saat ganti filter atau switch mode
+  // Buka modal pendaftaran santri khotmil
+  const handleOpenDaftarModal = async () => {
+    setDaftarModalOpen(true);
+    setLoadingDaftarList(true);
+    setDaftarSearch("");
+    try {
+      const [santriData, pMap] = await Promise.all([
+        fetchAllSantriFiltered({}),
+        fetchPembimbingMap(),
+      ]);
+      setAllSantriData(santriData);
+      setPembimbingMap(pMap);
+      setSelectedSantriIds(new Set());
+      if (santriData.length > 0) {
+        setPreviewSantri(santriData[0]);
+      }
+    } catch (err) {
+      showToast("error", "Gagal memuat daftar santri untuk pendaftaran.");
+    } finally {
+      setLoadingDaftarList(false);
+    }
+  };
+
+  // Muat riwayat santri (Kegiatan & Juz Baru) saat previewSantri berubah
   useEffect(() => {
-    setPage(1);
-  }, [rekapMode, search, asramaFilter, pageSize]);
-
-  // Map nilai: `${santri_id}_${tahap}_${juz}` -> number
-  const nilaiLookup = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of allNilaiRecords) {
-      map.set(`${r.santri_id}_${r.tahap}_${r.juz}`, r.nilai);
+    if (!previewSantri) {
+      setPreviewAbsensi([]);
+      setPreviewSetoran([]);
+      return;
     }
-    return map;
-  }, [allNilaiRecords]);
-
-  // Santri Map: santri_id -> Santri
-  const santriMap = useMemo(() => {
-    const map = new Map<string, Santri>();
-    for (const s of santriList) {
-      map.set(s.id, s);
-    }
-    return map;
-  }, [santriList]);
-
-  // Tahap Map: tahap number -> TahapConfig
-  const tahapMap = useMemo(() => {
-    const map = new Map<number, TahapConfig>();
-    for (const t of tahapList) {
-      map.set(t.tahap, t);
-    }
-    return map;
-  }, [tahapList]);
-
-  // 1. Data Agregasi Seluruh Tahap per Santri (Mode a)
-  const rekapRows = useMemo<SantriRekapRow[]>(() => {
-    return santriList.map((santri) => {
-      let totalScoreSum = 0;
-      let totalEvaluatedJuz = 0;
-      let totalRequiredJuz = 0;
-      let count100 = 0;
-      let countBawahKKM = 0;
-      let allTahapCompleteAndLulus = true;
-      let anyRemidi = false;
-
-      const tahapSummaries: SantriTahapSummary[] = tahapList.map((tCfg) => {
-        totalRequiredJuz += tCfg.juzList.length;
-        const scores: { juz: number; nilai: number }[] = [];
-        let tahapSum = 0;
-
-        for (const j of tCfg.juzList) {
-          const val = nilaiLookup.get(`${santri.id}_${tCfg.tahap}_${j}`);
-          if (val !== undefined) {
-            scores.push({ juz: j, nilai: val });
-            tahapSum += val;
-            totalScoreSum += val;
-            totalEvaluatedJuz++;
-            if (val === 100) count100++;
-            if (val < KKM_DEFAULT) countBawahKKM++;
-          }
+    let active = true;
+    setPreviewLoading(true);
+    const yr = new Date().getFullYear();
+    Promise.all([
+      fetchSantriAbsensiDetail(previewSantri.id, yr),
+      fetchSantriSetoranDetailTahun(previewSantri.id, yr, "juz_baru"),
+    ])
+      .then(([abs, seto]) => {
+        if (active) {
+          setPreviewAbsensi(abs);
+          setPreviewSetoran(seto);
         }
-
-        const isComplete = scores.length === tCfg.juzList.length;
-        const average = scores.length > 0 ? tahapSum / scores.length : null;
-        const hasRemidi = scores.some((sc) => sc.nilai < KKM_DEFAULT);
-        const has100 = scores.some((sc) => sc.nilai === 100);
-        const isLulus = isComplete && average !== null && average >= KKM_DEFAULT && !hasRemidi;
-
-        if (!isLulus) {
-          allTahapCompleteAndLulus = false;
-        }
-        if (hasRemidi) {
-          anyRemidi = true;
-        }
-
-        return {
-          tahap: tCfg.tahap,
-          label: tCfg.label,
-          rentangLabel: tCfg.rentangLabel,
-          scores,
-          average,
-          isComplete,
-          isLulus,
-          hasRemidi,
-          has100,
-        };
+      })
+      .catch((err) => {
+        console.error("Gagal memuat riwayat preview santri:", err);
+      })
+      .finally(() => {
+        if (active) setPreviewLoading(false);
       });
 
-      const overallAverage =
-        totalEvaluatedJuz > 0 ? totalScoreSum / totalEvaluatedJuz : null;
-
-      let overallStatus: "lulus" | "remidi" | "proses" = "proses";
-      if (anyRemidi) {
-        overallStatus = "remidi";
-      } else if (allTahapCompleteAndLulus && totalEvaluatedJuz === totalRequiredJuz) {
-        overallStatus = "lulus";
-      } else {
-        overallStatus = "proses";
-      }
-
-      return {
-        santri,
-        tahapSummaries,
-        totalEvaluatedJuz,
-        totalRequiredJuz,
-        overallAverage,
-        overallStatus,
-        count100,
-        countBawahKKM,
-      };
-    });
-  }, [santriList, tahapList, nilaiLookup]);
-
-  // 2. Daftar Nilai Sempurna (100) (Mode b)
-  const listNilai100 = useMemo<ItemNilaiDetail[]>(() => {
-    const list: ItemNilaiDetail[] = [];
-    for (const r of allNilaiRecords) {
-      if (r.nilai === 100) {
-        const santri = santriMap.get(r.santri_id);
-        const tCfg = tahapMap.get(r.tahap);
-        if (santri && tCfg) {
-          list.push({
-            id: `${r.santri_id}_${r.tahap}_${r.juz}`,
-            santri,
-            tahap: tCfg,
-            juz: r.juz,
-            nilai: r.nilai,
-          });
-        }
-      }
-    }
-    // Urutkan berdasarkan nama santri lalu juz
-    return list.sort((a, b) => {
-      const cmp = a.santri.nama_lengkap.localeCompare(b.santri.nama_lengkap);
-      if (cmp !== 0) return cmp;
-      return a.juz - b.juz;
-    });
-  }, [allNilaiRecords, santriMap, tahapMap]);
-
-  // 3. Daftar Nilai Di Bawah KKM (<85) (Mode c)
-  const listNilaiBawahKKM = useMemo<ItemNilaiDetail[]>(() => {
-    const list: ItemNilaiDetail[] = [];
-    for (const r of allNilaiRecords) {
-      if (r.nilai < KKM_DEFAULT) {
-        const santri = santriMap.get(r.santri_id);
-        const tCfg = tahapMap.get(r.tahap);
-        if (santri && tCfg) {
-          list.push({
-            id: `${r.santri_id}_${r.tahap}_${r.juz}`,
-            santri,
-            tahap: tCfg,
-            juz: r.juz,
-            nilai: r.nilai,
-            selisihKKM: r.nilai - KKM_DEFAULT,
-          });
-        }
-      }
-    }
-    // Urutkan nilai terendah dahulu
-    return list.sort((a, b) => a.nilai - b.nilai);
-  }, [allNilaiRecords, santriMap, tahapMap]);
-
-  // Statistik Ringkasan
-  const stats = useMemo(() => {
-    const totalSantri = santriList.length;
-    const lulusCount = rekapRows.filter((r) => r.overallStatus === "lulus").length;
-    const total100 = listNilai100.length;
-    const santri100Count = new Set(listNilai100.map((i) => i.santri.id)).size;
-    const totalBawahKKM = listNilaiBawahKKM.length;
-    const santriBawahKKMCount = new Set(listNilaiBawahKKM.map((i) => i.santri.id)).size;
-
-    return {
-      totalSantri,
-      lulusCount,
-      total100,
-      santri100Count,
-      totalBawahKKM,
-      santriBawahKKMCount,
+    return () => {
+      active = false;
     };
-  }, [santriList, rekapRows, listNilai100, listNilaiBawahKKM]);
+  }, [previewSantri]);
 
-  // Pagination Data Sesuai Mode Aktif
-  const { currentDataLength, paginatedData } = useMemo(() => {
-    if (rekapMode === "semua_tahap") {
-      const len = rekapRows.length;
-      const start = (page - 1) * pageSize;
-      return { currentDataLength: len, paginatedData: rekapRows.slice(start, start + pageSize) };
+  // Filter santri di modal pendaftaran
+  const filteredSantriForDaftar = useMemo(() => {
+    if (!daftarSearch.trim()) return allSantriData;
+    const q = daftarSearch.toLowerCase();
+    return allSantriData.filter((s) => {
+      const pNama = pembimbingMap[`${s.halaqoh_kelas}_${s.halaqoh_bagian}`]?.toLowerCase() || "";
+      const kDisplay = formatKamarDisplay(s.kode_kamar, s.kamar).toLowerCase();
+      const hDisplay = `kelas ${s.halaqoh_kelas} bagian ${s.halaqoh_bagian} ${s.halaqoh}`.toLowerCase();
+      return (
+        s.nama_lengkap.toLowerCase().includes(q) ||
+        (s.kode && s.kode.toLowerCase().includes(q)) ||
+        hDisplay.includes(q) ||
+        pNama.includes(q) ||
+        kDisplay.includes(q)
+      );
+    });
+  }, [allSantriData, daftarSearch, pembimbingMap]);
+
+  // Toggle pilihan 1 santri
+  const toggleSantriSelection = (id: string) => {
+    setSelectedSantriIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  // Toggle pilih semua santri yang tampil
+  const toggleSelectAllDaftar = () => {
+    if (selectedSantriIds.size === filteredSantriForDaftar.length && filteredSantriForDaftar.length > 0) {
+      setSelectedSantriIds(new Set());
+    } else {
+      setSelectedSantriIds(new Set(filteredSantriForDaftar.map((s) => s.id)));
     }
-    if (rekapMode === "nilai_100") {
-      const len = listNilai100.length;
-      const start = (page - 1) * pageSize;
-      return { currentDataLength: len, paginatedData: listNilai100.slice(start, start + pageSize) };
+  };
+
+  // Simpan pendaftaran santri ke Khotmil
+  const handleConfirmDaftar = () => {
+    if (selectedSantriIds.size === 0) {
+      showToast("error", "Pilih minimal 1 santri untuk didaftarkan.");
+      return;
     }
-    // dibawah_kkm
-    const len = listNilaiBawahKKM.length;
-    const start = (page - 1) * pageSize;
-    return { currentDataLength: len, paginatedData: listNilaiBawahKKM.slice(start, start + pageSize) };
-  }, [rekapMode, rekapRows, listNilai100, listNilaiBawahKKM, page, pageSize]);
 
-  const totalPages = Math.max(1, Math.ceil(currentDataLength / pageSize));
+    try {
+      let currentReg: string[] = [];
+      const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
+      if (stored) currentReg = JSON.parse(stored);
 
-  // Fungsi Cetak (Print)
+      const merged = Array.from(new Set([...currentReg, ...Array.from(selectedSantriIds)]));
+      localStorage.setItem(`lptq_registered_khotmil_${jenis}`, JSON.stringify(merged));
+
+      showToast("success", `Alhamdulillah! ${selectedSantriIds.size} santri berhasil didaftarkan ke ${judul}.`);
+      setDaftarModalOpen(false);
+      setSelectedSantriIds(new Set());
+      loadData();
+    } catch (e: any) {
+      showToast("error", "Gagal menyimpan pendaftaran santri: " + e.message);
+    }
+  };
+
+  // Keluarkan santri dari daftar Khotmil
+  const handleUnregisterSantri = (santriId: string, namaSantri: string) => {
+    if (!confirm(`Apakah Anda yakin ingin mengeluarkan ${namaSantri} dari daftar ${judul}?`)) {
+      return;
+    }
+
+    try {
+      let currentReg: string[] = [];
+      const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
+      if (stored) currentReg = JSON.parse(stored);
+
+      const filtered = currentReg.filter((id) => id !== santriId);
+      localStorage.setItem(`lptq_registered_khotmil_${jenis}`, JSON.stringify(filtered));
+
+      showToast("success", `${namaSantri} telah dihapus dari daftar ${judul}.`);
+      loadData();
+    } catch (e: any) {
+      showToast("error", "Gagal memperbarui pendaftaran: " + e.message);
+    }
+  };
+
+  // Langsung simpan nilai juz dari input tabel (Issue #5)
+  const handleDirectScoreChange = async (
+    santriId: string,
+    juz: number,
+    nilai: number,
+    namaSantri: string
+  ) => {
+    // Update state nilaiMap secara optimis agar rata-rata & status KKM langsung terhitung
+    setNilaiMap((prev) => ({
+      ...prev,
+      [`${santriId}_${juz}`]: nilai,
+    }));
+
+    try {
+      await upsertKhotmilNilaiBatch(santriId, jenis, activeTahap, [{ juz, nilai }]);
+      showToast("success", `Nilai Juz ${juz} (${namaSantri}): ${nilai} berhasil disimpan.`);
+    } catch (err: any) {
+      showToast("error", "Gagal menyimpan nilai: " + (err.message || "Terjadi kesalahan"));
+      loadData();
+    }
+  };
+
+  // Handle tombol escape untuk modal
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (editingSantri) setEditingSantri(null);
+        if (filterModalOpen) setFilterModalOpen(false);
+        if (excelModalOpen) setExcelModalOpen(false);
+        if (daftarModalOpen) setDaftarModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editingSantri, filterModalOpen, excelModalOpen, daftarModalOpen]);
+
+  // Hook cetak PDF via react-to-print
   const handlePrint = useReactToPrint({
     content: () => printRef.current,
-    documentTitle: `${judul} - ${rekapMode.toUpperCase()}`,
+    documentTitle: `${jenis}_Tahap_${activeTahap}`,
   });
 
-  // Ekspor Excel
-  const handleExportExcel = () => {
-    if (rekapMode === "semua_tahap") {
-      const rows = rekapRows.map((r, idx) => {
-        const rowData: Record<string, any> = {
-          No: idx + 1,
-          Kode: r.santri.kode,
-          Nama: r.santri.nama_lengkap,
-          Kamar: formatKamarDisplay(r.santri.kode_kamar, r.santri.kamar),
-          Halaqoh: `${r.santri.halaqoh_kelas ?? ""}${r.santri.halaqoh_bagian ?? ""}`,
-        };
+  const activeFilterCount = asramaFilter ? 1 : 0;
 
-        r.tahapSummaries.forEach((ts) => {
-          rowData[`${ts.label} (${ts.rentangLabel})`] =
-            ts.average !== null ? Number(ts.average.toFixed(1)) : "-";
-        });
+  const resetAllFilters = () => {
+    setAsramaFilter("");
+    setPage(1);
+    showToast("success", "Filter asrama telah direset.");
+  };
 
-        rowData["Nilai Akhir"] =
-          r.overallAverage !== null ? Number(r.overallAverage.toFixed(1)) : "-";
-        rowData["Status Kelulusan"] =
-          r.overallStatus === "lulus"
-            ? "LULUS / TUNTAS"
-            : r.overallStatus === "remidi"
-            ? "PERLU REMIDI"
-            : "BELUM LENGKAP";
+  // Menghitung rata-rata dan kelulusan KKM per santri
+  const computeRowSummary = (santriId: string) => {
+    const scores: number[] = [];
+    for (const j of currentTahapCfg.juzList) {
+      const val = nilaiMap[`${santriId}_${j}`];
+      if (typeof val === "number") scores.push(val);
+    }
+    const lengkap = scores.length === currentTahapCfg.juzList.length;
+    const rataRata =
+      scores.length > 0
+        ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2))
+        : null;
+    const lulus = lengkap && rataRata !== null && rataRata >= KKM_DEFAULT;
+    return { rataRata, lengkap, lulus };
+  };
 
-        return rowData;
-      });
+  let totalTuntas = 0;
+  let totalBelum = 0;
+  santriList.forEach((s) => {
+    const sum = computeRowSummary(s.id);
+    if (sum.lulus) totalTuntas += 1;
+    else totalBelum += 1;
+  });
 
-      exportJsonToExcel(rows, `${judul} - Semua Tahap`);
-    } else if (rekapMode === "nilai_100") {
-      const rows = listNilai100.map((item, idx) => ({
-        No: idx + 1,
-        Kode: item.santri.kode,
-        Nama: item.santri.nama_lengkap,
-        Kamar: formatKamarDisplay(item.santri.kode_kamar, item.santri.kamar),
-        Halaqoh: `${item.santri.halaqoh_kelas ?? ""}${item.santri.halaqoh_bagian ?? ""}`,
-        Tahap: `${item.tahap.label} (${item.tahap.rentangLabel})`,
-        Juz: `Juz ${item.juz}`,
-        Nilai: item.nilai,
-        Predikat: "Mumtaz / Sempurna (100)",
-      }));
+  const openScoreModal = (santri: Santri) => {
+    const initial: Record<number, string> = {};
+    currentTahapCfg.juzList.forEach((j) => {
+      const existing = nilaiMap[`${santri.id}_${j}`];
+      initial[j] = typeof existing === "number" ? String(existing) : "";
+    });
+    setFormScores(initial);
+    setEditingSantri(santri);
+  };
 
-      exportJsonToExcel(rows, `${judul} - Nilai Sempurna 100`);
-    } else {
-      const rows = listNilaiBawahKKM.map((item, idx) => ({
-        No: idx + 1,
-        Kode: item.santri.kode,
-        Nama: item.santri.nama_lengkap,
-        Kamar: formatKamarDisplay(item.santri.kode_kamar, item.santri.kamar),
-        Halaqoh: `${item.santri.halaqoh_kelas ?? ""}${item.santri.halaqoh_bagian ?? ""}`,
-        Tahap: `${item.tahap.label} (${item.tahap.rentangLabel})`,
-        Juz: `Juz ${item.juz}`,
-        Nilai: item.nilai,
-        "Standar KKM": KKM_DEFAULT,
-        Selisih: item.selisihKKM,
-        Keterangan: "Perlu Remidi / Belum Tuntas",
-      }));
+  const handleSaveScores = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSantri) return;
 
-      exportJsonToExcel(rows, `${judul} - Nilai Di Bawah KKM`);
+    const payload: { juz: number; nilai: number }[] = [];
+    for (const j of currentTahapCfg.juzList) {
+      const raw = formScores[j];
+      if (raw !== undefined && raw.trim() !== "") {
+        const num = Number(raw);
+        if (Number.isNaN(num) || num < 0 || num > 100) {
+          showToast("error", `Nilai Juz ${j} harus berupa angka antara 0 hingga 100.`);
+          return;
+        }
+        payload.push({ juz: j, nilai: Math.round(num) });
+      }
     }
 
-    showToast("success", "Data rekapitulasi berhasil diekspor ke format Excel.");
+    if (payload.length === 0) {
+      showToast("error", "Isi minimal satu nilai juz sebelum menyimpan.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await upsertKhotmilNilaiBatch(editingSantri.id, jenis, activeTahap, payload);
+      showToast(
+        "success",
+        `Nilai ${editingSantri.nama_lengkap} (${currentTahapCfg.label}) berhasil disimpan.`
+      );
+      setEditingSantri(null);
+      loadData();
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : "Gagal menyimpan nilai.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleExportExcel = () => {
+    setExcelModalOpen(false);
+    const exportRows = santriList.map((s, idx) => {
+      const summary = computeRowSummary(s.id);
+      const obj: Record<string, string | number> = {
+        No: idx + 1,
+        Kode: s.kode,
+        "Nama Lengkap": s.nama_lengkap,
+        Asrama: s.asrama,
+        Halaqoh: s.halaqoh,
+      };
+      currentTahapCfg.juzList.forEach((j) => {
+        const v = nilaiMap[`${s.id}_${j}`];
+        obj[`Juz_${j}`] = typeof v === "number" ? v : "-";
+      });
+      obj["Rata-rata"] = summary.rataRata ?? "-";
+      obj["Status KKM (85)"] = summary.lulus ? "Tuntas / Lulus" : "Belum Tuntas";
+      return obj;
+    });
+
+    exportJsonToExcel(
+      exportRows,
+      `${jenis.toUpperCase()}_Tahap_${activeTahap}`,
+      `Tahap_${activeTahap}`
+    );
+    showToast("success", "Tabel nilai Khotmil berhasil diekspor ke Excel.");
+  };
+
+  // Impor Nilai Khotmil Excel
+  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    setImportProgress("Memvalidasi berkas nilai...");
+
+    try {
+      const requiredHeaders = ["Kode", "Jenis", "Tahap", "Juz", "Nilai"];
+      const parsedRows = await parseExcelFileWithValidation(file, requiredHeaders);
+      const chunks = chunkArray(parsedRows, 100);
+      let importedCount = 0;
+
+      for (let idx = 0; idx < chunks.length; idx++) {
+        setImportProgress(`Mengunggah baris ${idx * 100 + 1} s.d ${Math.min((idx + 1) * 100, parsedRows.length)}...`);
+        const res = await fetch("/api/import/khotmil", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows: chunks[idx] }),
+        });
+
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.error || "Gagal mengimpor nilai ke server.");
+        }
+        importedCount += json.count ?? chunks[idx].length;
+      }
+
+      showToast("success", `Berhasil mengimpor ${importedCount} data nilai Khotmil.`);
+      setExcelModalOpen(false);
+      loadData();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Gagal memproses berkas Excel.";
+      showToast("error", msg);
+    } finally {
+      setImporting(false);
+      setImportProgress("");
+      if (excelFileInputRef.current) excelFileInputRef.current.value = "";
+    }
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header Halaman & Navigasi Cepat */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Link
-              href={`/tahfidz/khotmil/${is15Juz ? "15" : "30"}`}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-950 dark:text-emerald-300 transition"
+    <div className="space-y-5">
+      {/* Input File Tersembunyi untuk Impor Nilai Excel */}
+      <input
+        ref={excelFileInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        onChange={handleImportFileChange}
+        className="hidden"
+      />
+
+      {/* Header Halaman */}
+      <div>
+        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{judul}</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Standar KKM: 85. Santri dinyatakan Tuntas/Lulus apabila seluruh juz dalam tahap telah
+          dinilai dan rata-rata minimal 85.
+        </p>
+      </div>
+
+      {/* Tab Pilihan Tahap */}
+      <div
+        className="no-print flex flex-wrap gap-2 border-b border-slate-200 pb-3 dark:border-slate-800"
+        role="tablist"
+        aria-label="Daftar Tahap Khotmil"
+      >
+        {tahapList.map((t) => {
+          const active = t.tahap === activeTahap;
+          return (
+            <button
+              key={t.tahap}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => {
+                setActiveTahap(t.tahap);
+                setPage(1);
+              }}
+              className={`h-10 rounded-xl px-4 text-xs font-bold transition shadow-sm ${
+                active
+                  ? "bg-emerald-800 text-white shadow"
+                  : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+              }`}
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Kembali ke Penilaian Tahap</span>
-            </Link>
-            <span className="text-slate-300 dark:text-slate-700">•</span>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-              Rekapitulasi Akumulasi
-            </span>
-          </div>
-          <h1 className="text-xl sm:text-2xl font-extrabold text-slate-800 dark:text-slate-100 tracking-tight">
-            {judul}
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            Standar KKM: <strong>85</strong>. Rekapitulasi progres kelulusan {totalTahapCount} tahap,
-            capaian nilai sempurna (100), dan daftar remidi di bawah KKM.
-          </p>
+              {t.label} ({t.rentangLabel})
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Bilah Toolbar yang Disederhanakan 1 Baris */}
+      <div className="no-print flex flex-wrap sm:flex-nowrap items-center gap-2">
+        {/* Tombol Daftar Khotmil (Issue #4) */}
+        <button
+          type="button"
+          onClick={handleOpenDaftarModal}
+          title="Daftar Santri Khotmil"
+          aria-label="Daftar Santri Khotmil"
+          className="flex h-11 items-center gap-1.5 rounded-xl bg-emerald-800 px-3.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shrink-0 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+        >
+          <UserPlus className="h-4 w-4" />
+          <span className="hidden sm:inline">Daftar Khotmil</span>
+          <span className="sm:hidden">Daftar</span>
+        </button>
+
+        {/* Tombol Pintasan ke Rekap Khotmil */}
+        <Link
+          href={`/tahfidz/khotmil/rekap/${jenis === "khotmil15" ? "15" : "30"}`}
+          title="Buka Rekapitulasi Khotmil (Semua Tahap, Nilai 100, Nilai Di Bawah KKM)"
+          className="flex h-11 items-center gap-1.5 rounded-xl border border-emerald-800/20 bg-emerald-50 px-3.5 text-xs font-bold text-emerald-900 shadow-sm transition hover:bg-emerald-100 hover:border-emerald-800/40 shrink-0 dark:border-emerald-700/50 dark:bg-emerald-950 dark:text-emerald-200"
+        >
+          <Award className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
+          <span className="hidden sm:inline">Rekap Khotmil</span>
+        </Link>
+
+        {/* Kolom Pencarian Santri */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Cari nama atau kode santri..."
+            aria-label="Cari santri"
+            className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-sm text-slate-800 placeholder-slate-400 shadow-sm transition focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                setPage(1);
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              title="Bersihkan pencarian"
+              aria-label="Bersihkan pencarian"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
-        {/* Switch Antar Halaman Rekap (15 Juz vs 30 Juz) */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-            <Link
-              href="/tahfidz/khotmil/rekap/15"
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition ${
-                is15Juz
-                  ? "bg-white text-emerald-800 shadow-xs dark:bg-slate-900 dark:text-emerald-300"
-                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400"
-              }`}
-            >
-              Rekap 15 Juz (5 Tahap)
-            </Link>
-            <Link
-              href="/tahfidz/khotmil/rekap/30"
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition ${
-                !is15Juz
-                  ? "bg-white text-emerald-800 shadow-xs dark:bg-slate-900 dark:text-emerald-300"
-                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400"
-              }`}
-            >
-              Rekap 30 Juz (9 Tahap)
-            </Link>
-          </div>
+        {/* Tombol Filter (Pop-up Pilihan Filter) */}
+        <button
+          type="button"
+          onClick={() => setFilterModalOpen(true)}
+          title={activeFilterCount > 0 ? "Filter aktif (Asrama)" : "Filter Asrama"}
+          aria-label="Filter Asrama"
+          className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border shadow-sm transition focus:outline-none focus:ring-2 focus:ring-emerald-500/20 ${
+            activeFilterCount > 0
+              ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-300"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-emerald-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          }`}
+        >
+          <SlidersHorizontal className="h-5 w-5" />
+          {activeFilterCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-bold text-white shadow">
+              1
+            </span>
+          )}
+        </button>
+
+        {/* Tombol Excel (Pop-up Pilihan Template, Impor Nilai, Ekspor) */}
+        <button
+          type="button"
+          onClick={() => setExcelModalOpen(true)}
+          title="Menu Excel Nilai Khotmil"
+          aria-label="Menu Excel Nilai Khotmil"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <FileSpreadsheet className="h-5 w-5" />
+        </button>
+
+        {/* Tombol Cetak / Unduh PDF (Hanya Logo) */}
+        <button
+          type="button"
+          onClick={handlePrint}
+          title="Cetak / Unduh PDF"
+          aria-label="Cetak / Unduh PDF"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <Printer className="h-5 w-5" />
+        </button>
+
+        {/* Indikator Ringkas Tuntas & Belum Tuntas */}
+        <div className="flex items-center gap-1.5 shrink-0 pl-1">
+          <span className="inline-flex items-center rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+            Tuntas: {totalTuntas}
+          </span>
+          <span className="inline-flex items-center rounded-xl bg-rose-50 px-3 py-2 text-xs font-bold text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900">
+            Belum: {totalBelum}
+          </span>
         </div>
       </div>
 
-      {/* 4 Kartu Ringkasan Statistik */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Santri Terdaftar
-            </span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-              <UserCheck className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-extrabold text-slate-800 dark:text-slate-100 font-mono">
-              {stats.totalSantri}
-            </span>
-            <span className="text-xs text-slate-500">Santri</span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Lulus / Tuntas
-            </span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">
-              <CheckCircle2 className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-extrabold text-emerald-800 dark:text-emerald-300 font-mono">
-              {stats.lulusCount}
-            </span>
-            <span className="text-xs text-slate-500">
-              {stats.totalSantri > 0
-                ? `(${((stats.lulusCount / stats.totalSantri) * 100).toFixed(0)}%)`
-                : "0%"}
-            </span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Nilai Sempurna (100)
-            </span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-              <Sparkles className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-extrabold text-amber-700 dark:text-amber-300 font-mono">
-              {stats.total100}
-            </span>
-            <span className="text-xs text-slate-500">
-              di {stats.santri100Count} santri
-            </span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Di Bawah KKM (&lt;85)
-            </span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-              <AlertTriangle className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-extrabold text-rose-700 dark:text-rose-400 font-mono">
-              {stats.totalBawahKKM}
-            </span>
-            <span className="text-xs text-slate-500">
-              di {stats.santriBawahKKMCount} santri
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* TOOLBAR UTAMA & TOMBOL SWITCH 3 POIN REKAPITULASI */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4">
-        {/* Tombol Switch 3 Poin Rekapitulasi (Poin a, b, c sesuai permintaan) */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
-          <div className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
-            <button
-              type="button"
-              onClick={() => setRekapMode("semua_tahap")}
-              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition ${
-                rekapMode === "semua_tahap"
-                  ? "bg-white text-emerald-900 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
-                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
-              <span>Semua Tahap ({totalTahapCount} Tahap)</span>
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 font-mono">
-                {rekapRows.length}
-              </span>
+      {/* Indikator Filter Aktif */}
+      {activeFilterCount > 0 && (
+        <div className="no-print flex items-center gap-2 pt-1">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Filter Aktif:</span>
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+            Asrama: {asramaFilter}
+            <button type="button" onClick={() => setAsramaFilter("")} aria-label="Hapus filter asrama">
+              <X className="h-3 w-3 hover:text-rose-600" />
             </button>
-
-            <button
-              type="button"
-              onClick={() => setRekapMode("nilai_100")}
-              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition ${
-                rekapMode === "nilai_100"
-                  ? "bg-white text-amber-900 shadow-sm dark:bg-slate-900 dark:text-amber-300"
-                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span>Nilai Sempurna (100)</span>
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono">
-                {listNilai100.length}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setRekapMode("dibawah_kkm")}
-              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition ${
-                rekapMode === "dibawah_kkm"
-                  ? "bg-white text-rose-900 shadow-sm dark:bg-slate-900 dark:text-rose-300"
-                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-              <span>Nilai Di Bawah KKM</span>
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-mono">
-                {listNilaiBawahKKM.length}
-              </span>
-            </button>
-          </div>
-
-          {/* Tombol Ekspor & Cetak */}
-          <div className="flex items-center gap-2 self-end sm:self-auto">
-            <button
-              type="button"
-              onClick={handleExportExcel}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition"
-              title="Ekspor Rekap ke Excel"
-            >
-              <FileSpreadsheet className="h-4 w-4 text-emerald-700" />
-              <span className="hidden sm:inline">Ekspor Excel</span>
-            </button>
-            <button
-              type="button"
-              onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition"
-              title="Cetak Rekapitulasi"
-            >
-              <Printer className="h-4 w-4 text-slate-700 dark:text-slate-300" />
-              <span className="hidden sm:inline">Cetak</span>
-            </button>
-          </div>
+          </span>
+          <button
+            type="button"
+            onClick={resetAllFilters}
+            className="text-xs font-semibold text-rose-600 hover:underline dark:text-rose-400"
+          >
+            Reset
+          </button>
         </div>
+      )}
 
-        {/* Input Pencarian & Filter */}
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          <div className="relative flex-1 w-full">
-            <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
-              <Search className="h-4 w-4" />
-            </span>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari santri, nomor kamar, atau nama halaqoh..."
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-2 pl-10 pr-4 text-xs text-slate-800 placeholder-slate-400 focus:border-emerald-800 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
-            <button
-              type="button"
-              onClick={() => setFilterModalOpen(true)}
-              className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                asramaFilter
-                  ? "border-emerald-800 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-              }`}
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              <span>Filter Asrama</span>
-              {asramaFilter && <span className="h-2 w-2 rounded-full bg-emerald-700" />}
-            </button>
-
-            {/* Pilihan Baris Per Halaman */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <span className="hidden sm:inline">Tampilkan:</span>
-              <select
-                value={pageSize}
-                onChange={(e) => setPageSize(Number(e.target.value))}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 focus:outline-none"
-              >
-                {pageSizeOptions.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt} baris
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* KONTEN UTAMA: TABEL SESUAI SWITCH MODE */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
-        {loading ? (
-          <div className="flex h-64 flex-col items-center justify-center gap-3 p-8">
-            <Loader2 className="h-8 w-8 animate-spin text-emerald-800 dark:text-emerald-400" />
-            <p className="text-xs text-slate-500">Memuat data rekapitulasi khotmil...</p>
-          </div>
-        ) : error ? (
-          <div className="p-8 text-center text-sm text-rose-600">{error}</div>
-        ) : currentDataLength === 0 ? (
-          <div className="py-16 text-center">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
-              <BookOpen className="h-7 w-7" />
-            </div>
-            <h3 className="mt-4 text-sm font-bold text-slate-800 dark:text-slate-100">
-              Tidak ada data ditemukan
-            </h3>
-            <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-              {rekapMode === "nilai_100"
-                ? "Belum ada santri yang memperoleh nilai sempurna 100 pada ujian khotmil ini."
-                : rekapMode === "dibawah_kkm"
-                ? "Alhamdulillah! Tidak ada nilai di bawah KKM (seluruh nilai santri telah tuntas minimal 85)."
-                : "Belum ada santri yang terdaftar atau data tidak cocok dengan filter pencarian."}
+      {/* Tabel Nilai Khotmil */}
+      <div ref={printRef} className="rounded-xl border border-slate-300 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200 pb-3 mb-3 dark:border-slate-800">
+          <div>
+            <h2 className="text-sm font-bold uppercase tracking-wide text-slate-800 dark:text-slate-100">
+              {judul} - {currentTahapCfg.label} ({currentTahapCfg.rentangLabel})
+            </h2>
+            <p className="text-xs text-slate-500">
+              Menampilkan {santriList.length} santri
             </p>
           </div>
-        ) : (
-          <div className="overflow-x-auto" ref={printRef}>
-            {/* Header Dokumen untuk Cetak */}
-            <div className="hidden print:block p-6 border-b border-slate-300 text-center">
-              <h2 className="text-lg font-bold uppercase tracking-tight text-slate-900">
-                Lembaga Pembinaan Tilawatil Qur&apos;an (LPTQ)
-              </h2>
-              <p className="text-xs text-slate-600">Pondok Pesantren Darussalam Blokagung Banyuwangi</p>
-              <h3 className="text-base font-extrabold uppercase mt-2 text-slate-900">
-                {judul} - {rekapMode === "semua_tahap" ? "Rekapitulasi Semua Tahap" : rekapMode === "nilai_100" ? "Capaian Nilai Sempurna (100)" : "Daftar Nilai Di Bawah KKM"}
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">Dicetak pada: {new Date().toLocaleDateString("id-ID", { dateStyle: "full" })}</p>
-            </div>
 
-            {/* TABEL A: REKAPITULASI SEMUA TAHAP (5 TAHAP / 9 TAHAP) */}
-            {rekapMode === "semua_tahap" && (
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-800/50">
-                    <th className="py-3.5 pl-4 pr-2 font-bold text-slate-700 dark:text-slate-300 w-10 text-center">
-                      No
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-slate-700 dark:text-slate-300 min-w-[190px]">
-                      Nama Santri
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-slate-700 dark:text-slate-300 w-20 text-center">
-                      Kamar
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-slate-700 dark:text-slate-300 w-20 text-center">
-                      Halaqoh
-                    </th>
-
-                    {/* Kolom Tiap Tahap */}
-                    {tahapList.map((t) => (
-                      <th
-                        key={t.tahap}
-                        className="px-2.5 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center min-w-[95px]"
-                      >
-                        <div>{t.label}</div>
-                        <div className="text-[10px] font-normal text-slate-400">
-                          {t.rentangLabel}
-                        </div>
-                      </th>
-                    ))}
-
-                    <th className="px-3 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center w-24">
-                      Rata-rata
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center min-w-[120px]">
-                      Status KKM
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-slate-700 dark:text-slate-300 text-center w-24 no-print">
-                      Rincian
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {(paginatedData as SantriRekapRow[]).map((row, idx) => {
-                    const santri = row.santri;
-                    const rowNumber = (page - 1) * pageSize + idx + 1;
-                    return (
-                      <tr
-                        key={santri.id}
-                        className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition"
-                      >
-                        <td className="py-3 pl-4 pr-2 text-center font-mono text-slate-400">
-                          {rowNumber}
-                        </td>
-                        <td className="px-3 py-3">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedSantriDetail(row)}
-                            className="text-left group"
-                          >
-                            <span className="font-bold text-slate-800 dark:text-slate-100 group-hover:text-emerald-800 dark:group-hover:text-emerald-400 transition">
-                              {santri.nama_lengkap}
-                            </span>
-                            <span className="block text-[10px] text-slate-400 font-mono">
-                              {santri.kode || "-"}
-                            </span>
-                          </button>
-                        </td>
-                        <td className="px-3 py-3 text-center font-mono font-semibold text-slate-600 dark:text-slate-300">
-                          {formatKamarDisplay(santri.kode_kamar, santri.kamar)}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <HalaqohBadge
-                            kelas={santri.halaqoh_kelas}
-                            bagian={santri.halaqoh_bagian}
-                          />
-                        </td>
-
-                        {/* Nilai Rata-rata per Tahap */}
-                        {row.tahapSummaries.map((ts) => {
-                          const avg = ts.average;
-                          return (
-                            <td key={ts.tahap} className="px-2.5 py-3 text-center">
-                              {avg === null ? (
-                                <span className="text-slate-300 dark:text-slate-600 font-mono">
-                                  -
-                                </span>
-                              ) : avg === 100 ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-100 text-amber-900 font-bold font-mono text-xs dark:bg-amber-950 dark:text-amber-200">
-                                  <span>100</span>
-                                  <Sparkles className="w-3 h-3 text-amber-600 fill-amber-400" />
-                                </span>
-                              ) : avg >= KKM_DEFAULT ? (
-                                <span className="inline-flex px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 font-bold font-mono text-xs dark:bg-emerald-950 dark:text-emerald-300">
-                                  {avg.toFixed(1)}
-                                </span>
-                              ) : (
-                                <span className="inline-flex px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 font-bold font-mono text-xs dark:bg-rose-950 dark:text-rose-300">
-                                  {avg.toFixed(1)}
-                                </span>
-                              )}
-                            </td>
-                          );
-                        })}
-
-                        {/* Rata-rata Akhir Keseluruhan */}
-                        <td className="px-3 py-3 text-center">
-                          {row.overallAverage !== null ? (
-                            <span
-                              className={`font-mono font-extrabold text-xs px-2 py-1 rounded-lg ${
-                                row.overallAverage >= KKM_DEFAULT
-                                  ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
-                                  : "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200"
-                              }`}
-                            >
-                              {row.overallAverage.toFixed(1)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-300 font-mono">-</span>
-                          )}
-                        </td>
-
-                        {/* Status Kelulusan */}
-                        <td className="px-3 py-3 text-center">
-                          {row.overallStatus === "lulus" ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold dark:bg-emerald-950 dark:text-emerald-300">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>Lulus / Tuntas</span>
-                            </span>
-                          ) : row.overallStatus === "remidi" ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold dark:bg-rose-950 dark:text-rose-300">
-                              <AlertTriangle className="w-3.5 h-3.5" />
-                              <span>Perlu Remidi</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-[11px] font-semibold dark:bg-slate-800 dark:text-slate-400">
-                              <span>Belum Lengkap</span>
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Tombol Lihat Rincian */}
-                        <td className="px-3 py-3 text-center no-print">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedSantriDetail(row)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-emerald-50 hover:text-emerald-800 hover:border-emerald-300 text-slate-700 text-xs font-semibold transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                          >
-                            <Info className="w-3.5 h-3.5" />
-                            <span>Detail</span>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-
-            {/* TABEL B: REKAPITULASI NILAI SEMPURNA (100) */}
-            {rekapMode === "nilai_100" && (
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-amber-50/60 dark:border-slate-800 dark:bg-amber-950/20">
-                    <th className="py-3.5 pl-4 pr-2 font-bold text-amber-950 dark:text-amber-300 w-12 text-center">
-                      No
-                    </th>
-                    <th className="px-4 py-3.5 font-bold text-amber-950 dark:text-amber-300 min-w-[200px]">
-                      Nama Santri Berprestasi
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-amber-950 dark:text-amber-300 w-24 text-center">
-                      Kamar
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-amber-950 dark:text-amber-300 w-24 text-center">
-                      Halaqoh
-                    </th>
-                    <th className="px-4 py-3.5 font-bold text-amber-950 dark:text-amber-300">
-                      Tahap Ujian
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-amber-950 dark:text-amber-300 text-center w-24">
-                      Juz
-                    </th>
-                    <th className="px-4 py-3.5 font-bold text-amber-950 dark:text-amber-300 text-center w-28">
-                      Nilai Sempurna
-                    </th>
-                    <th className="px-4 py-3.5 font-bold text-amber-950 dark:text-amber-300 text-center w-36">
-                      Predikat
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {(paginatedData as ItemNilaiDetail[]).map((item, idx) => {
-                    const rowNumber = (page - 1) * pageSize + idx + 1;
-                    return (
-                      <tr
-                        key={item.id}
-                        className="hover:bg-amber-50/40 dark:hover:bg-amber-950/10 transition"
-                      >
-                        <td className="py-3 pl-4 pr-2 text-center font-mono text-slate-400">
-                          {rowNumber}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="font-bold text-slate-800 dark:text-slate-100">
-                            {item.santri.nama_lengkap}
-                          </span>
-                          <span className="block text-[10px] text-slate-400 font-mono">
-                            {item.santri.kode || "-"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-center font-mono font-semibold text-slate-600 dark:text-slate-300">
-                          {formatKamarDisplay(item.santri.kode_kamar, item.santri.kamar)}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <HalaqohBadge
-                            kelas={item.santri.halaqoh_kelas}
-                            bagian={item.santri.halaqoh_bagian}
-                          />
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="font-semibold text-slate-700 dark:text-slate-300">
-                            {item.tahap.label}
-                          </span>
-                          <span className="text-slate-400 ml-1.5 text-[11px]">
-                            ({item.tahap.rentangLabel})
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-center font-mono font-bold text-slate-800 dark:text-slate-200">
-                          Juz {item.juz}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-xl bg-amber-100 text-amber-900 font-extrabold font-mono text-sm shadow-xs dark:bg-amber-950 dark:text-amber-200">
-                            <span>100</span>
-                            <Sparkles className="w-3.5 h-3.5 text-amber-600 fill-amber-400" />
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-800 text-xs font-bold border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800">
-                            <Award className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Mumtaz (100)</span>
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-
-            {/* TABEL C: REKAPITULASI NILAI DI BAWAH KKM (<85) */}
-            {rekapMode === "dibawah_kkm" && (
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-rose-50/60 dark:border-slate-800 dark:bg-rose-950/20">
-                    <th className="py-3.5 pl-4 pr-2 font-bold text-rose-950 dark:text-rose-300 w-12 text-center">
-                      No
-                    </th>
-                    <th className="px-4 py-3.5 font-bold text-rose-950 dark:text-rose-300 min-w-[200px]">
-                      Nama Santri
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-rose-950 dark:text-rose-300 w-24 text-center">
-                      Kamar
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-rose-950 dark:text-rose-300 w-24 text-center">
-                      Halaqoh
-                    </th>
-                    <th className="px-4 py-3.5 font-bold text-rose-950 dark:text-rose-300">
-                      Tahap Ujian
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-rose-950 dark:text-rose-300 text-center w-24">
-                      Juz
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-rose-950 dark:text-rose-300 text-center w-24">
-                      Nilai Ujian
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-rose-950 dark:text-rose-300 text-center w-24">
-                      KKM
-                    </th>
-                    <th className="px-3 py-3.5 font-bold text-rose-950 dark:text-rose-300 text-center w-24">
-                      Selisih
-                    </th>
-                    <th className="px-4 py-3.5 font-bold text-rose-950 dark:text-rose-300 text-center min-w-[130px]">
-                      Tindakan
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {(paginatedData as ItemNilaiDetail[]).map((item, idx) => {
-                    const rowNumber = (page - 1) * pageSize + idx + 1;
-                    return (
-                      <tr
-                        key={item.id}
-                        className="hover:bg-rose-50/40 dark:hover:bg-rose-950/10 transition"
-                      >
-                        <td className="py-3 pl-4 pr-2 text-center font-mono text-slate-400">
-                          {rowNumber}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="font-bold text-slate-800 dark:text-slate-100">
-                            {item.santri.nama_lengkap}
-                          </span>
-                          <span className="block text-[10px] text-slate-400 font-mono">
-                            {item.santri.kode || "-"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-center font-mono font-semibold text-slate-600 dark:text-slate-300">
-                          {formatKamarDisplay(item.santri.kode_kamar, item.santri.kamar)}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <HalaqohBadge
-                            kelas={item.santri.halaqoh_kelas}
-                            bagian={item.santri.halaqoh_bagian}
-                          />
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="font-semibold text-slate-700 dark:text-slate-300">
-                            {item.tahap.label}
-                          </span>
-                          <span className="text-slate-400 ml-1.5 text-[11px]">
-                            ({item.tahap.rentangLabel})
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-center font-mono font-bold text-slate-800 dark:text-slate-200">
-                          Juz {item.juz}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className="inline-flex px-2.5 py-1 rounded-xl bg-rose-100 text-rose-900 font-extrabold font-mono text-xs dark:bg-rose-950 dark:text-rose-200">
-                            {item.nilai}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-center font-mono font-semibold text-slate-500">
-                          {KKM_DEFAULT}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className="inline-flex px-2 py-0.5 rounded-lg bg-rose-50 text-rose-700 font-mono font-bold text-[11px] dark:bg-rose-950/60 dark:text-rose-300">
-                            {item.selisihKKM}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 text-rose-800 text-xs font-bold border border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
-                            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                            <span>Perlu Remidi</span>
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
+          <div className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+            KKM Lulus: <span className="font-mono text-emerald-700 dark:text-emerald-400 font-bold">85</span>
           </div>
-        )}
+        </div>
 
-        {/* PAGINATION FOOTER */}
-        {!loading && currentDataLength > 0 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/30">
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              Menampilkan{" "}
-              <strong className="text-slate-800 dark:text-slate-200">
-                {(page - 1) * pageSize + 1}
-              </strong>{" "}
-              -{" "}
-              <strong className="text-slate-800 dark:text-slate-200">
-                {Math.min(page * pageSize, currentDataLength)}
-              </strong>{" "}
-              dari{" "}
-              <strong className="text-slate-800 dark:text-slate-200">
-                {currentDataLength}
-              </strong>{" "}
-              data
-            </span>
+        {loading ? (
+          <div className="py-12 text-center text-sm text-slate-500">Memuat data nilai...</div>
+        ) : error ? (
+          <div className="py-12 text-center text-sm text-rose-600">{error}</div>
+        ) : santriList.length === 0 ? (
+          <div className="py-14 px-4 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 mb-3.5 shadow-xs border border-emerald-100 dark:border-emerald-900/50">
+              <UserPlus className="h-7 w-7" />
+            </div>
+            <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
+              Belum Ada Santri Terdaftar di {judul}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1 mb-5">
+              Tabel ini hanya menampilkan santri yang sudah terdaftar. Silakan klik tombol di bawah untuk memilih dan mendaftarkan santri dari database.
+            </p>
+            <button
+              type="button"
+              onClick={handleOpenDaftarModal}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-800 px-5 py-2.5 text-xs font-bold text-white shadow hover:bg-emerald-900 transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
+            >
+              <UserPlus className="h-4 w-4" />
+              <span>Daftar Khotmil Sekarang</span>
+            </button>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-300 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50">
+                  <th className="px-3 py-2.5 font-semibold text-slate-700 dark:text-slate-300 w-10">No</th>
+                  <th className="px-3 py-2.5 font-semibold text-slate-700 dark:text-slate-300">Nama Santri</th>
+                  <th className="px-3 py-2.5 font-semibold text-slate-700 dark:text-slate-300">Asrama</th>
+                  <th className="px-3 py-2.5 font-semibold text-slate-700 dark:text-slate-300 text-center">Halaqoh</th>
+                  {currentTahapCfg.juzList.map((j) => (
+                    <th key={j} className="px-2 py-2.5 font-semibold text-center font-mono w-14">
+                      Juz {j}
+                    </th>
+                  ))}
+                  <th className="px-3 py-2.5 font-semibold text-center font-mono">Rata-rata</th>
+                  <th className="px-3 py-2.5 font-semibold text-center">Status KKM</th>
+                  <th className="no-print px-3 py-2.5 font-semibold text-center w-28">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {paginatedSantri.map((s, idx) => {
+                  const summary = computeRowSummary(s.id);
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                      <td className="px-3 py-2 font-mono text-slate-500">{(page - 1) * pageSize + idx + 1}</td>
+                      <td className="px-3 py-2 font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                        {s.nama_lengkap}
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[10px] font-normal font-mono text-slate-400">{s.kode}</span>
+                          <span className="text-[10px] text-slate-300 dark:text-slate-600">•</span>
+                          <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
+                            {formatKamarDisplay(s.kode_kamar, s.kamar)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{s.asrama}</td>
+                      <td className="px-3 py-2 text-center">
+                        <HalaqohBadge kelas={s.halaqoh_kelas} bagian={s.halaqoh_bagian} />
+                      </td>
+                      {currentTahapCfg.juzList.map((j) => {
+                        const n = nilaiMap[`${s.id}_${j}`];
+                        return (
+                          <td key={j} className="px-1 py-1 text-center font-mono p-0">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              key={`${s.id}_${j}_${typeof n === "number" ? n : ""}`}
+                              defaultValue={typeof n === "number" ? n : ""}
+                              placeholder="-"
+                              onBlur={(e) => {
+                                const text = e.target.value.trim();
+                                if (text === "") return;
+                                const num = Number(text);
+                                if (!Number.isNaN(num) && num >= 0 && num <= 100 && num !== n) {
+                                  handleDirectScoreChange(s.id, j, Math.round(num), s.nama_lengkap);
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                              className="h-8 w-12 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
+                              title={`Ubah nilai Juz ${j} ${s.nama_lengkap} (0-100)`}
+                            />
+                          </td>
+                        );
+                      })}
+                      <td className="px-3 py-2 text-center font-mono font-bold">
+                        {summary.rataRata !== null ? summary.rataRata : <span className="text-slate-300">-</span>}
+                      </td>
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        {summary.lulus ? (
+                          <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                            Tuntas / Lulus
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-medium text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                            {summary.lengkap ? "Belum Tuntas" : "Nilai Belum Lengkap"}
+                          </span>
+                        )}
+                      </td>
+                      <td className="no-print px-3 py-2 text-center whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openScoreModal(s)}
+                            className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                            title="Input / Edit Lengkap"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUnregisterSantri(s.id, s.nama_lengkap)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition dark:border-slate-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                            title={`Keluarkan ${s.nama_lengkap} dari daftar`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
 
-            <div className="flex items-center gap-1 font-semibold">
-              <button
-                type="button"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                title="Halaman Sebelumnya"
-                className="inline-flex h-8 px-2.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              {getPageNumbers(page, totalPages).map((p, idx) =>
-                p === "..." ? (
-                  <span key={`ell-${idx}`} className="px-1 text-slate-400 select-none">
-                    ...
-                  </span>
-                ) : (
-                  <button
-                    key={`p-${p}`}
-                    type="button"
-                    onClick={() => setPage(Number(p))}
-                    className={`h-8 min-w-[32px] px-2 rounded-xl font-mono text-xs transition ${
-                      page === p
-                        ? "bg-emerald-800 text-white font-bold shadow-xs"
-                        : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                    }`}
+            {/* Pagination Controls Khotmil */}
+            <div className="no-print mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+                <div className="flex items-center gap-1.5">
+                  <span>Tampilkan:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 shadow-sm transition focus:border-emerald-600 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                   >
-                    {p}
+                    {pageSizeOptions.map((sz) => (
+                      <option key={sz} value={sz}>
+                        {sz} baris
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <span>
+                  Menampilkan{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {totalRows > 0 ? (page - 1) * pageSize + 1 : 0}
+                  </strong>{" "}
+                  -{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {Math.min(page * pageSize, totalRows)}
+                  </strong>{" "}
+                  dari{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">{totalRows}</strong> santri
+                </span>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    title="Halaman Sebelumnya"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
                   </button>
-                )
+
+                  {getPageNumbers(page, totalPages).map((p, idx) =>
+                    p === "..." ? (
+                      <span key={`dots-${idx}`} className="px-2 text-xs text-slate-400">
+                        ...
+                      </span>
+                    ) : (
+                      <button
+                        key={`page-${p}`}
+                        type="button"
+                        onClick={() => setPage(p as number)}
+                        className={`h-8 min-w-[32px] rounded-lg px-2 text-xs font-bold transition ${
+                          p === page
+                            ? "bg-emerald-800 text-white shadow"
+                            : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    )
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    title="Halaman Berikutnya"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
               )}
-              <button
-                type="button"
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                title="Halaman Berikutnya"
-                className="inline-flex h-8 px-2.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
             </div>
           </div>
         )}
       </div>
 
-      {/* MODAL DETAIL RINCIAN NILAI SANTRI (POPUP JIKA KLIK DETAIL / NAMA) */}
-      {selectedSantriDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in duration-150">
-          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                  Rincian Penilaian Khotmil
-                </span>
-                <h3 className="text-lg font-extrabold text-slate-800 dark:text-slate-100">
-                  {selectedSantriDetail.santri.nama_lengkap}
-                </h3>
-                <p className="text-xs text-slate-500 font-mono mt-0.5">
-                  Kode: {selectedSantriDetail.santri.kode || "-"} • Kamar:{" "}
-                  {formatKamarDisplay(
-                    selectedSantriDetail.santri.kode_kamar,
-                    selectedSantriDetail.santri.kamar
-                  )}
-                </p>
+      {/* POP-UP 1: MODAL FILTER ASRAMA */}
+      {filterModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-filter-khotmil-title"
+        >
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  <SlidersHorizontal className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 id="modal-filter-khotmil-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    Filter Asrama
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Saring daftar santri berdasarkan asrama</p>
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedSantriDetail(null)}
-                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+                onClick={() => setFilterModalOpen(false)}
+                aria-label="Tutup dialog filter"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            {/* Rincian Per Tahap */}
-            <div className="space-y-4 py-4">
-              {selectedSantriDetail.tahapSummaries.map((ts) => (
-                <div
-                  key={ts.tahap}
-                  className="rounded-xl border border-slate-200/80 p-3.5 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-800/40"
-                >
-                  <div className="flex items-center justify-between mb-2.5">
-                    <div>
-                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        {ts.label} ({ts.rentangLabel})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-500">Rata-rata:</span>
-                      <span
-                        className={`text-xs font-bold font-mono px-2 py-0.5 rounded-md ${
-                          ts.average === null
-                            ? "bg-slate-200 text-slate-600"
-                            : ts.average === 100
-                            ? "bg-amber-100 text-amber-900 font-extrabold"
-                            : ts.average >= KKM_DEFAULT
-                            ? "bg-emerald-100 text-emerald-900"
-                            : "bg-rose-100 text-rose-900"
-                        }`}
-                      >
-                        {ts.average !== null ? ts.average.toFixed(1) : "-"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Nilai Tiap Juz pada Tahap Ini */}
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                    {tahapList
-                      .find((t) => t.tahap === ts.tahap)
-                      ?.juzList.map((j) => {
-                        const scoreItem = ts.scores.find((s) => s.juz === j);
-                        const val = scoreItem ? scoreItem.nilai : null;
-                        return (
-                          <div
-                            key={j}
-                            className={`rounded-lg p-2 text-center border ${
-                              val === null
-                                ? "bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800"
-                                : val === 100
-                                ? "bg-amber-50 border-amber-300 dark:bg-amber-950/40 dark:border-amber-800"
-                                : val >= KKM_DEFAULT
-                                ? "bg-emerald-50 border-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800"
-                                : "bg-rose-50 border-rose-300 dark:bg-rose-950/40 dark:border-rose-800"
-                            }`}
-                          >
-                            <span className="text-[10px] text-slate-500 block">Juz {j}</span>
-                            <span
-                              className={`text-sm font-extrabold font-mono ${
-                                val === null
-                                  ? "text-slate-300"
-                                  : val === 100
-                                  ? "text-amber-800 dark:text-amber-300"
-                                  : val >= KKM_DEFAULT
-                                  ? "text-emerald-800 dark:text-emerald-300"
-                                  : "text-rose-700 dark:text-rose-400"
-                              }`}
-                            >
-                              {val !== null ? val : "-"}
-                            </span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-              ))}
+            <div className="space-y-3 py-4">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Nama Asrama
+              </label>
+              <input
+                type="text"
+                value={asramaFilter}
+                onChange={(e) => setAsramaFilter(e.target.value)}
+                placeholder="Contoh: Al-Falah"
+                className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
             </div>
 
-            <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
-                onClick={() => setSelectedSantriDetail(null)}
-                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold transition dark:bg-slate-800 dark:text-slate-200"
+                onClick={resetAllFilters}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition dark:text-rose-400 dark:hover:bg-rose-950/40"
               >
-                Tutup
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Reset</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterModalOpen(false)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl shadow transition"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>Tutup & Terapkan</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* FILTER MODAL */}
-      {filterModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
-                Filter Rekapitulasi
-              </h3>
+      {/* POP-UP 2: MODAL MENU EXCEL (TEMPLATE, IMPOR NILAI, EKSPOR) */}
+      {excelModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-excel-khotmil-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  <FileSpreadsheet className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 id="modal-excel-khotmil-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    Menu Excel Khotmil
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Pilih tindakan berkas spreadsheet nilai Khotmil</p>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setFilterModalOpen(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                onClick={() => setExcelModalOpen(false)}
+                disabled={importing}
+                aria-label="Tutup dialog excel"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="py-4 space-y-3">
+            {importing ? (
+              <div className="py-8 text-center space-y-3">
+                <Loader2 className="h-8 w-8 animate-spin text-emerald-700 mx-auto" />
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{importProgress}</p>
+                <p className="text-xs text-slate-400">Mohon jangan menutup jendela ini hingga selesai...</p>
+              </div>
+            ) : (
+              <div className="space-y-3 py-4">
+                {/* Pilihan 1: Template Excel */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    downloadKhotmilTemplateExcel();
+                    showToast("success", "Template nilai Khotmil berhasil diunduh.");
+                    setExcelModalOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3.5 p-3 rounded-xl border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/50 transition text-left group dark:border-slate-800 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/20"
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 group-hover:bg-emerald-100 group-hover:text-emerald-800 transition dark:bg-slate-800 dark:text-slate-300">
+                    <Download className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-800 group-hover:text-emerald-900 dark:text-slate-200 dark:group-hover:text-emerald-300">
+                      Template Excel Nilai
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Unduh format template kosong nilai Khotmil untuk impor massal
+                    </p>
+                  </div>
+                </button>
+
+                {/* Pilihan 2: Impor Nilai Excel */}
+                <button
+                  type="button"
+                  onClick={() => excelFileInputRef.current?.click()}
+                  className="w-full flex items-center gap-3.5 p-3 rounded-xl border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/50 transition text-left group dark:border-slate-800 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/20"
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 group-hover:bg-emerald-100 group-hover:text-emerald-800 transition dark:bg-slate-800 dark:text-slate-300">
+                    <Upload className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-800 group-hover:text-emerald-900 dark:text-slate-200 dark:group-hover:text-emerald-300">
+                      Impor Nilai Excel / CSV
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Unggah berkas nilai untuk memperbarui database secara massal
+                    </p>
+                  </div>
+                </button>
+
+                {/* Pilihan 3: Ekspor Excel */}
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  className="w-full flex items-center gap-3.5 p-3 rounded-xl border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/50 transition text-left group dark:border-slate-800 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/20"
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 group-hover:bg-emerald-100 group-hover:text-emerald-800 transition dark:bg-slate-800 dark:text-slate-300">
+                    <FileDown className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-800 group-hover:text-emerald-900 dark:text-slate-200 dark:group-hover:text-emerald-300">
+                      Ekspor Tabel Nilai ke Excel
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Unduh tabel nilai tahap ini (lengkap rata-rata dan status) ke .xlsx
+                    </p>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* POP-UP 3: MODAL INPUT / EDIT NILAI KHOTMIL */}
+      {editingSantri && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-nilai-khotmil-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
               <div>
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 block">
-                  Asrama Santri
-                </label>
+                <h2 id="modal-nilai-khotmil-title" className="text-base font-bold text-slate-900 dark:text-white">
+                  Input Nilai Khotmil
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {editingSantri.nama_lengkap} ({editingSantri.kode})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSantri(null)}
+                aria-label="Tutup dialog"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveScores} className="space-y-4">
+              <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60 text-xs flex justify-between">
+                <span>Tahap: <strong>{currentTahapCfg.label}</strong></span>
+                <span>Rentang: <strong>{currentTahapCfg.rentangLabel}</strong></span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto px-1">
+                {currentTahapCfg.juzList.map((juz) => (
+                  <div key={juz}>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Nilai Juz {juz} (0-100)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={formScores[juz] !== undefined ? formScores[juz] : ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormScores((prev) => ({ ...prev, [juz]: val }));
+                      }}
+                      placeholder="85"
+                      className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-mono font-bold text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingSantri(null)}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-5 py-2 text-xs font-semibold rounded-xl bg-emerald-800 text-white hover:bg-emerald-900 shadow transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
+                >
+                  {saving ? "Menyimpan..." : "Simpan Nilai"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* POP-UP 4: MODAL PENDAFTARAN KHOTMIL DENGAN DRAWER RIWAYAT SANTRI (KEGIATAN & JUZ BARU) */}
+      {daftarModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-5"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-daftar-khotmil-title"
+        >
+          <div className="flex flex-col w-full max-w-5xl max-h-[92vh] rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+            {/* Header Dialog */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  <UserPlus className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 id="modal-daftar-khotmil-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    Pendaftaran Santri - {judul}
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Pilih satu atau beberapa santri untuk didaftarkan ke dalam tabel {judul}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDaftarModalOpen(false)}
+                aria-label="Tutup dialog pendaftaran"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Pencarian Santri (Nama, Halaqoh+Pembimbing, Kamar) */}
+            <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
                   type="text"
-                  value={asramaFilter}
-                  onChange={(e) => setAsramaFilter(e.target.value)}
-                  placeholder="Contoh: Al Mubarokah..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  value={daftarSearch}
+                  onChange={(e) => setDaftarSearch(e.target.value)}
+                  placeholder="Cari berdasarkan Nama, Halaqoh, Pembimbing, atau Kamar (misal: E03)..."
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-xs text-slate-800 placeholder-slate-400 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                 />
+                {daftarSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setDaftarSearch("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  setAsramaFilter("");
-                  setFilterModalOpen(false);
-                }}
-                className="text-xs font-semibold text-slate-500 hover:text-slate-700"
-              >
-                Reset Filter
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-emerald-800 text-white text-xs font-bold hover:bg-emerald-900 transition"
-              >
-                Terapkan
-              </button>
+            {/* Konten 2 Sisi: Tabel Santri (Kiri) & Riwayat Kegiatan + Juz Baru (Kanan) */}
+            <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-0">
+              {/* Kolom Kiri: Tabel Santri */}
+              <div className="lg:col-span-7 flex flex-col border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 min-h-0 overflow-y-auto">
+                <div className="p-3 bg-slate-100/60 dark:bg-slate-800/50 flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="select-all-santri"
+                      checked={
+                        filteredSantriForDaftar.length > 0 &&
+                        selectedSantriIds.size === filteredSantriForDaftar.length
+                      }
+                      onChange={toggleSelectAllDaftar}
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <label htmlFor="select-all-santri" className="cursor-pointer select-none">
+                      Pilih Semua ({filteredSantriForDaftar.length})
+                    </label>
+                  </div>
+                  <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                    {selectedSantriIds.size} dipilih
+                  </span>
+                </div>
+
+                {loadingDaftarList ? (
+                  <div className="flex h-48 items-center justify-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-emerald-700" />
+                    <span className="text-xs text-slate-500">Memuat data santri...</span>
+                  </div>
+                ) : filteredSantriForDaftar.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-slate-500">
+                    Tidak ada santri yang cocok dengan pencarian &quot;{daftarSearch}&quot;.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredSantriForDaftar.map((s) => {
+                      const isSelected = selectedSantriIds.has(s.id);
+                      const isPreviewActive = previewSantri?.id === s.id;
+                      const pembimbingNama =
+                        pembimbingMap[`${s.halaqoh_kelas}_${s.halaqoh_bagian}`] || "Ust. Pembimbing";
+                      const kamarStr = formatKamarDisplay(s.kode_kamar, s.kamar);
+
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => setPreviewSantri(s)}
+                          className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition ${
+                            isPreviewActive
+                              ? "bg-emerald-50/70 dark:bg-emerald-950/40 border-l-4 border-l-emerald-600"
+                              : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              toggleSantriSelection(s.id);
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-xs text-slate-800 dark:text-slate-100 truncate">
+                                {s.nama_lengkap}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                                ({s.kode})
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                              <span className="font-medium text-slate-600 dark:text-slate-300">
+                                {s.halaqoh || `Kelas ${s.halaqoh_kelas || 1}`}
+                              </span>
+                              <span>•</span>
+                              <span className="text-emerald-700 dark:text-emerald-400">
+                                {pembimbingNama}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                              {kamarStr}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Kolom Kanan: Drawer Riwayat (Kegiatan & Juz Baru) */}
+              <div className="lg:col-span-5 flex flex-col bg-slate-50/50 dark:bg-slate-900/50 min-h-0 overflow-y-auto">
+                {previewSantri ? (
+                  <div className="flex flex-col h-full">
+                    {/* Header Preview Santri */}
+                    <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-700 dark:text-emerald-400">
+                          Riwayat Santri Terpilih
+                        </span>
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">
+                          {previewSantri.nama_lengkap}
+                        </h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          <HalaqohBadge kelas={previewSantri.halaqoh_kelas} bagian={previewSantri.halaqoh_bagian} />
+                          <span className="text-[11px] font-mono font-bold text-slate-600 dark:text-slate-300">
+                            Kamar {formatKamarDisplay(previewSantri.kode_kamar, previewSantri.kamar)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Tab Riwayat: Kegiatan vs Juz Baru */}
+                      <div className="flex items-center gap-2 mt-3 border-t border-slate-100 dark:border-slate-800 pt-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewTab("kegiatan")}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition text-center ${
+                            previewTab === "kegiatan"
+                              ? "bg-emerald-800 text-white shadow-xs dark:bg-emerald-700"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+                          }`}
+                        >
+                          Kegiatan (Absen)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewTab("juz_baru")}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition text-center ${
+                            previewTab === "juz_baru"
+                              ? "bg-emerald-800 text-white shadow-xs dark:bg-emerald-700"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+                          }`}
+                        >
+                          Juz Baru (Setoran)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Isi Preview Sesuai Tab */}
+                    <div className="p-4 flex-1 overflow-y-auto">
+                      {previewLoading ? (
+                        <div className="flex flex-col items-center justify-center py-10 gap-2">
+                          <Loader2 className="h-6 w-6 animate-spin text-emerald-700" />
+                          <span className="text-xs text-slate-400">Memuat riwayat santri...</span>
+                        </div>
+                      ) : previewTab === "kegiatan" ? (
+                        <div className="space-y-3">
+                          {/* Rekap Absensi */}
+                          {(() => {
+                            let hadir = 0, alfa = 0, izin = 0, sakit = 0;
+                            previewAbsensi.forEach((a) => {
+                              const st = String(a.status || "").toLowerCase();
+                              if (st === "hadir" || st === "h") hadir++;
+                              else if (st === "alfa" || st === "a") alfa++;
+                              else if (st === "izin" || st === "i") izin++;
+                              else if (st === "sakit" || st === "s") sakit++;
+                            });
+                            return (
+                              <div className="grid grid-cols-4 gap-2">
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2 text-center dark:border-emerald-900 dark:bg-emerald-950/40">
+                                  <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">Hadir</div>
+                                  <div className="text-sm font-bold font-mono text-emerald-900 dark:text-emerald-200">{hadir}</div>
+                                </div>
+                                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-center dark:border-rose-900 dark:bg-rose-950/40">
+                                  <div className="text-[10px] font-semibold text-rose-700 dark:text-rose-400">Alfa</div>
+                                  <div className="text-sm font-bold font-mono text-rose-900 dark:text-rose-200">{alfa}</div>
+                                </div>
+                                <div className="rounded-xl border border-amber-200 bg-amber-50 p-2 text-center dark:border-amber-900 dark:bg-amber-950/40">
+                                  <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-400">Izin</div>
+                                  <div className="text-sm font-bold font-mono text-amber-900 dark:text-amber-200">{izin}</div>
+                                </div>
+                                <div className="rounded-xl border border-sky-200 bg-sky-50 p-2 text-center dark:border-sky-900 dark:bg-sky-950/40">
+                                  <div className="text-[10px] font-semibold text-sky-700 dark:text-sky-400">Sakit</div>
+                                  <div className="text-sm font-bold font-mono text-sky-900 dark:text-sky-200">{sakit}</div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* List Riwayat Absensi */}
+                          <div className="space-y-1.5 pt-1">
+                            <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                              Riwayat Absensi Terakhir:
+                            </span>
+                            {previewAbsensi.length === 0 ? (
+                              <p className="text-xs text-slate-400 italic py-2">Belum ada data absensi untuk santri ini.</p>
+                            ) : (
+                              <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+                                {previewAbsensi.slice(0, 15).map((a, idx) => (
+                                  <div
+                                    key={a.id || idx}
+                                    className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700/50 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                                      <span className="font-mono text-slate-700 dark:text-slate-300">{a.tanggal}</span>
+                                      <span className="capitalize text-[10px] text-slate-400">({a.sesi})</span>
+                                    </div>
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                        a.status === "hadir"
+                                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                          : a.status === "alfa"
+                                          ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                                          : a.status === "izin"
+                                          ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                                          : "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300"
+                                      }`}
+                                    >
+                                      {a.status}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {/* Rekap Setoran Juz Baru */}
+                          {(() => {
+                            const totalJuz = previewSetoran.reduce(
+                              (sum, s) => sum + Number(s.jumlah_juz_tambahan || 0),
+                              0
+                            );
+                            return (
+                              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 flex items-center justify-between dark:border-emerald-900 dark:bg-emerald-950/40">
+                                <div>
+                                  <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                                    Total Tambahan Juz Baru
+                                  </div>
+                                  <div className="text-lg font-bold font-mono text-emerald-900 dark:text-emerald-200">
+                                    {Number(totalJuz.toFixed(2))} Juz
+                                  </div>
+                                </div>
+                                <span className="rounded-full bg-white dark:bg-slate-800 px-2.5 py-1 text-xs font-bold text-slate-700 dark:text-slate-300 shadow-xs border border-slate-200 dark:border-slate-700">
+                                  {previewSetoran.length} Catatan
+                                </span>
+                              </div>
+                            );
+                          })()}
+
+                          {/* List Riwayat Setoran */}
+                          <div className="space-y-1.5 pt-1">
+                            <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                              Riwayat Setoran Juz Baru:
+                            </span>
+                            {previewSetoran.length === 0 ? (
+                              <p className="text-xs text-slate-400 italic py-2">Belum ada riwayat setoran juz baru untuk santri ini.</p>
+                            ) : (
+                              <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+                                {previewSetoran.map((s, idx) => (
+                                  <div
+                                    key={s.id || idx}
+                                    className="p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700/50 text-xs space-y-0.5"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-mono text-slate-600 dark:text-slate-400">{s.tanggal}</span>
+                                      <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                                        +{s.jumlah_juz_tambahan} Juz
+                                      </span>
+                                    </div>
+                                    {s.catatan && (
+                                      <p className="text-[11px] text-slate-500 dark:text-slate-400 italic truncate">
+                                        {s.catatan}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-xs text-slate-400 flex flex-col items-center justify-center h-full">
+                    <Info className="h-8 w-8 text-slate-300 mb-2" />
+                    <p>Klik salah satu santri di tabel untuk melihat riwayat Kegiatan dan Juz Baru di sini.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer Modal Pendaftaran */}
+            <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                <strong className="text-emerald-800 dark:text-emerald-400 font-bold">{selectedSantriIds.size}</strong> santri dipilih untuk didaftarkan
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDaftarModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDaftar}
+                  disabled={selectedSantriIds.size === 0}
+                  className="px-5 py-2 text-xs font-bold rounded-xl bg-emerald-800 text-white hover:bg-emerald-900 disabled:opacity-40 disabled:cursor-not-allowed shadow transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
+                >
+                  Daftarkan ({selectedSantriIds.size}) Santri
+                </button>
+              </div>
             </div>
           </div>
         </div>
