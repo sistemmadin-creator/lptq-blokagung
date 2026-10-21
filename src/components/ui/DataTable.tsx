@@ -30,8 +30,10 @@ interface DataTableProps<TData> {
   emptyDescription?: string;
   page?: number;
   pageSize?: number;
+  pageSizeOptions?: number[];
   totalCount?: number;
   onPageChange?: (newPage: number) => void;
+  onPageSizeChange?: (newPageSize: number) => void;
   onRowClick?: (row: TData) => void;
 
   // Fitur Select & Hapus Massal
@@ -43,6 +45,19 @@ interface DataTableProps<TData> {
   onDeleteAll?: () => Promise<void> | void;
 }
 
+function getPageNumbers(current: number, total: number): (number | "...")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, "...", total];
+  }
+  if (current >= total - 3) {
+    return [1, "...", total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, "...", current - 1, current, current + 1, "...", total];
+}
+
 export function DataTable<TData>({
   columns,
   data,
@@ -52,9 +67,11 @@ export function DataTable<TData>({
   emptyTitle = "Belum ada data tercatat",
   emptyDescription = "Gunakan tombol Tambah atau Impor Excel di atas untuk mulai mengisi data.",
   page = 1,
-  pageSize = 25,
+  pageSize = 15,
+  pageSizeOptions = [10, 15, 25, 50],
   totalCount,
   onPageChange,
+  onPageSizeChange,
   onRowClick,
   enableSelection = true,
   selectedIds: controlledSelectedIds,
@@ -66,6 +83,44 @@ export function DataTable<TData>({
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [showColMenu, setShowColMenu] = useState(false);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
+
+  // State pagination internal jika tidak dikontrol secara eksternal
+  const [internalPage, setInternalPage] = useState(1);
+  const [internalPageSize, setInternalPageSize] = useState(pageSize || 15);
+
+  const isControlled = onPageChange !== undefined;
+  const activePage = isControlled ? (page || 1) : internalPage;
+  const activePageSize = isControlled ? (pageSize || 15) : internalPageSize;
+  const effectiveTotal = isControlled
+    ? typeof totalCount === "number"
+      ? totalCount
+      : data.length
+    : data.length;
+  const totalPages = Math.max(1, Math.ceil(effectiveTotal / activePageSize));
+
+  const displayData = useMemo(() => {
+    if (isControlled) return data;
+    const start = (activePage - 1) * activePageSize;
+    return data.slice(start, start + activePageSize);
+  }, [data, isControlled, activePage, activePageSize]);
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > totalPages) return;
+    if (isControlled) {
+      onPageChange?.(newPage);
+    } else {
+      setInternalPage(newPage);
+    }
+  };
+
+  const handlePageSizeChange = (newSize: number) => {
+    if (onPageSizeChange) {
+      onPageSizeChange(newSize);
+    } else {
+      setInternalPageSize(newSize);
+      setInternalPage(1);
+    }
+  };
 
   // State seleksi baris (internal jika tidak di-control dari luar)
   const [internalSelectedIds, setInternalSelectedIds] = useState<string[]>([]);
@@ -157,15 +212,12 @@ export function DataTable<TData>({
   }, [enableSelection, columns, isAllCurrentPageSelected, selectedIds, getRowId, handleToggleSelectAll, handleToggleRow]);
 
   const table = useReactTable({
-    data,
+    data: displayData,
     columns: tableColumns,
     state: { columnVisibility },
     onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
   });
-
-  const totalPages =
-    typeof totalCount === "number" ? Math.max(1, Math.ceil(totalCount / pageSize)) : 1;
 
   // Eksekusi hapus terpilih
   const handleConfirmDeleteSelected = async () => {
@@ -398,34 +450,76 @@ export function DataTable<TData>({
         )}
       </div>
 
-      {/* Pagination */}
-      {onPageChange && typeof totalCount === "number" && totalCount > 0 && (
-        <div className="no-print flex flex-wrap items-center justify-between gap-2 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400">
-          <span>
-            Halaman <strong className="text-slate-900 dark:text-white">{page}</strong> dari{" "}
-            <strong className="text-slate-900 dark:text-white">{totalPages}</strong>
-          </span>
-          <div className="flex items-center gap-1.5 font-bold">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => onPageChange(page - 1)}
-              className="inline-flex min-h-[40px] items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 disabled:opacity-50"
+      {/* Pagination Bar Terpadu (10, 15, 25, 50 & Tombol Halaman 1, 2, 3...) */}
+      {effectiveTotal > 0 && (
+        <div className="no-print flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>Tampilkan</span>
+            <select
+              value={activePageSize}
+              onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+              aria-label="Pilih jumlah baris per halaman"
+              className="h-8 rounded-xl border border-slate-300 bg-white px-2.5 text-xs font-bold text-slate-800 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
-              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-              <span>Sebelumnya</span>
-            </button>
-            <span className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl bg-brand text-white text-xs font-mono">
-              {page}
+              {pageSizeOptions.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+            <span>baris per halaman</span>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
+            <span>
+              Menampilkan{" "}
+              <strong className="text-slate-900 dark:text-white">
+                {(activePage - 1) * activePageSize + 1}
+              </strong>{" "}
+              -{" "}
+              <strong className="text-slate-900 dark:text-white">
+                {Math.min(activePage * activePageSize, effectiveTotal)}
+              </strong>{" "}
+              dari <strong className="text-slate-900 dark:text-white">{effectiveTotal}</strong> baris data
             </span>
+          </div>
+
+          <div className="flex items-center gap-1 font-semibold">
             <button
               type="button"
-              disabled={page >= totalPages}
-              onClick={() => onPageChange(page + 1)}
-              className="inline-flex min-h-[40px] items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 disabled:opacity-50"
+              disabled={activePage <= 1}
+              onClick={() => handlePageChange(activePage - 1)}
+              title="Halaman Sebelumnya"
+              className="inline-flex h-8 px-2.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
             >
-              <span>Berikutnya</span>
-              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            {getPageNumbers(activePage, totalPages).map((p, idx) =>
+              p === "..." ? (
+                <span key={`ell-${idx}`} className="px-1 text-slate-400 select-none">
+                  ...
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => handlePageChange(Number(p))}
+                  className={`h-8 min-w-[32px] px-2 rounded-xl font-mono text-xs transition ${
+                    activePage === p
+                      ? "bg-emerald-800 text-white font-bold shadow-xs"
+                      : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            )}
+            <button
+              type="button"
+              disabled={activePage >= totalPages}
+              onClick={() => handlePageChange(activePage + 1)}
+              title="Halaman Berikutnya"
+              className="inline-flex h-8 px-2.5 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            >
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         </div>
