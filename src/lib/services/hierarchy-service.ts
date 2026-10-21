@@ -311,10 +311,11 @@ export async function saveHierarchyRules(rules: HierarchyRule[]): Promise<void> 
 }
 
 /**
- * Format penggabungan Kode dan Kamar untuk tampilan ringkas pada kartu halaqoh.
- * Contoh: Kode "E", Kamar "1" atau "01" -> "E1"
- *         Kode "E", Kamar "03" -> "E3"
- *         Kode "-", Kamar "03" -> "3"
+ * Format penggabungan Kode dan Kamar untuk tampilan ringkas (misal: Kode "E", Kamar "03" -> "E03").
+ * Contoh: Kode "E", Kamar "03" -> "E03"
+ *         Kode "T", Kamar "02" -> "T02"
+ *         Kode "MD", Kamar "07" -> "MD07"
+ *         Kode "-", Kamar "03" -> "03"
  *         Kode "-", Kamar "-"  -> "-"
  */
 export function formatKamarDisplay(
@@ -322,19 +323,14 @@ export function formatKamarDisplay(
   kamar?: string | null
 ): string {
   const cleanKode = (kodeKamar || "").trim();
-  const cleanKamarRaw = (kamar || "").trim();
+  const cleanKamar = (kamar || "").trim();
   const hasKode = cleanKode !== "" && cleanKode !== "-";
-  const hasKamar = cleanKamarRaw !== "" && cleanKamarRaw !== "-";
+  const hasKamar = cleanKamar !== "" && cleanKamar !== "-";
 
   if (!hasKode && !hasKamar) return "-";
   if (hasKode && !hasKamar) return cleanKode;
+  if (!hasKode && hasKamar) return cleanKamar;
 
-  // Hapus angka 0 di depan jika digit angka murni, misal "01" -> "1", "03" -> "3"
-  const normalizedKamar = cleanKamarRaw.replace(/^0+(?=\d)/, "");
-
-  if (hasKode) {
-    return `${cleanKode}${normalizedKamar}`;
-  }
-  return normalizedKamar;
+  return `${cleanKode}${cleanKamar}`;
 }
 
