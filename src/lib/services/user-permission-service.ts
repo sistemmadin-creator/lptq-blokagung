@@ -82,10 +82,10 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
   },
   {
     key: "user_management",
-    label: "Kelola Pengguna",
-    description: "Manajemen akun, kata sandi, dan otoritas hak akses sistem.",
+    label: "Pengaturan",
+    description: "Pusat pengaturan sistem, logo, background, standar KKM, dan hak akses.",
     group: "Sistem",
-    path: "/pengaturan/pengguna",
+    path: "/pengaturan",
   },
 ];
 
@@ -215,7 +215,7 @@ export function mapPathToModule(pathname: string): ModuleKey | null {
     return "khotmil_30";
   if (pathname.startsWith("/alat/flyer-khataman")) return "flyer";
   if (pathname.startsWith("/alat/kirim-wa")) return "wa";
-  if (pathname.startsWith("/pengaturan/pengguna")) return "user_management";
+  if (pathname.startsWith("/pengaturan")) return "user_management";
   return null;
 }
 
