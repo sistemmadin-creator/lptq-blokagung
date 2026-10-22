@@ -92,8 +92,13 @@ export default function LoginPage() {
         style={{ opacity: branding.login_bg_overlay / 100 }}
       />
 
-      {/* Kartu Login Minimalis Modern - Glassmorphism */}
-      <div className="relative z-10 w-full max-w-sm rounded-3xl border border-white/50 bg-white/60 p-6 sm:p-8 shadow-[0_8px_32px_0_rgba(0,0,0,0.28)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/60 dark:shadow-[0_8px_32px_0_rgba(0,0,0,0.6)]">
+      {/* Kartu Login Minimalis Modern - Glassmorphism Dinamis */}
+      <div
+        className="relative z-10 w-full max-w-sm rounded-3xl border border-white/50 p-6 sm:p-8 shadow-[0_8px_32px_0_rgba(0,0,0,0.28)] backdrop-blur-xl dark:border-white/10 dark:shadow-[0_8px_32px_0_rgba(0,0,0,0.6)] transition-all duration-300"
+        style={{
+          backgroundColor: `rgba(255, 255, 255, ${(branding.login_card_opacity ?? 60) / 100})`,
+        }}
+      >
         
         {/* Baris 1 & 2: LOGO dan LPTQ Blokagung */}
         <div className="flex flex-col items-center justify-center text-center mb-6">
