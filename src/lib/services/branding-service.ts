@@ -7,6 +7,7 @@ export interface AppBrandingConfig {
   favicon_url: string | null;    // Base64 atau URL path favicon
   login_bg_url: string | null;   // URL foto latar belakang login
   login_bg_overlay: number;      // Opacity overlay (30 - 85, default 65)
+  login_card_opacity: number;    // Opasitas kotak kartu login (10 - 100, default 60)
   kkm_khotmil: number;           // Standar KKM (default 85)
   target_setoran: number;        // Target setoran per bulan (default 3 juz)
   active_year: number;           // Tahun penilaian aktif (default 2026)
@@ -20,6 +21,7 @@ export const DEFAULT_BRANDING: AppBrandingConfig = {
   favicon_url: null,
   login_bg_url: "/images/login-bg.jpg",
   login_bg_overlay: 65,
+  login_card_opacity: 60,
   kkm_khotmil: 85,
   target_setoran: 3,
   active_year: 2026,
