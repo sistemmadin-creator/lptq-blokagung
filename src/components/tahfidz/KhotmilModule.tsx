@@ -41,7 +41,10 @@ import {
   fetchPembimbingMap,
   fetchKhotmilRegisteredSantriIds,
   fetchSantriSetoranDetailTahun,
+  fetchCurrentUserProfile,
 } from "@/lib/services/tahfidz-service";
+import { canUserEdit } from "@/lib/services/user-permission-service";
+import type { Profile, ModuleKey } from "@/types/database";
 import {
   KKM_DEFAULT,
   type JenisKhotmil,
@@ -129,6 +132,15 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
   const [nilaiMap, setNilaiMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [profile, setProfile] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    fetchCurrentUserProfile().then(setProfile);
+  }, []);
+
+  const currentModuleKey: ModuleKey = jenis === "khotmil15" ? "khotmil_15" : "khotmil_30";
+  const canEdit = profile ? (profile.role === "admin" || canUserEdit(profile.permissions, currentModuleKey)) : true;
 
   // State Modal Pendaftaran Khotmil
   const [daftarModalOpen, setDaftarModalOpen] = useState(false);
@@ -648,30 +660,34 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
       {/* Bilah Toolbar yang Disederhanakan 1 Baris */}
       <div className="no-print flex flex-wrap sm:flex-nowrap items-center gap-2">
         {/* Tombol Scan LJK Kamera (Client-Side OMR) */}
-        <button
-          type="button"
-          onClick={() => setCameraScannerModalOpen(true)}
-          title="Scan Lembar LJK via Kamera Browser (Client-Side OMR)"
-          aria-label="Scan Lembar LJK via Kamera Browser"
-          className="flex h-11 items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shrink-0"
-        >
-          <Camera className="h-4 w-4" />
-          <span className="hidden sm:inline">Scan LJK</span>
-          <span className="sm:hidden">Scan</span>
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => setCameraScannerModalOpen(true)}
+            title="Scan Lembar LJK via Kamera Browser (Client-Side OMR)"
+            aria-label="Scan Lembar LJK via Kamera Browser"
+            className="flex h-11 items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shrink-0"
+          >
+            <Camera className="h-4 w-4" />
+            <span className="hidden sm:inline">Scan LJK</span>
+            <span className="sm:hidden">Scan</span>
+          </button>
+        )}
 
         {/* Tombol Daftar Khotmil (Issue #4) */}
-        <button
-          type="button"
-          onClick={handleOpenDaftarModal}
-          title="Daftar Santri Khotmil"
-          aria-label="Daftar Santri Khotmil"
-          className="flex h-11 items-center gap-1.5 rounded-xl bg-emerald-800 px-3.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shrink-0 dark:bg-emerald-700 dark:hover:bg-emerald-800"
-        >
-          <UserPlus className="h-4 w-4" />
-          <span className="hidden sm:inline">Daftar Khotmil</span>
-          <span className="sm:hidden">Daftar</span>
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={handleOpenDaftarModal}
+            title="Daftar Santri Khotmil"
+            aria-label="Daftar Santri Khotmil"
+            className="flex h-11 items-center gap-1.5 rounded-xl bg-emerald-800 px-3.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shrink-0 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+          >
+            <UserPlus className="h-4 w-4" />
+            <span className="hidden sm:inline">Daftar Khotmil</span>
+            <span className="sm:hidden">Daftar</span>
+          </button>
+        )}
 
         {/* Tombol Pintasan ke Rekap Khotmil */}
         <Link
@@ -855,7 +871,7 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                   ))}
                   <th className="px-3 py-2.5 font-semibold text-center font-mono">Rata-rata</th>
                   <th className="px-3 py-2.5 font-semibold text-center">Status KKM</th>
-                  <th className="no-print px-3 py-2.5 font-semibold text-center w-28">Aksi</th>
+                  {canEdit && <th className="no-print px-3 py-2.5 font-semibold text-center w-28">Aksi</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -887,10 +903,12 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                               min="0"
                               max="100"
                               step="1"
+                              disabled={!canEdit}
                               key={`${s.id}_${j}_${typeof n === "number" ? n : ""}`}
                               defaultValue={typeof n === "number" ? n : ""}
                               placeholder="-"
                               onBlur={(e) => {
+                                if (!canEdit) return;
                                 const text = e.target.value.trim();
                                 if (text === "") return;
                                 const num = Number(text);
@@ -903,8 +921,8 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                                   (e.target as HTMLInputElement).blur();
                                 }
                               }}
-                              className="h-8 w-12 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
-                              title={`Ubah nilai Juz ${j} ${s.nama_lengkap} (0-100)`}
+                              className="h-8 w-12 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition disabled:opacity-80 disabled:cursor-not-allowed"
+                              title={canEdit ? `Ubah nilai Juz ${j} ${s.nama_lengkap} (0-100)` : `Nilai Juz ${j}: ${typeof n === "number" ? n : "-"}`}
                             />
                           </td>
                         );
@@ -923,27 +941,29 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                           </span>
                         )}
                       </td>
-                      <td className="no-print px-3 py-2 text-center whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => openScoreModal(s)}
-                            className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                            title="Input / Edit Lengkap"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            <span>Edit</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleUnregisterSantri(s.id, s.nama_lengkap)}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition dark:border-slate-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
-                            title={`Keluarkan ${s.nama_lengkap} dari daftar`}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
+                      {canEdit && (
+                        <td className="no-print px-3 py-2 text-center whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openScoreModal(s)}
+                              className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                              title="Input / Edit Lengkap"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleUnregisterSantri(s.id, s.nama_lengkap)}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition dark:border-slate-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                              title={`Keluarkan ${s.nama_lengkap} dari daftar`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
