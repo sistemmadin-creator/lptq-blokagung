@@ -27,7 +27,11 @@ import {
   Eye,
   Info,
   Award,
+  Camera,
+  FileText,
 } from "lucide-react";
+import { KhotmilLjkPrintModal } from "@/components/tahfidz/KhotmilLjkPrintModal";
+import { KhotmilCameraScannerModal } from "@/components/tahfidz/KhotmilCameraScannerModal";
 import { useReactToPrint } from "react-to-print";
 import {
   fetchAllSantriFiltered,
@@ -107,6 +111,8 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
 
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
+  const [ljkPrintModalOpen, setLjkPrintModalOpen] = useState(false);
+  const [cameraScannerModalOpen, setCameraScannerModalOpen] = useState(false);
 
   // Status Impor Excel
   const [importing, setImporting] = useState(false);
@@ -359,11 +365,13 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
         if (filterModalOpen) setFilterModalOpen(false);
         if (excelModalOpen) setExcelModalOpen(false);
         if (daftarModalOpen) setDaftarModalOpen(false);
+        if (ljkPrintModalOpen) setLjkPrintModalOpen(false);
+        if (cameraScannerModalOpen) setCameraScannerModalOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [editingSantri, filterModalOpen, excelModalOpen, daftarModalOpen]);
+  }, [editingSantri, filterModalOpen, excelModalOpen, daftarModalOpen, ljkPrintModalOpen, cameraScannerModalOpen]);
 
   // Hook cetak PDF via react-to-print
   const handlePrint = useReactToPrint({
@@ -573,6 +581,19 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
 
       {/* Bilah Toolbar yang Disederhanakan 1 Baris */}
       <div className="no-print flex flex-wrap sm:flex-nowrap items-center gap-2">
+        {/* Tombol Scan LJK Kamera (Client-Side OMR) */}
+        <button
+          type="button"
+          onClick={() => setCameraScannerModalOpen(true)}
+          title="Scan Lembar LJK via Kamera Browser (Client-Side OMR)"
+          aria-label="Scan Lembar LJK via Kamera Browser"
+          className="flex h-11 items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shrink-0"
+        >
+          <Camera className="h-4 w-4" />
+          <span className="hidden sm:inline">Scan LJK</span>
+          <span className="sm:hidden">Scan</span>
+        </button>
+
         {/* Tombol Daftar Khotmil (Issue #4) */}
         <button
           type="button"
@@ -661,11 +682,23 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
         <button
           type="button"
           onClick={handlePrint}
-          title="Cetak / Unduh PDF"
-          aria-label="Cetak / Unduh PDF"
+          title="Cetak Tabel / Unduh PDF"
+          aria-label="Cetak Tabel / Unduh PDF"
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
         >
           <Printer className="h-5 w-5" />
+        </button>
+
+        {/* Tombol Cetak Lembar LJK OMR Standar */}
+        <button
+          type="button"
+          onClick={() => setLjkPrintModalOpen(true)}
+          title="Cetak Lembar LJK OMR Standar (PDF Siap Print)"
+          aria-label="Cetak Lembar LJK OMR Standar"
+          className="flex h-11 items-center gap-1.5 rounded-xl border border-emerald-700/40 bg-emerald-50 px-3 text-xs font-bold text-emerald-900 shadow-sm transition hover:bg-emerald-100 hover:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shrink-0 dark:border-emerald-600/50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+        >
+          <FileText className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
+          <span className="hidden sm:inline">Cetak LJK</span>
         </button>
 
         {/* Indikator Ringkas Tuntas & Belum Tuntas */}
@@ -1555,6 +1588,26 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
           </div>
         </div>
       )}
+
+      {/* POP-UP 5: MODAL CETAK LEMBAR LJK OMR STANDAR */}
+      <KhotmilLjkPrintModal
+        isOpen={ljkPrintModalOpen}
+        onClose={() => setLjkPrintModalOpen(false)}
+        santriList={santriList}
+        currentTahapCfg={currentTahapCfg}
+        jenis={jenis}
+        judul={judul}
+      />
+
+      {/* POP-UP 6: MODAL SCANNER KAMERA BROWSER (CLIENT-SIDE OMR) */}
+      <KhotmilCameraScannerModal
+        isOpen={cameraScannerModalOpen}
+        onClose={() => setCameraScannerModalOpen(false)}
+        jenis={jenis}
+        judul={judul}
+        currentTahapCfg={currentTahapCfg}
+        onSuccessSave={loadData}
+      />
     </div>
   );
 }
