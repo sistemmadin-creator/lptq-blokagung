@@ -55,6 +55,13 @@ import {
   parseExcelFileWithValidation,
 } from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
+import {
+  getWahaConfig,
+  sendWahaImage,
+  compileMessage,
+  saveDeliveryLog,
+  formatPhoneNumber,
+} from "@/lib/services/waha-service";
 
 export interface KhotmilModuleProps {
   jenis: JenisKhotmil;
@@ -450,6 +457,65 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
         "success",
         `Nilai ${editingSantri.nama_lengkap} (${currentTahapCfg.label}) berhasil disimpan.`
       );
+
+      // Otomasi Pengiriman Kartu Rapor ke WhatsApp Wali Santri (jika diaktifkan di Pengaturan WAHA)
+      try {
+        const wahaCfg = getWahaConfig();
+        if (wahaCfg.autoSendOnScore && editingSantri.no_wa) {
+          const totalVal = payload.reduce((sum, p) => sum + p.nilai, 0);
+          const avgVal = Number((totalVal / payload.length).toFixed(1));
+          const isTuntas =
+            avgVal >= KKM_DEFAULT && payload.length >= currentTahapCfg.juzList.length;
+          const scoresStr = payload.map((p) => `Juz ${p.juz}:${p.nilai}`).join(",");
+          const origin = typeof window !== "undefined" ? window.location.origin : "";
+          const params = new URLSearchParams({
+            nama: editingSantri.nama_lengkap,
+            asrama: editingSantri.asrama || "-",
+            kamar: editingSantri.kamar || "-",
+            program: jenis === "khotmil30" ? "Khotmil 30 Juz" : "Khotmil 15 Juz",
+            tahap: `${currentTahapCfg.label} (${currentTahapCfg.rentangLabel})`,
+            rataRata: String(avgVal),
+            kkm: isTuntas ? "TUNTAS" : "BELUM TUNTAS",
+            scores: scoresStr,
+            tanggal: new Date().toLocaleDateString("id-ID"),
+            catatan: isTuntas
+              ? "Lulus dengan baik, pertahankan kelancaran hafalan."
+              : "Perlu bimbingan dan pengulangan muraja'ah.",
+          });
+          const imgUrl = `${origin}/api/og/rapor-evaluasi?${params.toString()}`;
+          const textMsg = compileMessage(wahaCfg.messageTemplate, {
+            nama: editingSantri.nama_lengkap,
+            asrama: editingSantri.asrama || "-",
+            kamar: editingSantri.kamar || "-",
+            program: jenis === "khotmil30" ? "Khotmil 30 Juz" : "Khotmil 15 Juz",
+            tahap: `${currentTahapCfg.label} (${currentTahapCfg.rentangLabel})`,
+            rata_rata: String(avgVal),
+            status: isTuntas ? "TUNTAS (LULUS TAHAP)" : "BELUM TUNTAS (REMIDI)",
+            catatan: isTuntas
+              ? "Lulus dengan baik, pertahankan kelancaran hafalan."
+              : "Perlu bimbingan dan pengulangan muraja'ah.",
+          });
+
+          sendWahaImage(wahaCfg, editingSantri.no_wa, imgUrl, textMsg)
+            .then((res) => {
+              if (res.success) {
+                saveDeliveryLog({
+                  santriId: editingSantri.id,
+                  namaSantri: editingSantri.nama_lengkap,
+                  noWa: formatPhoneNumber(editingSantri.no_wa || ""),
+                  jenis,
+                  tahap: activeTahap,
+                  status: "success",
+                });
+                showToast("success", `Rapor otomatis terkirim via WhatsApp ke nomor wali!`);
+              }
+            })
+            .catch((err) => console.error("Auto WA send failed", err));
+        }
+      } catch (autoErr) {
+        console.error("Gagal menjalankan auto-send WA", autoErr);
+      }
+
       setEditingSantri(null);
       loadData();
     } catch (err) {
