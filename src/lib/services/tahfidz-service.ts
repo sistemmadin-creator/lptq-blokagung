@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { normalizePermissions } from "@/lib/services/user-permission-service";
 import type {
   AbsensiRecord,
   JenisKhotmil,
@@ -41,15 +42,50 @@ export async function fetchCurrentUserProfile(): Promise<Profile | null> {
     .eq("user_id", user.id)
     .single();
 
-  if (data) return data as Profile;
+  // Ambil perizinan pengguna dari app_settings
+  let customPermissions = null;
+  let customUsername = user.user_metadata?.username;
+  let customStatus: "active" | "suspended" = user.user_metadata?.status || "active";
+
+  try {
+    const { data: permSetting } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "USER_PERMISSIONS")
+      .maybeSingle();
+
+    if (permSetting?.value && permSetting.value[user.id]) {
+      const uData = permSetting.value[user.id];
+      if (uData.permissions) customPermissions = uData.permissions;
+      if (uData.username) customUsername = uData.username;
+      if (uData.status) customStatus = uData.status;
+    }
+  } catch {
+    // Lewati jika belum terpasang
+  }
+
+  const role = (data?.role || "viewer") as Profile["role"];
+  const finalPermissions = normalizePermissions(customPermissions, role);
+
+  if (data) {
+    return {
+      ...(data as Profile),
+      username: customUsername || (data.email ? data.email.split("@")[0] : "pengguna"),
+      permissions: finalPermissions,
+      status: customStatus,
+    };
+  }
 
   return {
     user_id: user.id,
     email: user.email ?? null,
-    nama: user.email ? user.email.split("@")[0] : "Pengguna",
-    role: "viewer",
+    username: customUsername || (user.email ? user.email.split("@")[0] : "pengguna"),
+    nama: user.user_metadata?.nama || (user.email ? user.email.split("@")[0] : "Pengguna"),
+    role,
     halaqoh_kelas: null,
     halaqoh_bagian: null,
+    permissions: finalPermissions,
+    status: customStatus,
     created_at: new Date().toISOString(),
   };
 }
