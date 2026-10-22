@@ -605,9 +605,14 @@ function PengaturanContent() {
                   className="absolute inset-0 bg-gradient-to-b from-slate-950 via-emerald-950 to-slate-950 transition-all duration-300"
                   style={{ opacity: branding.login_bg_overlay / 100 }}
                 />
-                <div className="relative z-10 px-4 py-2 rounded-xl bg-white/95 text-slate-900 text-center shadow-xl border border-white/20">
+                <div
+                  className="relative z-10 px-5 py-3 rounded-2xl text-slate-900 text-center shadow-2xl border border-white/50 backdrop-blur-md transition-all"
+                  style={{
+                    backgroundColor: `rgba(255, 255, 255, ${(branding.login_card_opacity ?? 60) / 100})`,
+                  }}
+                >
                   <span className="text-xs font-black block">LPTQ Blokagung</span>
-                  <span className="text-[10px] text-slate-500">Pratinjau Kartu Login</span>
+                  <span className="text-[10px] text-slate-600 font-semibold">Pratinjau Kartu Login ({branding.login_card_opacity ?? 60}%)</span>
                 </div>
               </div>
 
@@ -629,6 +634,7 @@ function PengaturanContent() {
                         ...prev,
                         login_bg_url: "/images/login-bg.jpg",
                         login_bg_overlay: 65,
+                        login_card_opacity: 60,
                       }))
                     }
                     className="text-xs text-slate-500 hover:text-brand underline"
@@ -656,6 +662,38 @@ function PengaturanContent() {
                   <span className="text-[10px] text-slate-400 block mt-0.5">
                     Makin tinggi persentase, kartu login di tengah makin kontras dan nyaman dibaca.
                   </span>
+                </div>
+
+                {/* Kontrol Opasitas / Transparansi Kotak Kartu Login */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    <span>Transparansi Kotak Kartu Login (Glass Opacity)</span>
+                    <span className="font-mono text-brand font-black">
+                      {branding.login_card_opacity ?? 60}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={branding.login_card_opacity ?? 60}
+                    onChange={(e) =>
+                      setBranding((prev) => ({ ...prev, login_card_opacity: Number(e.target.value) }))
+                    }
+                    className="w-full accent-brand cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                    <span>10% (Kaca Bening)</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                      {(branding.login_card_opacity ?? 60) <= 35
+                        ? "Transparan Terang"
+                        : (branding.login_card_opacity ?? 60) <= 75
+                        ? "Frosted Seimbang (Glass)"
+                        : "Putih Solid Pekat"}
+                    </span>
+                    <span>100% (Solid Pekat)</span>
+                  </div>
                 </div>
               </div>
             </div>
