@@ -504,7 +504,7 @@ export async function fetchSetoranBulananMerged(
       okt: Number(r.okt ?? 0),
       nov: Number(r.nov ?? 0),
       des: Number(r.des ?? 0),
-      total_setoran: Number(r.total_setoran ?? 0),
+      total_setoran: Math.min(30, Number(r.total_setoran ?? 0)),
     });
   });
 
@@ -534,7 +534,7 @@ export async function fetchSetoranBulananMerged(
       okt: val?.okt ?? 0,
       nov: val?.nov ?? 0,
       des: val?.des ?? 0,
-      total_setoran: val?.total_setoran ?? 0,
+      total_setoran: Math.min(30, val?.total_setoran ?? 0),
     };
   });
 }
