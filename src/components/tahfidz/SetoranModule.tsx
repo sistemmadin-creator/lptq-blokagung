@@ -26,6 +26,7 @@ import {
   Loader2,
   Sparkles,
   Calendar,
+  AlertTriangle,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import { createClient } from "@/lib/supabase/client";
@@ -104,6 +105,13 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   const [selectedNaikHalaqohSantri, setSelectedNaikHalaqohSantri] = useState<SetoranBulananRow | null>(null);
   const [targetHalaqohChoice, setTargetHalaqohChoice] = useState<{ kelas: number; bagian: HalaqohBagian } | null>(null);
   const [submittingNaikHalaqoh, setSubmittingNaikHalaqoh] = useState(false);
+  const [confirmWarningModalOpen, setConfirmWarningModalOpen] = useState(false);
+  const [warningDialogData, setWarningDialogData] = useState<{
+    title: string;
+    desc: string;
+    badge: string;
+    isDanger: boolean;
+  } | null>(null);
 
   const [santriOptions, setSantriOptions] = useState<Santri[]>([]);
   const [rows, setRows] = useState<SetoranBulananRow[]>([]);
@@ -155,7 +163,8 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (naikHalaqohModalOpen) setNaikHalaqohModalOpen(false);
+        if (confirmWarningModalOpen) setConfirmWarningModalOpen(false);
+        else if (naikHalaqohModalOpen) setNaikHalaqohModalOpen(false);
         else if (evaluasiModalOpen) setEvaluasiModalOpen(false);
         else if (modalOpen) setModalOpen(false);
         else if (filterModalOpen) setFilterModalOpen(false);
@@ -163,7 +172,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, filterModalOpen, evaluasiModalOpen, naikHalaqohModalOpen]);
+  }, [modalOpen, filterModalOpen, evaluasiModalOpen, naikHalaqohModalOpen, confirmWarningModalOpen]);
 
   // Kelompokkan data santri dan setoran per halaqoh untuk mode Kartu
   const halaqohGroups = useMemo(() => {
@@ -192,7 +201,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   }, [halaqohGroups, cardPage, cardPageSize]);
 
   // Daftar pilihan halaqoh di atas halaqoh santri saat ini (kelas > currentKelas)
-  // Dilengkapi indikator Rekomendasi (< 5 santri)
+  // KUNCI: Hanya izinkan halaqoh tepat di atasnya (+1) atau maksimal hingga 2-3 tingkat lebihnya (+2, +3)
   const availableHigherHalaqoh = useMemo(() => {
     if (!selectedNaikHalaqohSantri) return [];
     const currentK = Number(selectedNaikHalaqohSantri.halaqoh_kelas) || 1;
@@ -202,9 +211,11 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       santriCount: number;
       isRekomendasi: boolean;
       targetJuz: string;
+      tingkatDiff: number;
     }[] = [];
 
-    HALAQOH_KELAS_LIST.filter((k) => k > currentK).forEach((k) => {
+    // Filter hanya kelas yang lebih tinggi dan maksimal selisih 3 tingkat
+    HALAQOH_KELAS_LIST.filter((k) => k > currentK && k <= currentK + 3).forEach((k) => {
       HALAQOH_BAGIAN_LIST.forEach((b) => {
         const count = santriOptions.filter(
           (s) => Number(s.halaqoh_kelas) === k && s.halaqoh_bagian === b
@@ -215,24 +226,22 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
           santriCount: count,
           isRekomendasi: count < 5, // Kriteria rekomendasi: kurang dari 5 orang
           targetJuz: PEMETAAN_HALAQOH_KELAS[k] || "-",
+          tingkatDiff: k - currentK,
         });
       });
     });
 
-    // Urutkan: Rekomendasi di atas, lalu urut kelas ASC, bagian ASC
+    // Urutkan: Kelas ASC (tingkat tepat di atasnya tampil paling awal), lalu rekomendasi, lalu bagian ASC
     return candidates.sort((a, b) => {
+      if (a.kelas !== b.kelas) return a.kelas - b.kelas;
       if (a.isRekomendasi && !b.isRekomendasi) return -1;
       if (!a.isRekomendasi && b.isRekomendasi) return 1;
-      if (a.kelas !== b.kelas) return a.kelas - b.kelas;
       return a.bagian.localeCompare(b.bagian);
     });
   }, [selectedNaikHalaqohSantri, santriOptions]);
 
-  const handleConfirmNaikHalaqoh = async () => {
-    if (!selectedNaikHalaqohSantri || !targetHalaqohChoice) {
-      showToast("error", "Pilih halaqoh tujuan terlebih dahulu.");
-      return;
-    }
+  const executeConfirmNaikHalaqoh = async () => {
+    if (!selectedNaikHalaqohSantri || !targetHalaqohChoice) return;
 
     setSubmittingNaikHalaqoh(true);
     try {
@@ -251,6 +260,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         "success",
         `Alhamdulillah! ${selectedNaikHalaqohSantri.nama_lengkap} berhasil dipindahkan ke Halaqoh Kelas ${targetHalaqohChoice.kelas} - Bagian ${targetHalaqohChoice.bagian}.`
       );
+      setConfirmWarningModalOpen(false);
       setNaikHalaqohModalOpen(false);
       setEvaluasiModalOpen(false);
       setSelectedNaikHalaqohSantri(null);
@@ -261,6 +271,54 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     } finally {
       setSubmittingNaikHalaqoh(false);
     }
+  };
+
+  const handleInitiateNaikHalaqoh = () => {
+    if (!selectedNaikHalaqohSantri || !targetHalaqohChoice) {
+      showToast("error", "Pilih halaqoh tujuan terlebih dahulu.");
+      return;
+    }
+
+    const currentK = Number(selectedNaikHalaqohSantri.halaqoh_kelas) || 1;
+    const targetK = targetHalaqohChoice.kelas;
+    const tingkatDiff = targetK - currentK;
+    const targetMin = 3;
+    const isTargetMet = selectedNaikHalaqohSantri.total_setoran >= targetMin;
+
+    // Cek apakah ada kondisi yang memerlukan konfirmasi peringatan ulang:
+    // 1. Santri belum mencapai target minimal (< 3 Juz)
+    // 2. Atau memilih loncat 2 atau 3 tingkat (> 1 tingkat)
+    if (!isTargetMet || tingkatDiff > 1) {
+      let title = "Konfirmasi Pemindahan Halaqoh";
+      let desc = "";
+      let badge = "Konfirmasi Ulang";
+
+      if (!isTargetMet && tingkatDiff > 1) {
+        title = "Peringatan: Belum Target & Loncat Tingkat";
+        desc = `Santri "${selectedNaikHalaqohSantri.nama_lengkap}" belum menyelesaikan target minimal hafalan di kelas saat ini (Capaian: ${selectedNaikHalaqohSantri.total_setoran} / ${targetMin} Juz) dan Anda memilih untuk meloncat ${tingkatDiff} tingkat langsung ke Kelas ${targetK} - Bagian ${targetHalaqohChoice.bagian}.\n\nApakah Anda yakin ingin tetap memproses pemindahan ini?`;
+        badge = `Loncat ${tingkatDiff} Tingkat`;
+      } else if (!isTargetMet) {
+        title = "Konfirmasi Kenaikan Manual (Belum Target)";
+        desc = `Santri "${selectedNaikHalaqohSantri.nama_lengkap}" belum menyelesaikan target minimal halaqoh di kelas saat ini (Capaian: ${selectedNaikHalaqohSantri.total_setoran} / ${targetMin} Juz).\n\nApakah Anda yakin ingin tetap menaikkan santri ini ke Kelas ${targetK} - Bagian ${targetHalaqohChoice.bagian}?`;
+        badge = "Target Belum Tuntas";
+      } else {
+        title = "Konfirmasi: Loncat Tingkat Halaqoh";
+        desc = `Santri "${selectedNaikHalaqohSantri.nama_lengkap}" akan dipindahkan meloncat ${tingkatDiff} tingkat (dari Kelas ${currentK} ke Kelas ${targetK} - Bagian ${targetHalaqohChoice.bagian}).\n\nApakah Anda yakin ingin melanjutkan?`;
+        badge = `Loncat ${tingkatDiff} Tingkat`;
+      }
+
+      setWarningDialogData({
+        title,
+        desc,
+        badge,
+        isDanger: !isTargetMet,
+      });
+      setConfirmWarningModalOpen(true);
+      return;
+    }
+
+    // Jika santri sudah tuntas target minimal dan naik tepat 1 tingkat di atasnya, langsung eksekusi
+    executeConfirmNaikHalaqoh();
   };
 
   // Hook cetak PDF via react-to-print
@@ -284,6 +342,18 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   };
 
   const onSubmit = async (values: SetoranFormValues) => {
+    // Validasi batas akumulasi maksimal 30 Juz
+    const currentSantri = rows.find((r) => r.santri_id === values.santri_id);
+    const currentTotal = currentSantri?.total_setoran || 0;
+    if (currentTotal + values.jumlah_juz_tambahan > 30) {
+      const sisa = Math.max(0, Math.round((30 - currentTotal) * 100) / 100);
+      showToast(
+        "error",
+        `Gagal: Akumulasi setoran maksimal adalah 30 Juz. Santri ini sudah mencapai ${currentTotal} Juz (Sisa maksimal yang dapat ditambah: ${sisa} Juz).`
+      );
+      return;
+    }
+
     try {
       await insertSetoranLog({
         santri_id: values.santri_id,
@@ -364,13 +434,43 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     const monthKey = monthKeys[monthNum - 1]?.key;
     if (!monthKey) return;
 
+    if (newVal < 0) {
+      showToast("error", "Jumlah setoran tidak boleh bernilai negatif.");
+      loadData();
+      return;
+    }
+
+    // Cari santri saat ini di state rows atau selectedEvaluasiSantri
+    const currentSantri = rows.find((r) => r.santri_id === santriId);
+    if (!currentSantri) return;
+
+    // Hitung total 11 bulan lainnya (selain bulan yang sedang diubah)
+    const otherMonthsTotal = monthKeys.reduce((sum, m) => {
+      if (m.key === monthKey) return sum;
+      return sum + (Number(currentSantri[m.key]) || 0);
+    }, 0);
+
+    const projectedTotal = Math.round((otherMonthsTotal + newVal) * 100) / 100;
+
+    // KUNCI: Akumulasi setoran dalam setahun tidak boleh melebihi 30 Juz
+    if (projectedTotal > 30) {
+      const maxAllowed = Math.max(0, Math.round((30 - otherMonthsTotal) * 100) / 100);
+      showToast(
+        "error",
+        `Gagal: Akumulasi setoran maksimal adalah 30 Juz (100%). Bulan ${monthKeys[monthNum - 1].label} maksimal hanya dapat diisi ${maxAllowed} Juz.`
+      );
+      loadData();
+      return;
+    }
+
+    const safeTotal = Math.min(30, projectedTotal);
+
     // Optimistic update di list rows utama
     setRows((prev) =>
       prev.map((row) => {
         if (row.santri_id !== santriId) return row;
         const updatedRow = { ...row, [monthKey]: newVal };
-        const newTotal = monthKeys.reduce((sum, k) => sum + (Number(updatedRow[k.key]) || 0), 0);
-        return { ...updatedRow, total_setoran: Math.round(newTotal * 100) / 100 };
+        return { ...updatedRow, total_setoran: safeTotal };
       })
     );
 
@@ -378,8 +478,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     setSelectedEvaluasiSantri((prev) => {
       if (!prev || prev.santri_id !== santriId) return prev;
       const updatedRow = { ...prev, [monthKey]: newVal };
-      const newTotal = monthKeys.reduce((sum, k) => sum + (Number(updatedRow[k.key]) || 0), 0);
-      return { ...updatedRow, total_setoran: Math.round(newTotal * 100) / 100 };
+      return { ...updatedRow, total_setoran: safeTotal };
     });
 
     try {
@@ -1306,8 +1405,9 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
               {/* Status & Progress Target */}
               {(() => {
                 const targetMin = 3;
-                const isCompleted = selectedEvaluasiSantri.total_setoran >= targetMin;
-                const progressPct = Math.min(100, Math.round((selectedEvaluasiSantri.total_setoran / targetMin) * 100));
+                const safeTotal = Math.min(30, selectedEvaluasiSantri.total_setoran);
+                const isCompleted = safeTotal >= targetMin;
+                const progressPct = Math.min(100, Math.round((safeTotal / targetMin) * 100));
 
                 return (
                   <div className="space-y-3">
@@ -1316,7 +1416,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                         {tipe === "evaluasi" ? "Capaian Setoran Evaluasi:" : "Capaian Setoran Juz Baru:"}
                       </span>
                       <span className="font-mono font-bold text-emerald-800 dark:text-emerald-300">
-                        {selectedEvaluasiSantri.total_setoran} / {targetMin} Juz ({progressPct}%)
+                        {safeTotal} / {targetMin} Juz ({progressPct}%)
                       </span>
                     </div>
 
@@ -1340,7 +1440,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                             <p className="text-emerald-700 dark:text-emerald-400">
                               {tipe === "evaluasi"
                                 ? "Santri telah memenuhi target hafalan dan siap dinaikkan ke halaqoh berikutnya."
-                                : `Santri telah mencapai total ${selectedEvaluasiSantri.total_setoran} Juz hafalan baru.`}
+                                : `Santri telah mencapai total ${safeTotal} Juz hafalan baru.`}
                             </p>
                           </div>
                         </div>
@@ -1366,7 +1466,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                             {tipe === "evaluasi" ? "Masih dalam proses hafalan" : "Masih dalam proses setoran juz baru"}
                           </p>
                           <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                            Kurang {(targetMin - selectedEvaluasiSantri.total_setoran).toFixed(2)} Juz untuk menyelesaikan target halaqoh ini.
+                            Kurang {(targetMin - safeTotal).toFixed(2)} Juz untuk menyelesaikan target halaqoh ini.
                           </p>
                         </div>
 
@@ -1501,10 +1601,32 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
             </div>
 
             {/* Keterangan & Kriteria Rekomendasi */}
-            <div className="py-3 border-b border-slate-100 dark:border-slate-800 text-xs shrink-0 space-y-1">
-              <p className="text-slate-600 dark:text-slate-300">
-                Pilih halaqoh tingkat di atasnya untuk memindahkan santri ini.
-              </p>
+            <div className="py-3 border-b border-slate-100 dark:border-slate-800 text-xs shrink-0 space-y-2">
+              {(() => {
+                const targetMin = 3;
+                const safeTotal = Math.min(30, selectedNaikHalaqohSantri.total_setoran);
+                const isTargetMet = safeTotal >= targetMin;
+
+                if (!isTargetMet) {
+                  return (
+                    <div className="flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-amber-900 dark:border-amber-800/80 dark:bg-amber-950/40 dark:text-amber-200">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold text-[11px]">Santri Belum Memenuhi Target Minimal</p>
+                        <p className="text-[10px] text-amber-800 dark:text-amber-300">
+                          Capaian setoran saat ini baru <strong>{safeTotal} / {targetMin} Juz</strong>. Pemindahan ke tingkat atasnya atau loncat tingkat memerlukan konfirmasi ulang.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <p className="text-slate-600 dark:text-slate-300">
+                    Pilih halaqoh tingkat di atasnya untuk memindahkan santri ini.
+                  </p>
+                );
+              })()}
+
               <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium">
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold dark:bg-emerald-950">
                   <Star className="h-3 w-3 fill-emerald-600 text-emerald-600 dark:fill-emerald-400 dark:text-emerald-400" />
@@ -1541,12 +1663,23 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                       >
                         <div className="flex items-start justify-between gap-2">
                           <HalaqohBadge kelas={item.kelas} bagian={item.bagian} />
-                          {item.isRekomendasi && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
-                              <Star className="h-3 w-3 fill-emerald-600 text-emerald-600 dark:fill-emerald-400 dark:text-emerald-400" />
-                              Rekomendasi
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1 flex-wrap justify-end">
+                            {item.tingkatDiff === 1 ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                Tingkat Di Atasnya
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                Loncat {item.tingkatDiff} Tingkat
+                              </span>
+                            )}
+                            {item.isRekomendasi && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
+                                <Star className="h-3 w-3 fill-emerald-600 text-emerald-600 dark:fill-emerald-400 dark:text-emerald-400" />
+                                Rekomendasi
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         <div className="mt-2.5 flex items-center justify-between text-xs">
@@ -1586,7 +1719,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
               <button
                 type="button"
                 disabled={!targetHalaqohChoice || submittingNaikHalaqoh}
-                onClick={handleConfirmNaikHalaqoh}
+                onClick={handleInitiateNaikHalaqoh}
                 className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl shadow transition disabled:opacity-40 disabled:cursor-not-allowed dark:bg-emerald-700 dark:hover:bg-emerald-800"
               >
                 {submittingNaikHalaqoh ? (
@@ -1604,6 +1737,59 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                     </span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* POP-UP 5: MODAL KONFIRMASI PERINGATAN NAIK HALAQOH                        */}
+      {/* ========================================================================= */}
+      {confirmWarningModalOpen && warningDialogData && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 animate-in fade-in backdrop-blur-sm"
+          role="alertdialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-amber-300 dark:border-amber-800 bg-white p-5 shadow-2xl dark:bg-slate-900">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {warningDialogData.title}
+                  </h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    {warningDialogData.badge}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-line leading-relaxed">
+                  {warningDialogData.desc}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setConfirmWarningModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={submittingNaikHalaqoh}
+                onClick={() => {
+                  setConfirmWarningModalOpen(false);
+                  executeConfirmNaikHalaqoh();
+                }}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-md transition disabled:opacity-50"
+              >
+                {submittingNaikHalaqoh ? "Memproses..." : "Ya, Tetap Pindahkan"}
               </button>
             </div>
           </div>
