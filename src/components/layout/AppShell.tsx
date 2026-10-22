@@ -25,10 +25,16 @@ import {
   FileSpreadsheet,
   FileImage,
   MessageSquare,
+  Settings,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
 import { mapPathToModule } from "@/lib/services/user-permission-service";
+import {
+  fetchAppBranding,
+  DEFAULT_BRANDING,
+  type AppBrandingConfig,
+} from "@/lib/services/branding-service";
 import type { Profile, ModuleKey } from "@/types/database";
 
 interface NavItem {
@@ -97,10 +103,10 @@ const NAV_ITEMS: NavItem[] = [
     moduleKey: "wa",
   },
   {
-    href: "/pengaturan/pengguna",
-    label: "Kelola Pengguna",
+    href: "/pengaturan",
+    label: "Pengaturan",
     group: "Sistem",
-    icon: ShieldCheck,
+    icon: Settings,
     moduleKey: "user_management",
   },
 ];
@@ -122,6 +128,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const rekapDropdownRef = useRef<HTMLDivElement>(null);
 
   const isLoginPage = pathname.startsWith("/login");
+
+  const [branding, setBranding] = useState<AppBrandingConfig>(DEFAULT_BRANDING);
+
+  useEffect(() => {
+    fetchAppBranding().then(setBranding);
+
+    const onBrandingUpdate = (e: any) => {
+      if (e.detail) setBranding(e.detail);
+    };
+    window.addEventListener("lptq-branding-updated", onBrandingUpdate);
+    return () => window.removeEventListener("lptq-branding-updated", onBrandingUpdate);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      if (branding.app_name) {
+        document.title = `${branding.app_name} - ${branding.app_subtitle}`;
+      }
+      if (branding.favicon_url) {
+        let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
+        if (!link) {
+          link = document.createElement("link");
+          link.rel = "shortcut icon";
+          document.head.appendChild(link);
+        }
+        link.href = branding.favicon_url;
+      }
+    }
+  }, [branding]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -278,17 +313,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 onClick={() => setIsExpanded((prev) => !prev)}
                 title={sidebarOpen ? "Ciutkan sidebar" : "Lebarkan sidebar"}
                 aria-label={sidebarOpen ? "Ciutkan sidebar" : "Lebarkan sidebar"}
-                className="w-11 h-11 rounded-xl bg-white text-brand-dark flex items-center justify-center font-extrabold text-xs shadow-sm shrink-0"
+                className="w-11 h-11 rounded-xl bg-white text-brand-dark flex items-center justify-center font-extrabold text-xs shadow-sm shrink-0 overflow-hidden p-1.5"
               >
-                [LOGO]
+                {branding.logo_url ? (
+                  <img src={branding.logo_url} alt="Logo" className="w-full h-full object-contain" />
+                ) : (
+                  <svg
+                    className="w-7 h-7 text-brand-dark"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                  </svg>
+                )}
               </button>
               {sidebarOpen && (
                 <div className="min-w-0">
                   <h2 className="text-base font-extrabold tracking-tight leading-none text-white truncate">
-                    Lptq Blokagung
+                    {branding.app_name}
                   </h2>
                   <span className="text-[10px] tracking-widest uppercase font-semibold text-emerald-100 block mt-1 truncate">
-                    Sistem Tahfidz
+                    {branding.app_subtitle}
                   </span>
                 </div>
               )}
@@ -463,7 +513,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <ShieldCheck className="w-4 h-4 text-amber-300" aria-hidden="true" />
               </div>
               <p className="text-[11px] font-bold tracking-wider uppercase text-white mb-0.5">
-                Standar KKM: 85
+                Standar KKM: {branding.kkm_khotmil}
               </p>
               <p className="text-[11px] text-emerald-100 mb-2.5 leading-snug">
                 Kelulusan Khotmil 15 & 30 Juz dihitung otomatis.
@@ -614,10 +664,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="no-scrollbar relative z-50 flex w-72 max-w-[85vw] flex-col bg-gradient-to-b from-brand to-brand-darker text-white h-full shadow-xl p-5 overflow-y-auto">
               <div className="flex items-center justify-between pb-4 border-b border-white/15">
                 <div className="flex items-center gap-2.5">
-                  <span className="px-2 py-1 rounded-lg bg-white text-brand-dark text-xs font-extrabold">
-                    [LOGO]
+                  <span className="w-8 h-8 rounded-lg bg-white text-brand-dark flex items-center justify-center overflow-hidden p-1 shrink-0">
+                    {branding.logo_url ? (
+                      <img src={branding.logo_url} alt="Logo" className="w-full h-full object-contain" />
+                    ) : (
+                      <span className="text-xs font-black">LPTQ</span>
+                    )}
                   </span>
-                  <span className="font-bold text-white">Lptq Blokagung</span>
+                  <span className="font-bold text-white truncate">{branding.app_name}</span>
                 </div>
                 <button
                   type="button"
