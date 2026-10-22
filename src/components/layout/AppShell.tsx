@@ -24,6 +24,7 @@ import {
   GraduationCap,
   FileSpreadsheet,
   FileImage,
+  MessageSquare,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
@@ -79,6 +80,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Flyer Khataman",
     group: "Alat Lanjutan",
     icon: FileImage,
+  },
+  {
+    href: "/alat/kirim-wa",
+    label: "Kirim WA",
+    group: "Alat Lanjutan",
+    icon: MessageSquare,
   },
 ];
 
