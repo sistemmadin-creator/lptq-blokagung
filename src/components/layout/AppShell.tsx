@@ -23,6 +23,7 @@ import {
   ChevronUp,
   GraduationCap,
   FileSpreadsheet,
+  FileImage,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
@@ -72,6 +73,12 @@ const NAV_ITEMS: NavItem[] = [
     group: "Tahfidz Khotmil",
     badge: "9 Tahap",
     icon: Award,
+  },
+  {
+    href: "/alat/flyer-khataman",
+    label: "Flyer Khataman",
+    group: "Alat Lanjutan",
+    icon: FileImage,
   },
 ];
 
@@ -190,7 +197,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return <main className="min-h-screen">{children}</main>;
   }
 
-  const groups = ["Utama", "Tahfidz Umum", "Tahfidz Khotmil"];
+  const groups = ["Utama", "Tahfidz Umum", "Tahfidz Khotmil", "Alat Lanjutan"];
   const userInitial = (profile?.nama || profile?.email || "U")
     .split(" ")
     .map((w) => w[0])
