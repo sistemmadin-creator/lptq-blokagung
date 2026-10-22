@@ -37,7 +37,10 @@ import {
   deleteSetoranBatch,
   deleteAllSetoran,
   saveSetoranBulanDirect,
+  fetchCurrentUserProfile,
 } from "@/lib/services/tahfidz-service";
+import { canUserEdit } from "@/lib/services/user-permission-service";
+import type { Profile, ModuleKey } from "@/types/database";
 import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
 import {
   HALAQOH_BAGIAN_LIST,
@@ -117,6 +120,15 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   const [rows, setRows] = useState<SetoranBulananRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [profile, setProfile] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    fetchCurrentUserProfile().then(setProfile);
+  }, []);
+
+  const currentModuleKey: ModuleKey = tipe === "juz_baru" ? "juz_baru" : "evaluasi";
+  const canEdit = profile ? (profile.role === "admin" || canUserEdit(profile.permissions, currentModuleKey)) : true;
 
   const {
     register,
@@ -431,6 +443,10 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     newVal: number,
     santriName: string
   ) => {
+    if (!canEdit) {
+      showToast("error", "Anda hanya memiliki hak akses baca. Tidak diizinkan mengubah nilai setoran.");
+      return;
+    }
     const monthKey = monthKeys[monthNum - 1]?.key;
     if (!monthKey) return;
 
@@ -784,23 +800,25 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         </button>
 
         {/* Tombol Input Log Setoran (Hanya Logo) */}
-        <button
-          type="button"
-          onClick={() => {
-            reset({
-              santri_id: santriOptions[0]?.id ?? "",
-              tanggal: toLocalIsoDate(now),
-              jumlah_juz_tambahan: 0.5,
-              catatan: "",
-            });
-            setModalOpen(true);
-          }}
-          title="Input Log Setoran"
-          aria-label="Input Log Setoran"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-800 text-white shadow transition hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:bg-emerald-700 dark:hover:bg-emerald-800"
-        >
-          <Plus className="h-5 w-5" />
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => {
+              reset({
+                santri_id: santriOptions[0]?.id ?? "",
+                tanggal: toLocalIsoDate(now),
+                jumlah_juz_tambahan: 0.5,
+                catatan: "",
+              });
+              setModalOpen(true);
+            }}
+            title="Input Log Setoran"
+            aria-label="Input Log Setoran"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-800 text-white shadow transition hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* Indikator Filter Aktif */}
