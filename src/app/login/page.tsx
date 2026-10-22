@@ -1,9 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { User, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import {
+  fetchAppBranding,
+  DEFAULT_BRANDING,
+  type AppBrandingConfig,
+} from "@/lib/services/branding-service";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,6 +18,28 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [branding, setBranding] = useState<AppBrandingConfig>(DEFAULT_BRANDING);
+
+  useEffect(() => {
+    fetchAppBranding().then(setBranding);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      if (branding.app_name) {
+        document.title = `Masuk - ${branding.app_name}`;
+      }
+      if (branding.favicon_url) {
+        let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
+        if (!link) {
+          link = document.createElement("link");
+          link.rel = "shortcut icon";
+          document.head.appendChild(link);
+        }
+        link.href = branding.favicon_url;
+      }
+    }
+  }, [branding]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,34 +83,41 @@ export default function LoginPage() {
 
   return (
     <div
-      className="relative min-h-screen w-full flex items-center justify-center p-4 bg-cover bg-center bg-no-repeat"
-      style={{ backgroundImage: `url('/images/login-bg.jpg')` }}
+      className="relative min-h-screen w-full flex items-center justify-center p-4 bg-cover bg-center bg-no-repeat transition-all duration-500"
+      style={{ backgroundImage: `url('${branding.login_bg_url || "/images/login-bg.jpg"}')` }}
     >
       {/* Overlay atmosferik hijau emerald & gelap untuk keterbacaan kontras tinggi */}
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-950/75 via-emerald-950/65 to-slate-950/80 backdrop-blur-[2px]" />
+      <div
+        className="absolute inset-0 bg-gradient-to-b from-slate-950 via-emerald-950 to-slate-950 backdrop-blur-[2px] transition-opacity duration-300"
+        style={{ opacity: branding.login_bg_overlay / 100 }}
+      />
 
       {/* Kartu Login Minimalis Modern */}
       <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/20 bg-white/95 p-6 sm:p-8 shadow-2xl shadow-emerald-950/40 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95">
         
         {/* Baris 1 & 2: LOGO dan LPTQ Blokagung */}
         <div className="flex flex-col items-center justify-center text-center mb-6">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-600 to-brand-dark text-white flex items-center justify-center shadow-lg shadow-emerald-700/30 mb-3 border border-emerald-400/30">
-            {/* Logo Emblem LPTQ */}
-            <svg
-              className="w-8 h-8 text-amber-300"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-            </svg>
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-600 to-brand-dark text-white flex items-center justify-center shadow-lg shadow-emerald-700/30 mb-3 border border-emerald-400/30 overflow-hidden p-2">
+            {branding.logo_url ? (
+              <img src={branding.logo_url} alt="Logo LPTQ" className="w-full h-full object-contain" />
+            ) : (
+              /* Logo Emblem LPTQ */
+              <svg
+                className="w-8 h-8 text-amber-300"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+              </svg>
+            )}
           </div>
           <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-            LPTQ Blokagung
+            {branding.app_name}
           </h1>
         </div>
 
