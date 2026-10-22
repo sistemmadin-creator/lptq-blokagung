@@ -127,6 +127,10 @@ export async function POST(request: NextRequest) {
       favicon_url: savedFaviconUrl,
       login_bg_url: savedLoginBgUrl || DEFAULT_BRANDING.login_bg_url,
       login_bg_overlay: Number(body.login_bg_overlay) || DEFAULT_BRANDING.login_bg_overlay,
+      login_card_opacity:
+        body.login_card_opacity !== undefined
+          ? Number(body.login_card_opacity)
+          : DEFAULT_BRANDING.login_card_opacity,
       kkm_khotmil: Number(body.kkm_khotmil) || DEFAULT_BRANDING.kkm_khotmil,
       target_setoran: Number(body.target_setoran) || DEFAULT_BRANDING.target_setoran,
       active_year: Number(body.active_year) || DEFAULT_BRANDING.active_year,
