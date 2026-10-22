@@ -5,14 +5,48 @@ export type TipeSetoran = "juz_baru" | "evaluasi";
 export type JenisKhotmil = "khotmil15" | "khotmil30";
 export type HalaqohBagian = "A" | "B" | "C" | "D" | "E" | "F";
 
+export type ModuleKey =
+  | "dashboard"
+  | "santri"
+  | "halaqoh"
+  | "kegiatan"
+  | "juz_baru"
+  | "evaluasi"
+  | "khotmil_15"
+  | "khotmil_30"
+  | "flyer"
+  | "wa"
+  | "user_management";
+
+export type PermissionLevel = "sembunyikan" | "baca" | "edit";
+
+export type UserPermissions = Record<ModuleKey, PermissionLevel>;
+
 export interface Profile {
   user_id: string;
   email: string | null;
+  username?: string;
   nama: string | null;
   role: AppRole;
   halaqoh_kelas: number | null;
   halaqoh_bagian: HalaqohBagian | null;
+  permissions?: UserPermissions;
+  status?: "active" | "suspended";
   created_at: string;
+}
+
+export interface UserAccountItem {
+  user_id: string;
+  email: string;
+  username: string;
+  nama: string;
+  role: AppRole;
+  halaqoh_kelas?: number | null;
+  halaqoh_bagian?: HalaqohBagian | null;
+  status: "active" | "suspended";
+  permissions: UserPermissions;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Santri {
