@@ -92,38 +92,44 @@ export default function LoginPage() {
         style={{ opacity: branding.login_bg_overlay / 100 }}
       />
 
-      {/* Kartu Login Minimalis Modern */}
-      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/20 bg-white/95 p-6 sm:p-8 shadow-2xl shadow-emerald-950/40 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95">
+      {/* Kartu Login Minimalis Modern - Glassmorphism */}
+      <div className="relative z-10 w-full max-w-sm rounded-3xl border border-white/50 bg-white/60 p-6 sm:p-8 shadow-[0_8px_32px_0_rgba(0,0,0,0.28)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/60 dark:shadow-[0_8px_32px_0_rgba(0,0,0,0.6)]">
         
         {/* Baris 1 & 2: LOGO dan LPTQ Blokagung */}
         <div className="flex flex-col items-center justify-center text-center mb-6">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-600 to-brand-dark text-white flex items-center justify-center shadow-lg shadow-emerald-700/30 mb-3 border border-emerald-400/30 overflow-hidden p-2">
+          <div className="flex items-center justify-center mb-2">
             {branding.logo_url ? (
-              <img src={branding.logo_url} alt="Logo LPTQ" className="w-full h-full object-contain" />
+              <img
+                src={branding.logo_url}
+                alt="Logo LPTQ"
+                className="w-40 h-40 object-contain drop-shadow-md select-none transition-transform duration-300 hover:scale-105"
+              />
             ) : (
-              /* Logo Emblem LPTQ */
-              <svg
-                className="w-8 h-8 text-amber-300"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-              </svg>
+              /* Logo Emblem LPTQ (Default) */
+              <div className="w-36 h-36 flex items-center justify-center text-emerald-700 dark:text-emerald-400">
+                <svg
+                  className="w-28 h-28 drop-shadow-md"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                </svg>
+              </div>
             )}
           </div>
-          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
+          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white drop-shadow-sm">
             {branding.app_name}
           </h1>
         </div>
 
         {/* Pesan Kesalahan jika ada */}
         {errorMessage && (
-          <div className="mb-4 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700 border border-red-200 dark:bg-red-950/50 dark:border-red-900 dark:text-red-300">
+          <div className="mb-4 rounded-xl bg-red-500/10 p-3 text-xs font-semibold text-red-800 border border-red-300/60 backdrop-blur-md dark:bg-red-950/50 dark:border-red-900 dark:text-red-300">
             {errorMessage}
           </div>
         )}
@@ -135,12 +141,12 @@ export default function LoginPage() {
           <div>
             <label
               htmlFor="username"
-              className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5"
+              className="block text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 mb-1.5"
             >
               Nama Pengguna
             </label>
             <div className="relative">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500 dark:text-slate-400">
                 <User className="w-4 h-4" />
               </div>
               <input
@@ -157,7 +163,7 @@ export default function LoginPage() {
                   if (errorMessage) setErrorMessage(null);
                 }}
                 placeholder="Nama Pengguna"
-                className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-slate-50/80 pl-10 pr-3.5 py-2.5 text-sm text-slate-900 focus:border-brand focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand/20 dark:border-slate-700 dark:bg-slate-800/80 dark:text-white dark:focus:border-emerald-500"
+                className="w-full min-h-[46px] rounded-xl border border-white/60 bg-white/70 pl-10 pr-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 shadow-inner focus:border-brand focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand/20 dark:border-slate-700/80 dark:bg-slate-800/70 dark:text-white dark:focus:border-emerald-500 transition"
               />
             </div>
           </div>
@@ -166,12 +172,12 @@ export default function LoginPage() {
           <div>
             <label
               htmlFor="password"
-              className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5"
+              className="block text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 mb-1.5"
             >
               Kata Sandi
             </label>
             <div className="relative">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500 dark:text-slate-400">
                 <Lock className="w-4 h-4" />
               </div>
               <input
@@ -184,12 +190,12 @@ export default function LoginPage() {
                   if (errorMessage) setErrorMessage(null);
                 }}
                 placeholder="Kata Sandi"
-                className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-slate-50/80 pl-10 pr-11 py-2.5 text-sm text-slate-900 focus:border-brand focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand/20 dark:border-slate-700 dark:bg-slate-800/80 dark:text-white dark:focus:border-emerald-500"
+                className="w-full min-h-[46px] rounded-xl border border-white/60 bg-white/70 pl-10 pr-11 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 shadow-inner focus:border-brand focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand/20 dark:border-slate-700/80 dark:bg-slate-800/70 dark:text-white dark:focus:border-emerald-500 transition"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword((prev) => !prev)}
-                className="absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                 title={showPassword ? "Sembunyikan sandi" : "Tampilkan sandi"}
                 aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
               >
@@ -202,7 +208,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full min-h-[46px] rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-hover active:scale-[0.99] disabled:opacity-60 transition-all shadow-md shadow-brand/20 flex items-center justify-center gap-2"
+            className="w-full min-h-[46px] rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 px-4 py-2.5 text-sm font-bold text-white hover:from-emerald-700 hover:to-teal-800 active:scale-[0.99] disabled:opacity-60 transition-all shadow-lg shadow-emerald-800/30 flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
