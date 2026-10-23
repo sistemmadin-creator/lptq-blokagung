@@ -325,10 +325,6 @@ export function InteractiveTourGuide() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  if (pathname.startsWith("/panduan/simulasi")) {
-    return null;
-  }
-
   const tourParam = searchParams.get("tour");
   const activeTour = tourParam ? TOURS_CONFIG[tourParam] : null;
 
@@ -337,16 +333,16 @@ export function InteractiveTourGuide() {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    if (activeTour) {
+    if (activeTour && !pathname.startsWith("/panduan/simulasi")) {
       setCurrentStep(0);
       setIsMinimized(false);
       setIsVisible(true);
     } else {
       setIsVisible(false);
     }
-  }, [tourParam, activeTour]);
+  }, [tourParam, activeTour, pathname]);
 
-  if (!activeTour || !isVisible) {
+  if (pathname.startsWith("/panduan/simulasi") || !activeTour || !isVisible) {
     return null;
   }
 
