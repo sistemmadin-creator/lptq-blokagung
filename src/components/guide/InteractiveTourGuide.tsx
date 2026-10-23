@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import {
   Sparkles,
@@ -321,8 +321,13 @@ export const TOURS_CONFIG: Record<string, FeatureTour> = {
 };
 
 export function InteractiveTourGuide() {
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  if (pathname.startsWith("/panduan/simulasi")) {
+    return null;
+  }
 
   const tourParam = searchParams.get("tour");
   const activeTour = tourParam ? TOURS_CONFIG[tourParam] : null;
