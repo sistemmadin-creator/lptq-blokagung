@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { InteractiveTourGuide } from "@/components/guide/InteractiveTourGuide";
 import {
   Users,
   CalendarCheck,
@@ -23,10 +24,19 @@ import {
   ChevronUp,
   GraduationCap,
   FileSpreadsheet,
+  FileImage,
+  MessageSquare,
+  Settings,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
-import type { Profile } from "@/types/database";
+import { mapPathToModule } from "@/lib/services/user-permission-service";
+import {
+  fetchAppBranding,
+  DEFAULT_BRANDING,
+  type AppBrandingConfig,
+} from "@/lib/services/branding-service";
+import type { Profile, ModuleKey } from "@/types/database";
 
 interface NavItem {
   href: string;
@@ -34,30 +44,34 @@ interface NavItem {
   group: string;
   badge?: string;
   icon: React.ComponentType<{ className?: string }>;
+  moduleKey: ModuleKey;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Dashboard", group: "Utama", icon: LayoutDashboard },
-  { href: "/santri", label: "Data Santri Tahfidz", group: "Utama", icon: Users },
-  { href: "/halaqoh", label: "Halaqoh", group: "Utama", icon: GraduationCap },
+  { href: "/", label: "Dashboard", group: "Utama", icon: LayoutDashboard, moduleKey: "dashboard" },
+  { href: "/santri", label: "Data Santri Tahfidz", group: "Utama", icon: Users, moduleKey: "santri" },
+  { href: "/halaqoh", label: "Halaqoh", group: "Utama", icon: GraduationCap, moduleKey: "halaqoh" },
   {
     href: "/tahfidz/umum/kegiatan",
     label: "Kegiatan (Absensi)",
     group: "Tahfidz Umum",
     badge: "2x/Hari",
     icon: CalendarCheck,
+    moduleKey: "kegiatan",
   },
   {
     href: "/tahfidz/umum/juz-baru",
     label: "Juz Baru (Pembimbing)",
     group: "Tahfidz Umum",
     icon: BookOpen,
+    moduleKey: "juz_baru",
   },
   {
     href: "/tahfidz/umum/evaluasi",
     label: "Evaluasi (Pengurus)",
     group: "Tahfidz Umum",
     icon: ClipboardCheck,
+    moduleKey: "evaluasi",
   },
   {
     href: "/tahfidz/khotmil/15",
@@ -65,6 +79,7 @@ const NAV_ITEMS: NavItem[] = [
     group: "Tahfidz Khotmil",
     badge: "5 Tahap",
     icon: Award,
+    moduleKey: "khotmil_15",
   },
   {
     href: "/tahfidz/khotmil/30",
@@ -72,6 +87,28 @@ const NAV_ITEMS: NavItem[] = [
     group: "Tahfidz Khotmil",
     badge: "9 Tahap",
     icon: Award,
+    moduleKey: "khotmil_30",
+  },
+  {
+    href: "/alat/flyer-khataman",
+    label: "Flyer Khataman",
+    group: "Alat Lanjutan",
+    icon: FileImage,
+    moduleKey: "flyer",
+  },
+  {
+    href: "/alat/kirim-wa",
+    label: "Kirim WA",
+    group: "Alat Lanjutan",
+    icon: MessageSquare,
+    moduleKey: "wa",
+  },
+  {
+    href: "/pengaturan",
+    label: "Pengaturan",
+    group: "Sistem",
+    icon: Settings,
+    moduleKey: "user_management",
   },
 ];
 
@@ -92,6 +129,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const rekapDropdownRef = useRef<HTMLDivElement>(null);
 
   const isLoginPage = pathname.startsWith("/login");
+
+  const [branding, setBranding] = useState<AppBrandingConfig>(DEFAULT_BRANDING);
+
+  useEffect(() => {
+    fetchAppBranding().then(setBranding);
+
+    const onBrandingUpdate = (e: any) => {
+      if (e.detail) setBranding(e.detail);
+    };
+    window.addEventListener("lptq-branding-updated", onBrandingUpdate);
+    return () => window.removeEventListener("lptq-branding-updated", onBrandingUpdate);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      if (branding.app_name) {
+        document.title = `${branding.app_name} - ${branding.app_subtitle}`;
+      }
+      if (branding.favicon_url) {
+        let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
+        if (!link) {
+          link = document.createElement("link");
+          link.rel = "shortcut icon";
+          document.head.appendChild(link);
+        }
+        link.href = branding.favicon_url;
+      }
+    }
+  }, [branding]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -186,11 +252,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     router.push("/santri");
   };
 
+  // Route guard: Jika user tidak memiliki izin membuka halaman yang dituju
+  useEffect(() => {
+    if (!profile || isLoginPage) return;
+    const currentModule = mapPathToModule(pathname);
+    if (currentModule && profile.role !== "admin") {
+      const perm = profile.permissions?.[currentModule];
+      if (perm === "sembunyikan") {
+        router.replace("/");
+      }
+    }
+  }, [profile, pathname, isLoginPage, router]);
+
   if (isLoginPage) {
     return <main className="min-h-screen">{children}</main>;
   }
 
-  const groups = ["Utama", "Tahfidz Umum", "Tahfidz Khotmil"];
+  const allowedNavItems = NAV_ITEMS.filter((item) => {
+    if (!profile) return true;
+    if (profile.role === "admin") return true;
+    const perm = profile.permissions?.[item.moduleKey];
+    return perm !== "sembunyikan";
+  });
+
+  const allGroups = ["Utama", "Tahfidz Umum", "Tahfidz Khotmil", "Alat Lanjutan", "Sistem"];
+  const groups = allGroups.filter((grp) => allowedNavItems.some((i) => i.group === grp));
+
   const userInitial = (profile?.nama || profile?.email || "U")
     .split(" ")
     .map((w) => w[0])
@@ -227,17 +314,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 onClick={() => setIsExpanded((prev) => !prev)}
                 title={sidebarOpen ? "Ciutkan sidebar" : "Lebarkan sidebar"}
                 aria-label={sidebarOpen ? "Ciutkan sidebar" : "Lebarkan sidebar"}
-                className="w-11 h-11 rounded-xl bg-white text-brand-dark flex items-center justify-center font-extrabold text-xs shadow-sm shrink-0"
+                className="w-11 h-11 rounded-xl bg-white text-brand-dark flex items-center justify-center font-extrabold text-xs shadow-sm shrink-0 overflow-hidden p-1.5"
               >
-                [LOGO]
+                {branding.logo_url ? (
+                  <img src={branding.logo_url} alt="Logo" className="w-full h-full object-contain" />
+                ) : (
+                  <svg
+                    className="w-7 h-7 text-brand-dark"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                  </svg>
+                )}
               </button>
               {sidebarOpen && (
                 <div className="min-w-0">
                   <h2 className="text-base font-extrabold tracking-tight leading-none text-white truncate">
-                    Lptq Blokagung
+                    {branding.app_name}
                   </h2>
                   <span className="text-[10px] tracking-widest uppercase font-semibold text-emerald-100 block mt-1 truncate">
-                    Sistem Tahfidz
+                    {branding.app_subtitle}
                   </span>
                 </div>
               )}
@@ -284,7 +386,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 )}
 
                 <ul className="space-y-1">
-                  {NAV_ITEMS.filter((i) => i.group === grp).map((item) => {
+                  {allowedNavItems.filter((i) => i.group === grp).map((item) => {
                     const Icon = item.icon;
                     const active =
                       item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -412,7 +514,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <ShieldCheck className="w-4 h-4 text-amber-300" aria-hidden="true" />
               </div>
               <p className="text-[11px] font-bold tracking-wider uppercase text-white mb-0.5">
-                Standar KKM: 85
+                Standar KKM: {branding.kkm_khotmil}
               </p>
               <p className="text-[11px] text-emerald-100 mb-2.5 leading-snug">
                 Kelulusan Khotmil 15 & 30 Juz dihitung otomatis.
@@ -521,6 +623,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <div className="hidden md:block text-left">
                   <div className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight">
                     {profile.nama || profile.email}
+                    {profile.username && (
+                      <span className="text-slate-400 font-normal ml-1 font-mono text-[11px]">
+                        (@{profile.username})
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] font-medium text-slate-600 dark:text-slate-400">
                     Peran: {profile.role.toUpperCase()}
@@ -558,10 +665,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="no-scrollbar relative z-50 flex w-72 max-w-[85vw] flex-col bg-gradient-to-b from-brand to-brand-darker text-white h-full shadow-xl p-5 overflow-y-auto">
               <div className="flex items-center justify-between pb-4 border-b border-white/15">
                 <div className="flex items-center gap-2.5">
-                  <span className="px-2 py-1 rounded-lg bg-white text-brand-dark text-xs font-extrabold">
-                    [LOGO]
+                  <span className="w-8 h-8 rounded-lg bg-white text-brand-dark flex items-center justify-center overflow-hidden p-1 shrink-0">
+                    {branding.logo_url ? (
+                      <img src={branding.logo_url} alt="Logo" className="w-full h-full object-contain" />
+                    ) : (
+                      <span className="text-xs font-black">LPTQ</span>
+                    )}
                   </span>
-                  <span className="font-bold text-white">Lptq Blokagung</span>
+                  <span className="font-bold text-white truncate">{branding.app_name}</span>
                 </div>
                 <button
                   type="button"
@@ -580,7 +691,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       {grp}
                     </p>
                     <ul className="space-y-1">
-                      {NAV_ITEMS.filter((i) => i.group === grp).map((item) => {
+                      {allowedNavItems.filter((i) => i.group === grp).map((item) => {
                         const Icon = item.icon;
                         const active =
                           item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -642,6 +753,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Konten Halaman */}
         <main className="flex-1 p-4 sm:p-8 max-w-7xl mx-auto w-full">{children}</main>
+
+        {/* Panduan Interaktif Berjalan (Hanya aktif jika dibuka melalui menu Panduan) */}
+        <Suspense fallback={null}>
+          <InteractiveTourGuide />
+        </Suspense>
 
         {/* Global Footer */}
         <footer className="no-print mt-auto border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 sm:px-8 py-4 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 dark:text-slate-400 gap-3">

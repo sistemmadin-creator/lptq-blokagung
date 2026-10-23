@@ -36,7 +36,10 @@ import {
   deleteSantriById,
   deleteSantriBatch,
   deleteAllSantri,
+  fetchCurrentUserProfile,
 } from "@/lib/services/tahfidz-service";
+import { canUserEdit } from "@/lib/services/user-permission-service";
+import type { Profile } from "@/types/database";
 import {
   loadHierarchyRules,
   saveHierarchyRules,
@@ -100,6 +103,14 @@ export default function SantriPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [profile, setProfile] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    fetchCurrentUserProfile().then(setProfile);
+  }, []);
+
+  const canEdit = profile ? (profile.role === "admin" || canUserEdit(profile.permissions, "santri")) : true;
 
   // Filter dan Pencarian
   const [search, setSearch] = useState("");
@@ -537,92 +548,100 @@ export default function SantriPage() {
   };
 
   // Kolom Tabel (Tanpa kolom Kode Unik Santri, posisi: Asrama -> Kode -> Kamar)
-  const columns: ColumnDef<Santri>[] = [
-    {
-      id: "no",
-      header: "NO",
-      cell: ({ row }) => <span className="font-mono text-xs">{(page - 1) * pageSize + row.index + 1}</span>,
-    },
-    {
-      accessorKey: "nama_lengkap",
-      header: "NAMA LENGKAP",
-      cell: ({ row }) => (
-        <span className="font-semibold text-slate-900 dark:text-slate-100">
-          {row.original.nama_lengkap}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "no_wa",
-      header: "NOMOR WHATSAPP",
-      cell: ({ row }) => {
-        const wa = row.original.no_wa;
-        if (!wa) return <span className="text-slate-400 font-mono text-xs">-</span>;
-        let clean = wa.replace(/\D/g, "");
-        if (clean.startsWith("0")) clean = "62" + clean.slice(1);
-        else if (!clean.startsWith("62")) clean = "62" + clean;
-        return (
-          <a
-            href={`https://wa.me/${clean}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1 font-mono text-xs text-emerald-700 hover:text-emerald-900 hover:underline dark:text-emerald-400"
-            title="Kirim pesan WhatsApp"
-          >
-            <Phone className="h-3 w-3 shrink-0 text-emerald-600" />
-            <span>{wa}</span>
-          </a>
-        );
+  const columns: ColumnDef<Santri>[] = useMemo(() => {
+    const baseCols: ColumnDef<Santri>[] = [
+      {
+        id: "no",
+        header: "NO",
+        cell: ({ row }) => <span className="font-mono text-xs">{(page - 1) * pageSize + row.index + 1}</span>,
       },
-    },
-    { accessorKey: "blok", header: "BLOK" },
-    { accessorKey: "asrama", header: "ASRAMA" },
-    {
-      accessorKey: "kamar",
-      header: "KAMAR",
-      cell: ({ row }) => (
-        <span className="font-mono font-bold text-xs text-slate-800 dark:text-slate-200">
-          {formatKamarDisplay(row.original.kode_kamar, row.original.kamar)}
-        </span>
-      ),
-    },
-    {
-      id: "halaqoh",
-      header: "HALAQOH",
-      cell: ({ row }) => (
-        <HalaqohBadge
-          kelas={row.original.halaqoh_kelas}
-          bagian={row.original.halaqoh_bagian}
-          showMapping
-        />
-      ),
-    },
-    {
-      id: "aksi",
-      header: "AKSI",
-      cell: ({ row }) => (
-        <div className="no-print flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            onClick={() => openEditModal(row.original)}
-            className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-            <span>Edit</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDelete(row.original)}
-            className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span>Hapus</span>
-          </button>
-        </div>
-      ),
-    },
-  ];
+      {
+        accessorKey: "nama_lengkap",
+        header: "NAMA LENGKAP",
+        cell: ({ row }) => (
+          <span className="font-semibold text-slate-900 dark:text-slate-100">
+            {row.original.nama_lengkap}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "no_wa",
+        header: "NOMOR WHATSAPP",
+        cell: ({ row }) => {
+          const wa = row.original.no_wa;
+          if (!wa) return <span className="text-slate-400 font-mono text-xs">-</span>;
+          let clean = wa.replace(/\D/g, "");
+          if (clean.startsWith("0")) clean = "62" + clean.slice(1);
+          else if (!clean.startsWith("62")) clean = "62" + clean;
+          return (
+            <a
+              href={`https://wa.me/${clean}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 font-mono text-xs text-emerald-700 hover:text-emerald-900 hover:underline dark:text-emerald-400"
+              title="Kirim pesan WhatsApp"
+            >
+              <Phone className="h-3 w-3 shrink-0 text-emerald-600" />
+              <span>{wa}</span>
+            </a>
+          );
+        },
+      },
+      { accessorKey: "blok", header: "BLOK" },
+      { accessorKey: "asrama", header: "ASRAMA" },
+      {
+        accessorKey: "kamar",
+        header: "KAMAR",
+        cell: ({ row }) => (
+          <span className="font-mono font-bold text-xs text-slate-800 dark:text-slate-200">
+            {formatKamarDisplay(row.original.kode_kamar, row.original.kamar)}
+          </span>
+        ),
+      },
+      {
+        id: "halaqoh",
+        header: "HALAQOH",
+        cell: ({ row }) => (
+          <HalaqohBadge
+            kelas={row.original.halaqoh_kelas}
+            bagian={row.original.halaqoh_bagian}
+            showMapping
+          />
+        ),
+      },
+    ];
+
+    if (canEdit) {
+      baseCols.push({
+        id: "aksi",
+        header: "AKSI",
+        cell: ({ row }) => (
+          <div className="no-print flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => openEditModal(row.original)}
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <span>Edit</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDelete(row.original)}
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Hapus</span>
+            </button>
+          </div>
+        ),
+      });
+    }
+
+    return baseCols;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canEdit, page, pageSize, openEditModal, handleDelete]);
 
   return (
     <div className="space-y-5">
@@ -746,27 +765,31 @@ export default function SantriPage() {
           <Printer className="h-5 w-5" />
         </button>
 
-        {/* 5. Tombol Pengaturan Hierarki (Gambar 3: Blok > Asrama > Kode > Kamar) */}
-        <button
-          type="button"
-          onClick={() => setHierarchyModalOpen(true)}
-          title="Pengaturan Hierarki Dropdown (Blok > Asrama > Kode > Kamar)"
-          aria-label="Pengaturan Hierarki Dropdown"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-        >
-          <Settings className="h-5 w-5 text-slate-700 dark:text-slate-300 hover:rotate-45 transition-transform" />
-        </button>
+        {/* 5. Tombol Pengaturan Hierarki */}
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => setHierarchyModalOpen(true)}
+            title="Pengaturan Hierarki Dropdown (Blok > Asrama > Kode > Kamar)"
+            aria-label="Pengaturan Hierarki Dropdown"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            <Settings className="h-5 w-5 text-slate-700 dark:text-slate-300 hover:rotate-45 transition-transform" />
+          </button>
+        )}
 
         {/* 6. Tombol Tambah Santri */}
-        <button
-          type="button"
-          onClick={openAddModal}
-          title="Tambah Santri Baru"
-          aria-label="Tambah Santri Baru"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-800 text-white shadow transition hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:bg-emerald-700 dark:hover:bg-emerald-800"
-        >
-          <Plus className="h-5 w-5" />
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={openAddModal}
+            title="Tambah Santri Baru"
+            aria-label="Tambah Santri Baru"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-800 text-white shadow transition hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* Indikator Filter Aktif */}
@@ -891,7 +914,7 @@ export default function SantriPage() {
                             <th className="px-4 py-2.5 font-semibold">Nomor WhatsApp</th>
                             <th className="px-4 py-2.5 font-semibold">Asrama</th>
                             <th className="px-4 py-2.5 font-semibold">Kamar</th>
-                            <th className="no-print px-4 py-2.5 font-semibold text-center">Aksi</th>
+                            {canEdit && <th className="no-print px-4 py-2.5 font-semibold text-center">Aksi</th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -935,26 +958,28 @@ export default function SantriPage() {
                               <td className="px-4 py-2.5 font-mono font-bold text-slate-800 dark:text-slate-200">
                                 {formatKamarDisplay(s.kode_kamar, s.kamar)}
                               </td>
-                              <td className="no-print px-4 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
-                                <div className="inline-flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditModal(s)}
-                                    className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                                  >
-                                    <Pencil className="h-3 w-3" />
-                                    <span>Edit</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDelete(s)}
-                                    className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                    <span>Hapus</span>
-                                  </button>
-                                </div>
-                              </td>
+                              {canEdit && (
+                                <td className="no-print px-4 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                                  <div className="inline-flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => openEditModal(s)}
+                                      className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                      <span>Edit</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDelete(s)}
+                                      className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                      <span>Hapus</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              )}
                             </tr>
                           ))}
                         </tbody>
