@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { InteractiveTourGuide } from "@/components/guide/InteractiveTourGuide";
 import {
   Users,
   CalendarCheck,
@@ -752,6 +753,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Konten Halaman */}
         <main className="flex-1 p-4 sm:p-8 max-w-7xl mx-auto w-full">{children}</main>
+
+        {/* Panduan Interaktif Berjalan (Hanya aktif jika dibuka melalui menu Panduan) */}
+        <Suspense fallback={null}>
+          <InteractiveTourGuide />
+        </Suspense>
 
         {/* Global Footer */}
         <footer className="no-print mt-auto border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 sm:px-8 py-4 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 dark:text-slate-400 gap-3">
