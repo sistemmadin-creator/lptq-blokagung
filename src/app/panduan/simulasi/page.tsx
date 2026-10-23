@@ -22,10 +22,8 @@ import {
   QrCode,
   Printer,
   Download,
-  Share2,
   Eye,
   RotateCcw,
-  Sliders,
   Check,
   X,
   Send,
@@ -34,14 +32,18 @@ import {
   Info,
   ShieldCheck,
   HelpCircle,
-  Play,
-  Pause,
-  ArrowDown,
-  ArrowRight as LucideArrowRight,
+  FileSpreadsheet,
+  Search,
+  SlidersHorizontal,
+  Plus,
+  Pencil,
+  Phone,
+  LayoutGrid,
+  TrendingUp,
 } from "lucide-react";
 
 // =========================================================================
-// DEFINISI TIPE & KONFIGURASI SIMULASI
+// DEFINISI TIPE & KONFIGURASI 9 FITUR SIMULASI LENGKAP
 // =========================================================================
 
 interface SimulationStep {
@@ -176,25 +178,34 @@ const SIMULATIONS: Record<string, SimulationConfig> = {
         title: "Cetak Lembar Jawab Komputer (LJK) Ber-QR",
         desc: "Klik tombol 'Cetak LJK Khotmil' untuk menghasilkan lembar ujian resmi berukuran A4 yang dilengkapi QR Code identitas dan bulatan pensil 2B.",
         targetId: "sim-khotmil-print-ljk-btn",
-        pointerText: "Klik tombol Cetak LJK di sini",
+        pointerText: "Klik tombol Cetak LJK Khotmil",
         pointerPlacement: "bottom",
       },
       {
         stepNumber: 3,
-        badgeLabel: "Langkah 3: Scan Kamera OMR",
-        title: "Koreksi Lembar LJK via Kamera Otomatis",
-        desc: "Klik tombol kamera OMR. Kamera membaca kode QR santri dan menganalisis bulatan terarsir secara seketika untuk menghitung nilai akhir.",
+        badgeLabel: "Langkah 3: Buka Scanner OMR",
+        title: "Buka Pemindai Kamera OMR",
+        desc: "Klik tombol kamera ungu di atas tabel untuk membuka jendela pemindaian otomatis lembar LJK via kamera.",
         targetId: "sim-khotmil-omr-scan-btn",
-        pointerText: "Klik tombol Scan Kamera LJK (OMR)",
+        pointerText: "Klik tombol kamera ungu Scan Kamera LJK (OMR)",
         pointerPlacement: "bottom",
       },
       {
         stepNumber: 4,
-        badgeLabel: "Langkah 4: Hasil & Kelulusan",
-        title: "Penyimpanan Nilai Berbasis KKM 85",
+        badgeLabel: "Langkah 4: Simpan Nilai Kamera",
+        title: "Kamera Memindai QR & Bulatan Pensil",
+        desc: "Kamera membaca kode QR santri dan bulatan terarsir secara seketika untuk menghitung nilai akhir. Klik tombol 'Simpan Nilai ke Sistem'.",
+        targetId: "sim-khotmil-save-camera-btn",
+        pointerText: "Klik Simpan Nilai ke Sistem di sini",
+        pointerPlacement: "top",
+      },
+      {
+        stepNumber: 5,
+        badgeLabel: "Langkah 5: Status Kelulusan",
+        title: "Hasil Rekap Nilai Berbasis KKM 85",
         desc: "Nilai dihitung objektif (bobot halaman terbaca 65% dan bobot kesalahan 35%). Nilai tersimpan langsung dan memicu lencana status 'Tuntas'.",
         targetId: "sim-khotmil-score-badge",
-        pointerText: "Nilai 92 (TUNTAS KKM 85) tersimpan",
+        pointerText: "Nilai 97 (TUNTAS KKM 85) tersimpan",
         pointerPlacement: "top",
       },
     ],
@@ -228,9 +239,9 @@ const SIMULATIONS: Record<string, SimulationConfig> = {
         stepNumber: 3,
         badgeLabel: "Langkah 3: Pratinjau Rapor",
         title: "Lihat Kartu Rapor Digital Bergambar",
-        desc: "Klik ikon mata untuk melihat kartu rapor digital otomatis yang memuat kop LPTQ, nilai per juz, status kelulusan, dan teks pesan resmi.",
+        desc: "Klik tombol Pratinjau untuk melihat kartu rapor digital otomatis yang memuat kop LPTQ, nilai per juz, status kelulusan, dan teks pesan resmi.",
         targetId: "sim-wa-preview-btn",
-        pointerText: "Klik ikon mata untuk pratinjau rapor",
+        pointerText: "Klik tombol Pratinjau rapor",
         pointerPlacement: "left",
       },
       {
@@ -286,6 +297,177 @@ const SIMULATIONS: Record<string, SimulationConfig> = {
         targetId: "sim-juz-total-col",
         pointerText: "Total setoran otomatis terakumulasi",
         pointerPlacement: "left",
+      },
+    ],
+  },
+  evaluasi: {
+    id: "evaluasi",
+    name: "Evaluasi Hafalan Periodik (Pengurus Pusat)",
+    category: "Tahfidz Umum",
+    icon: ClipboardCheck,
+    accentColor: "from-blue-600 to-indigo-800",
+    steps: [
+      {
+        stepNumber: 1,
+        badgeLabel: "Langkah 1: Peran Pengurus",
+        title: "Tujuan Pengujian Evaluasi Pusat",
+        desc: "Modul ini digunakan oleh Pengurus Pusat LPTQ untuk memverifikasi dan menguji kelancaran hafalan santri secara periodik di luar setoran harian pembimbing.",
+        targetId: "sim-eval-filter-period",
+        pointerText: "Pilih periode tahun dan kelas evaluasi",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 2,
+        badgeLabel: "Langkah 2: Input Hasil Uji",
+        title: "Pencatatan Nilai Evaluasi Santri",
+        desc: "Klik tombol '+ Tambah Evaluasi' atau klik sel bulan santri untuk memasukkan jumlah juz hafalan yang telah teruji mutqin di depan pengurus pusat.",
+        targetId: "sim-eval-add-btn",
+        pointerText: "Klik tombol '+ Tambah Evaluasi'",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 3,
+        badgeLabel: "Langkah 3: Grafik Tren",
+        title: "Pantau Tren Evaluasi di Dashboard",
+        desc: "Seluruh hasil evaluasi yang Anda simpan di sini otomatis diolah menjadi grafik garis tren pada Dashboard utama untuk memantau kemajuan santri.",
+        targetId: "sim-eval-chart-box",
+        pointerText: "Grafik garis tren otomatis diperbarui",
+        pointerPlacement: "top",
+      },
+    ],
+  },
+  santri: {
+    id: "santri",
+    name: "Master Data Santri & Hirarki Kamar",
+    category: "Master Data",
+    icon: Users,
+    accentColor: "from-cyan-600 to-blue-800",
+    steps: [
+      {
+        stepNumber: 1,
+        badgeLabel: "Langkah 1: Cari & Filter",
+        title: "Pencarian dan Filter Rinci Santri",
+        desc: "Cari nama santri dengan cepat melalui kotak pencarian atau gunakan filter blok, asrama, kamar, serta kelompok halaqoh.",
+        targetId: "sim-santri-search-box",
+        pointerText: "Ketik nama santri di kotak pencarian",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 2,
+        badgeLabel: "Langkah 2: Registrasi Manual",
+        title: "Tambah Data Santri Baru",
+        desc: "Klik tombol '+ Tambah Santri' untuk mendaftarkan santri baru, menentukan kelompok halaqoh awal, serta menyimpan nomor WhatsApp wali santri.",
+        targetId: "sim-santri-add-btn",
+        pointerText: "Klik tombol '+ Tambah Santri'",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 3,
+        badgeLabel: "Langkah 3: Hirarki Wilayah",
+        title: "Pengaturan Hirarki Kamar & Asrama",
+        desc: "Klik tombol 'Atur Hirarki Kamar' untuk membakukan penamaan Blok, Asrama, dan nomor kamar di pesantren agar pilihan dropdown selalu konsisten.",
+        targetId: "sim-santri-hierarchy-btn",
+        pointerText: "Klik 'Atur Hirarki Kamar' di sini",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 4,
+        badgeLabel: "Langkah 4: Impor Excel",
+        title: "Impor Massal dari File Excel",
+        desc: "Gunakan tombol 'Unduh Template Excel' dan 'Unggah Excel' untuk memasukkan ratusan data santri baru sekaligus secara cepat dengan validasi otomatis.",
+        targetId: "sim-santri-import-btn",
+        pointerText: "Klik tombol Unggah Excel untuk impor",
+        pointerPlacement: "bottom",
+      },
+    ],
+  },
+  halaqoh: {
+    id: "halaqoh",
+    name: "Manajemen Halaqoh & Pembimbing",
+    category: "Master Data",
+    icon: GraduationCap,
+    accentColor: "from-sky-600 to-cyan-800",
+    steps: [
+      {
+        stepNumber: 1,
+        badgeLabel: "Langkah 1: Struktur Halaqoh",
+        title: "Struktur Kelas 1 sampai 10",
+        desc: "Santri dikelompokkan ke dalam Kelas 1 s.d. 10 (target 3 juz per kelas) dan rombel Bagian A s.d. F. Setiap kartu mewakili satu kelompok halaqoh.",
+        targetId: "sim-halaqoh-card",
+        pointerText: "Kartu kelompok halaqoh (Kelas 1A)",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 2,
+        badgeLabel: "Langkah 2: Data Pembimbing",
+        title: "Penetapan Pembimbing & WhatsApp",
+        desc: "Klik tombol 'Atur Pembimbing' pada kartu halaqoh untuk mencantumkan nama asatidz dan kontak WhatsApp agar mudah dihubungi oleh pengurus maupun santri.",
+        targetId: "sim-halaqoh-pembimbing-btn",
+        pointerText: "Klik tombol 'Atur Pembimbing'",
+        pointerPlacement: "top",
+      },
+      {
+        stepNumber: 3,
+        badgeLabel: "Langkah 3: Pantau Alfa",
+        title: "Pemantauan Ketidakhadiran (Alfa)",
+        desc: "Kartu halaqoh menampilkan indikator akumulasi ketidakhadiran santri tanpa keterangan (Alfa) pada bulan berjalan untuk membantu evaluasi kedisiplinan kelompok.",
+        targetId: "sim-halaqoh-alfa-badge",
+        pointerText: "Indikator santri tidak hadir (Alfa)",
+        pointerPlacement: "left",
+      },
+      {
+        stepNumber: 4,
+        badgeLabel: "Langkah 4: Rekap Kelompok",
+        title: "Buka Jendela Detail Halaqoh",
+        desc: "Klik 'Buka Detail Halaqoh' untuk mengakses laporan gabungan yang memuat riwayat absensi harian dan rekap perolehan juz baru seluruh anggota halaqoh tersebut.",
+        targetId: "sim-halaqoh-detail-btn",
+        pointerText: "Klik 'Buka Detail Halaqoh' di sini",
+        pointerPlacement: "top",
+      },
+    ],
+  },
+  pengaturan: {
+    id: "pengaturan",
+    name: "Pusat Konfigurasi & Pengaturan Sistem",
+    category: "Sistem",
+    icon: Settings,
+    accentColor: "from-slate-600 to-slate-800",
+    steps: [
+      {
+        stepNumber: 1,
+        badgeLabel: "Langkah 1: Tab Panduan",
+        title: "Pusat Pembelajaran & Panduan Interaktif",
+        desc: "Tab 'Panduan' ini menyediakan buku panduan resmi 10 bab lengkap dan pintu masuk simulasi interaktif ke seluruh modul sistem.",
+        targetId: "sim-settings-tab-panduan",
+        pointerText: "Tab Panduan & Pusat Belajar",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 2,
+        badgeLabel: "Langkah 2: Tampilan & Logo",
+        title: "Kustomisasi Identitas Lembaga",
+        desc: "Ubah logo resmi lembaga, favicon tab peramban web, gambar latar belakang halaman masuk, serta nilai standar batas kelulusan KKM.",
+        targetId: "sim-settings-tab-branding",
+        pointerText: "Tab Tampilan & Logo Lembaga",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 3,
+        badgeLabel: "Langkah 3: Akun Pengguna",
+        title: "Manajemen Pengguna & Otoritas",
+        desc: "Kelola akun pengguna (Admin, Pengurus, Pembimbing, Operator Absen, Viewer) dan atur izin akses granular per modul (Sembunyikan/Baca/Edit).",
+        targetId: "sim-settings-tab-users",
+        pointerText: "Tab Pengguna & Hak Akses",
+        pointerPlacement: "bottom",
+      },
+      {
+        stepNumber: 4,
+        badgeLabel: "Langkah 4: Cadangan Data",
+        title: "Pencadangan Basis Data Berkala",
+        desc: "Ekspor seluruh data santri, absensi, dan nilai khotmil ke dalam file JSON secara berkala demi keamanan data pesantren.",
+        targetId: "sim-settings-tab-backup",
+        pointerText: "Tab Cadangan Data (Backup)",
+        pointerPlacement: "bottom",
       },
     ],
   },
@@ -384,9 +566,22 @@ function SimulationContent() {
   const [juzOctValue, setJuzOctValue] = useState<number>(0);
   const [juzTotalValue, setJuzTotalValue] = useState<number>(4.5);
 
+  // 6. Evaluasi State
+  const [evalAdded, setEvalAdded] = useState(false);
+
+  // 7. Santri State
+  const [santriModalOpen, setSantriModalOpen] = useState(false);
+  const [hierarchyModalOpen, setHierarchyModalOpen] = useState(false);
+
+  // 8. Halaqoh State
+  const [pembimbingModalOpen, setPembimbingModalOpen] = useState(false);
+  const [halaqohDetailModalOpen, setHalaqohDetailModalOpen] = useState(false);
+
+  // 9. Pengaturan State
+  const [settingsActiveTab, setSettingsActiveTab] = useState<"panduan" | "branding" | "users" | "backup">("panduan");
+
   // Efek simulasi otomatis setiap langkah berubah
   useEffect(() => {
-    // Jalankan animasi perubahan sesuai langkah aktif
     if (sim.id === "flyer") {
       if (currentStepIndex >= 0) setFlyerSantriSelected(true);
       if (currentStepIndex >= 1) setFlyerPhotoLoaded(true);
@@ -403,13 +598,17 @@ function SimulationContent() {
       if (currentStepIndex === 0) {
         setKhotmilModalLjk(false);
         setKhotmilScanningOmr(false);
-      }
-      if (currentStepIndex === 1) setKhotmilModalLjk(true);
-      if (currentStepIndex === 2) {
+        setKhotmilScoreSaved(false);
+      } else if (currentStepIndex === 1) {
+        setKhotmilModalLjk(true);
+        setKhotmilScanningOmr(false);
+      } else if (currentStepIndex === 2) {
+        setKhotmilModalLjk(false);
+        setKhotmilScanningOmr(false);
+      } else if (currentStepIndex === 3) {
         setKhotmilModalLjk(false);
         setKhotmilScanningOmr(true);
-      }
-      if (currentStepIndex >= 3) {
+      } else if (currentStepIndex >= 4) {
         setKhotmilScanningOmr(false);
         setKhotmilScoreSaved(true);
       }
@@ -426,6 +625,27 @@ function SimulationContent() {
         setJuzOctValue(1.0);
         setJuzTotalValue(5.5);
       }
+    } else if (sim.id === "evaluasi") {
+      if (currentStepIndex >= 1) {
+        setEvalAdded(true);
+      }
+    } else if (sim.id === "santri") {
+      if (currentStepIndex === 1) setSantriModalOpen(true);
+      else setSantriModalOpen(false);
+
+      if (currentStepIndex === 2) setHierarchyModalOpen(true);
+      else setHierarchyModalOpen(false);
+    } else if (sim.id === "halaqoh") {
+      if (currentStepIndex === 1) setPembimbingModalOpen(true);
+      else setPembimbingModalOpen(false);
+
+      if (currentStepIndex === 3) setHalaqohDetailModalOpen(true);
+      else setHalaqohDetailModalOpen(false);
+    } else if (sim.id === "pengaturan") {
+      if (currentStepIndex === 0) setSettingsActiveTab("panduan");
+      if (currentStepIndex === 1) setSettingsActiveTab("branding");
+      if (currentStepIndex === 2) setSettingsActiveTab("users");
+      if (currentStepIndex >= 3) setSettingsActiveTab("backup");
     }
   }, [sim.id, currentStepIndex]);
 
@@ -433,7 +653,6 @@ function SimulationContent() {
     if (currentStepIndex < totalSteps - 1) {
       setCurrentStepIndex((prev) => prev + 1);
     } else {
-      // Selesai simulasi, kembali ke buku panduan
       router.push("/pengaturan?tab=panduan");
     }
   };
@@ -458,6 +677,12 @@ function SimulationContent() {
     setWaSendingProgress(0);
     setJuzOctValue(0);
     setJuzTotalValue(4.5);
+    setEvalAdded(false);
+    setSantriModalOpen(false);
+    setHierarchyModalOpen(false);
+    setPembimbingModalOpen(false);
+    setHalaqohDetailModalOpen(false);
+    setSettingsActiveTab("panduan");
   };
 
   const IconSim = sim.icon;
@@ -518,6 +743,18 @@ function SimulationContent() {
               <option value="juz_baru" className="text-slate-900">
                 Setoran Juz Baru Ziyadah
               </option>
+              <option value="evaluasi" className="text-slate-900">
+                Evaluasi Hafalan Periodik
+              </option>
+              <option value="santri" className="text-slate-900">
+                Master Data Santri & Kamar
+              </option>
+              <option value="halaqoh" className="text-slate-900">
+                Manajemen Halaqoh & Pembimbing
+              </option>
+              <option value="pengaturan" className="text-slate-900">
+                Pusat Pengaturan Sistem
+              </option>
             </select>
           </div>
         </div>
@@ -540,7 +777,6 @@ function SimulationContent() {
         {/* ----------------------------------------------------------------- */}
         {sim.id === "flyer" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Panel Kiri Kontrol Flyer */}
             <div className="lg:col-span-5 space-y-4">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -701,12 +937,9 @@ function SimulationContent() {
               </div>
             </div>
 
-            {/* Panel Kanan Kanvas Pratinjau Flyer */}
             <div className="lg:col-span-7 flex flex-col items-center">
               <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xl relative overflow-hidden">
-                {/* Kanvas Flyer Simulasi */}
                 <div className="aspect-[4/5] rounded-2xl bg-gradient-to-b from-[#0f4d38] via-[#0b3829] to-[#06241a] text-white p-6 flex flex-col justify-between relative overflow-hidden border-4 border-amber-300/40 shadow-inner">
-                  {/* Ornamen Atas */}
                   <div className="text-center">
                     <span className="text-[10px] tracking-widest font-bold uppercase text-amber-300">
                       LPTQ DARUSSALAM BLOKAGUNG
@@ -716,7 +949,6 @@ function SimulationContent() {
                     </h2>
                   </div>
 
-                  {/* Ornamen Kubah & Foto Santri */}
                   <div className="relative my-2 mx-auto w-44 h-56 rounded-t-full border-4 border-amber-300/80 overflow-hidden flex items-center justify-center bg-emerald-950/60 shadow-lg">
                     {flyerPhotoLoaded ? (
                       <div
@@ -735,7 +967,6 @@ function SimulationContent() {
                     )}
                   </div>
 
-                  {/* Identitas Santri & Tanggal */}
                   <div className="text-center space-y-1">
                     <h3 className="text-base font-black tracking-tight text-amber-200 leading-tight uppercase">
                       {flyerSantriSelected ? "DIYAH AYU NINGRUM" : "NAMA LENGKAP SANTRI"}
@@ -758,9 +989,7 @@ function SimulationContent() {
         {/* ----------------------------------------------------------------- */}
         {sim.id === "kegiatan" && (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-5">
-            {/* Kontrol Atas Absensi */}
             <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-              {/* Step 1: Sakelar Sesi Pagi / Malam */}
               <div
                 id="sim-kegiatan-sesi-toggle"
                 className={`relative inline-flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-800 transition-all ${
@@ -799,7 +1028,6 @@ function SimulationContent() {
                 </button>
               </div>
 
-              {/* Step 3: Tombol Set Semua Hadir */}
               <div
                 id="sim-kegiatan-set-all-btn"
                 className={`relative transition-all ${
@@ -825,7 +1053,6 @@ function SimulationContent() {
               </div>
             </div>
 
-            {/* Matriks Tabel Absensi Simulasi */}
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
                 <thead>
@@ -833,7 +1060,6 @@ function SimulationContent() {
                     <th className="py-2.5 px-3 rounded-l-xl">Nama Santri</th>
                     <th className="py-2.5 px-2 text-center">Tgl 21</th>
                     <th className="py-2.5 px-2 text-center">Tgl 22</th>
-                    {/* Step 2: Kolom Hari Ini (23 Okt) */}
                     <th
                       id="sim-kegiatan-today-col"
                       className={`relative py-2.5 px-3 text-center transition-all ${
@@ -879,8 +1105,6 @@ function SimulationContent() {
                     <td className="text-center text-slate-400 bg-slate-50/50">Libur</td>
                     <td className="text-center font-bold">{kegiatanAllHadir ? 3 : 2}</td>
                   </tr>
-
-                  {/* Step 4: Sel Santri 3 yang Diubah Menjadi Izin */}
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                     <td className="py-3 px-3 font-bold text-slate-900 dark:text-white">
                       3. Ahmad Zaki Mubarak (A.02)
@@ -922,7 +1146,6 @@ function SimulationContent() {
         {/* ----------------------------------------------------------------- */}
         {sim.id === "khotmil" && (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-5">
-            {/* Tab Tahapan Khotmil */}
             <div
               id="sim-khotmil-tab-select"
               className={`relative flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-100 dark:border-slate-800 ${
@@ -953,7 +1176,6 @@ function SimulationContent() {
               ))}
             </div>
 
-            {/* Tombol Aksi Cetak LJK & Scan Kamera OMR */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div
                 id="sim-khotmil-print-ljk-btn"
@@ -1068,18 +1290,33 @@ function SimulationContent() {
 
                 <div className="flex items-center justify-between pt-2">
                   <span className="text-xs font-bold text-emerald-300">
-                    Nilai Akhir Terhitung: <strong>97</strong> (LULUS KKM)
+                    Nilai Akhir Terhitung: <strong>97</strong> (LULUS KKM 85)
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setKhotmilScanningOmr(false);
-                      setKhotmilScoreSaved(true);
-                    }}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl transition shadow-md"
+                  <div
+                    id="sim-khotmil-save-camera-btn"
+                    className={`relative ${
+                      currentStep.targetId === "sim-khotmil-save-camera-btn"
+                        ? "ring-4 ring-amber-400 rounded-xl"
+                        : ""
+                    }`}
                   >
-                    Simpan Nilai ke Sistem
-                  </button>
+                    {currentStep.targetId === "sim-khotmil-save-camera-btn" && (
+                      <AnimatedPointer
+                        text={currentStep.pointerText}
+                        placement={currentStep.pointerPlacement}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setKhotmilScanningOmr(false);
+                        setKhotmilScoreSaved(true);
+                      }}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl transition shadow-md"
+                    >
+                      Simpan Nilai ke Sistem
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1144,7 +1381,6 @@ function SimulationContent() {
         {/* ----------------------------------------------------------------- */}
         {sim.id === "wa" && (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-5">
-            {/* Kontrol Header WAHA */}
             <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <MessageSquare className="w-5 h-5 text-emerald-600" />
@@ -1153,7 +1389,6 @@ function SimulationContent() {
                 </h3>
               </div>
 
-              {/* Step 1: Lencana Status WAHA */}
               <div
                 id="sim-wa-status-badge"
                 className={`relative inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-brand-dark dark:text-emerald-300 text-xs font-black ${
@@ -1173,13 +1408,11 @@ function SimulationContent() {
               </div>
             </div>
 
-            {/* Tindakan Massal */}
             <div className="flex items-center justify-between flex-wrap gap-3">
               <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
                 Santri Terpilih: <strong>{waSelectedCount}</strong> santri
               </span>
 
-              {/* Step 4: Tombol Mulai Kirim */}
               <div
                 id="sim-wa-start-broadcast-btn"
                 className={`relative ${
@@ -1205,7 +1438,6 @@ function SimulationContent() {
               </div>
             </div>
 
-            {/* Bilah Progres Pengiriman */}
             {waSendingProgress > 0 && (
               <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-1.5">
                 <div className="flex items-center justify-between text-xs font-bold text-emerald-800 dark:text-emerald-200">
@@ -1218,7 +1450,6 @@ function SimulationContent() {
               </div>
             )}
 
-            {/* Tabel Santri Kirim WA */}
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
                 <thead>
@@ -1303,7 +1534,6 @@ function SimulationContent() {
               </table>
             </div>
 
-            {/* Modal Pratinjau Rapor Digital */}
             {waPreviewModal && (
               <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
@@ -1450,6 +1680,456 @@ function SimulationContent() {
             </div>
           </div>
         )}
+
+        {/* ----------------------------------------------------------------- */}
+        {/* SIMULASI 6: EVALUASI HAFALAN PENGURUS PUSAT                       */}
+        {/* ----------------------------------------------------------------- */}
+        {sim.id === "evaluasi" && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-5">
+            <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div
+                id="sim-eval-filter-period"
+                className={`relative flex items-center gap-2 ${
+                  currentStep.targetId === "sim-eval-filter-period"
+                    ? "ring-4 ring-amber-400 rounded-xl"
+                    : ""
+                }`}
+              >
+                {currentStep.targetId === "sim-eval-filter-period" && (
+                  <AnimatedPointer
+                    text={currentStep.pointerText}
+                    placement={currentStep.pointerPlacement}
+                  />
+                )}
+                <span className="text-xs font-bold text-slate-500">Periode Evaluasi:</span>
+                <span className="px-3 py-1.5 bg-blue-50 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 rounded-xl text-xs font-extrabold">
+                  Triwulan IV - 2026
+                </span>
+              </div>
+
+              <div
+                id="sim-eval-add-btn"
+                className={`relative ${
+                  currentStep.targetId === "sim-eval-add-btn"
+                    ? "ring-4 ring-amber-400 rounded-xl"
+                    : ""
+                }`}
+              >
+                {currentStep.targetId === "sim-eval-add-btn" && (
+                  <AnimatedPointer
+                    text={currentStep.pointerText}
+                    placement={currentStep.pointerPlacement}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setEvalAdded(true)}
+                  className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-sm"
+                >
+                  <ClipboardCheck className="w-3.5 h-3.5" />
+                  <span>+ Tambah Evaluasi</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Simulasi Grafik Garis Tren */}
+            <div
+              id="sim-eval-chart-box"
+              className={`p-4 rounded-xl border transition-all ${
+                currentStep.targetId === "sim-eval-chart-box"
+                  ? "ring-4 ring-amber-400 border-amber-400 bg-amber-50/20"
+                  : "border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900"
+              }`}
+            >
+              {currentStep.targetId === "sim-eval-chart-box" && (
+                <AnimatedPointer
+                  text={currentStep.pointerText}
+                  placement={currentStep.pointerPlacement}
+                />
+              )}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-blue-600" />
+                  <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                    Tren Pertambahan Evaluasi Hafalan (Dashboard)
+                  </span>
+                </div>
+                <span className="text-[11px] font-bold text-blue-600">
+                  {evalAdded ? "+3.0 Juz Mutqin (Naik)" : "+2.0 Juz"}
+                </span>
+              </div>
+              <div className="h-20 flex items-end gap-2 pt-2 border-b border-slate-200 dark:border-slate-700">
+                <div className="flex-1 bg-blue-300 h-10 rounded-t-md" />
+                <div className="flex-1 bg-blue-400 h-14 rounded-t-md" />
+                <div className="flex-1 bg-blue-500 h-12 rounded-t-md" />
+                <div
+                  className={`flex-1 rounded-t-md transition-all duration-500 ${
+                    evalAdded ? "bg-blue-700 h-18" : "bg-blue-600 h-16"
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------------- */}
+        {/* SIMULASI 7: MASTER DATA SANTRI                                    */}
+        {/* ----------------------------------------------------------------- */}
+        {sim.id === "santri" && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-5">
+            <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div
+                id="sim-santri-search-box"
+                className={`relative flex-1 max-w-sm ${
+                  currentStep.targetId === "sim-santri-search-box"
+                    ? "ring-4 ring-amber-400 rounded-xl"
+                    : ""
+                }`}
+              >
+                {currentStep.targetId === "sim-santri-search-box" && (
+                  <AnimatedPointer
+                    text={currentStep.pointerText}
+                    placement={currentStep.pointerPlacement}
+                  />
+                )}
+                <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 px-3 py-2 rounded-xl text-xs text-slate-600 dark:text-slate-300">
+                  <Search className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Cari nama santri (contoh: Ridho)...</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div
+                  id="sim-santri-hierarchy-btn"
+                  className={`relative ${
+                    currentStep.targetId === "sim-santri-hierarchy-btn"
+                      ? "ring-4 ring-amber-400 rounded-xl"
+                      : ""
+                  }`}
+                >
+                  {currentStep.targetId === "sim-santri-hierarchy-btn" && (
+                    <AnimatedPointer
+                      text={currentStep.pointerText}
+                      placement={currentStep.pointerPlacement}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setHierarchyModalOpen(true)}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5"
+                  >
+                    <Building className="w-3.5 h-3.5" />
+                    <span>Atur Hirarki Kamar</span>
+                  </button>
+                </div>
+
+                <div
+                  id="sim-santri-import-btn"
+                  className={`relative ${
+                    currentStep.targetId === "sim-santri-import-btn"
+                      ? "ring-4 ring-amber-400 rounded-xl"
+                      : ""
+                  }`}
+                >
+                  {currentStep.targetId === "sim-santri-import-btn" && (
+                    <AnimatedPointer
+                      text={currentStep.pointerText}
+                      placement={currentStep.pointerPlacement}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Unggah Excel</span>
+                  </button>
+                </div>
+
+                <div
+                  id="sim-santri-add-btn"
+                  className={`relative ${
+                    currentStep.targetId === "sim-santri-add-btn"
+                      ? "ring-4 ring-amber-400 rounded-xl"
+                      : ""
+                  }`}
+                >
+                  {currentStep.targetId === "sim-santri-add-btn" && (
+                    <AnimatedPointer
+                      text={currentStep.pointerText}
+                      placement={currentStep.pointerPlacement}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setSantriModalOpen(true)}
+                    className="px-3.5 py-2 bg-brand text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Tambah Santri</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Simulasi Tambah Santri */}
+            {santriModalOpen && (
+              <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 rounded-2xl text-xs space-y-2">
+                <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white pb-2 border-b">
+                  <span>Simulasi: Formulir Santri Baru</span>
+                  <button type="button" onClick={() => setSantriModalOpen(false)}>
+                    Tutup
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div>Nama: <strong>Ahmad Fauzi</strong></div>
+                  <div>WhatsApp: <strong>0812-9988-7766</strong></div>
+                  <div>Blok: <strong>Blok A</strong></div>
+                  <div>Asrama: <strong>As-Salam (A.02)</strong></div>
+                  <div>Halaqoh: <strong>Kelas 1 Bagian A</strong></div>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Simulasi Hirarki Kamar */}
+            {hierarchyModalOpen && (
+              <div className="p-4 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 rounded-2xl text-xs space-y-2">
+                <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white pb-2 border-b">
+                  <span>Simulasi: Hirarki Wilayah Kamar Pesantren</span>
+                  <button type="button" onClick={() => setHierarchyModalOpen(false)}>
+                    Tutup
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-600">
+                  Blok A &gt; Asrama As-Salam &gt; Kamar A.01 s.d. A.12
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------------- */}
+        {/* SIMULASI 8: MANAJEMEN HALAQOH                                     */}
+        {/* ----------------------------------------------------------------- */}
+        {sim.id === "halaqoh" && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div
+              id="sim-halaqoh-card"
+              className={`bg-white dark:bg-slate-900 border rounded-2xl p-5 shadow-sm space-y-3 relative transition-all ${
+                currentStep.targetId === "sim-halaqoh-card"
+                  ? "ring-4 ring-amber-400 border-amber-400"
+                  : "border-slate-200 dark:border-slate-800"
+              }`}
+            >
+              {currentStep.targetId === "sim-halaqoh-card" && (
+                <AnimatedPointer
+                  text={currentStep.pointerText}
+                  placement={currentStep.pointerPlacement}
+                />
+              )}
+              <div className="flex items-center justify-between">
+                <span className="px-2.5 py-1 rounded-lg bg-sky-100 text-sky-800 font-extrabold text-xs">
+                  Kelas 1 - Bagian A
+                </span>
+                <span
+                  id="sim-halaqoh-alfa-badge"
+                  className={`text-[10px] font-black px-2 py-0.5 rounded-full relative ${
+                    currentStep.targetId === "sim-halaqoh-alfa-badge"
+                      ? "ring-4 ring-amber-400 bg-red-100 text-red-700"
+                      : "bg-red-50 text-red-600"
+                  }`}
+                >
+                  {currentStep.targetId === "sim-halaqoh-alfa-badge" && (
+                    <AnimatedPointer
+                      text={currentStep.pointerText}
+                      placement={currentStep.pointerPlacement}
+                    />
+                  )}
+                  Alfa Bulan Ini: 2
+                </span>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  Target: Juz 1 s.d. 3
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">Jumlah Santri: 14 Santri</p>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+                <div
+                  id="sim-halaqoh-pembimbing-btn"
+                  className={`relative ${
+                    currentStep.targetId === "sim-halaqoh-pembimbing-btn"
+                      ? "ring-4 ring-amber-400 rounded-xl"
+                      : ""
+                  }`}
+                >
+                  {currentStep.targetId === "sim-halaqoh-pembimbing-btn" && (
+                    <AnimatedPointer
+                      text={currentStep.pointerText}
+                      placement={currentStep.pointerPlacement}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPembimbingModalOpen(true)}
+                    className="font-bold text-sky-600 hover:underline flex items-center gap-1"
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Ust. Fauzi (WA Aktif)</span>
+                  </button>
+                </div>
+
+                <div
+                  id="sim-halaqoh-detail-btn"
+                  className={`relative ${
+                    currentStep.targetId === "sim-halaqoh-detail-btn"
+                      ? "ring-4 ring-amber-400 rounded-xl"
+                      : ""
+                  }`}
+                >
+                  {currentStep.targetId === "sim-halaqoh-detail-btn" && (
+                    <AnimatedPointer
+                      text={currentStep.pointerText}
+                      placement={currentStep.pointerPlacement}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setHalaqohDetailModalOpen(true)}
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 rounded-lg text-[11px] font-bold"
+                  >
+                    Buka Detail
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------------- */}
+        {/* SIMULASI 9: PUSAT PENGATURAN SISTEM                               */}
+        {/* ----------------------------------------------------------------- */}
+        {sim.id === "pengaturan" && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-5">
+            <div className="flex items-center gap-2 overflow-x-auto pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div
+                id="sim-settings-tab-panduan"
+                className={`relative ${
+                  currentStep.targetId === "sim-settings-tab-panduan"
+                    ? "ring-4 ring-amber-400 rounded-xl"
+                    : ""
+                }`}
+              >
+                {currentStep.targetId === "sim-settings-tab-panduan" && (
+                  <AnimatedPointer
+                    text={currentStep.pointerText}
+                    placement={currentStep.pointerPlacement}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSettingsActiveTab("panduan")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold ${
+                    settingsActiveTab === "panduan"
+                      ? "bg-brand text-white shadow-sm"
+                      : "bg-slate-100 dark:bg-slate-800"
+                  }`}
+                >
+                  Panduan
+                </button>
+              </div>
+
+              <div
+                id="sim-settings-tab-branding"
+                className={`relative ${
+                  currentStep.targetId === "sim-settings-tab-branding"
+                    ? "ring-4 ring-amber-400 rounded-xl"
+                    : ""
+                }`}
+              >
+                {currentStep.targetId === "sim-settings-tab-branding" && (
+                  <AnimatedPointer
+                    text={currentStep.pointerText}
+                    placement={currentStep.pointerPlacement}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSettingsActiveTab("branding")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold ${
+                    settingsActiveTab === "branding"
+                      ? "bg-brand text-white shadow-sm"
+                      : "bg-slate-100 dark:bg-slate-800"
+                  }`}
+                >
+                  Tampilan & Logo
+                </button>
+              </div>
+
+              <div
+                id="sim-settings-tab-users"
+                className={`relative ${
+                  currentStep.targetId === "sim-settings-tab-users"
+                    ? "ring-4 ring-amber-400 rounded-xl"
+                    : ""
+                }`}
+              >
+                {currentStep.targetId === "sim-settings-tab-users" && (
+                  <AnimatedPointer
+                    text={currentStep.pointerText}
+                    placement={currentStep.pointerPlacement}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSettingsActiveTab("users")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold ${
+                    settingsActiveTab === "users"
+                      ? "bg-brand text-white shadow-sm"
+                      : "bg-slate-100 dark:bg-slate-800"
+                  }`}
+                >
+                  Pengguna & Otoritas
+                </button>
+              </div>
+
+              <div
+                id="sim-settings-tab-backup"
+                className={`relative ${
+                  currentStep.targetId === "sim-settings-tab-backup"
+                    ? "ring-4 ring-amber-400 rounded-xl"
+                    : ""
+                }`}
+              >
+                {currentStep.targetId === "sim-settings-tab-backup" && (
+                  <AnimatedPointer
+                    text={currentStep.pointerText}
+                    placement={currentStep.pointerPlacement}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSettingsActiveTab("backup")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold ${
+                    settingsActiveTab === "backup"
+                      ? "bg-brand text-white shadow-sm"
+                      : "bg-slate-100 dark:bg-slate-800"
+                  }`}
+                >
+                  Cadangan Data
+                </button>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-600 dark:text-slate-300 p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border">
+              Tab aktif: <strong className="capitalize">{settingsActiveTab}</strong>. Anda dapat
+              mengonfigurasi identitas lembaga, otoritas hak akses, serta mencadangkan data JSON
+              dengan aman.
+            </div>
+          </div>
+        )}
       </main>
 
       {/* =================================================================== */}
@@ -1459,7 +2139,6 @@ function SimulationContent() {
         aria-label="Panel Navigasi Langkah Simulasi"
         className="fixed bottom-6 right-6 z-50 w-[92vw] max-w-md sm:max-w-lg bg-white dark:bg-slate-900 border-2 border-brand/60 rounded-3xl shadow-2xl overflow-hidden ring-4 ring-brand/10"
       >
-        {/* Header Panel */}
         <div className="bg-gradient-to-r from-brand to-brand-darker text-white px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
             <span className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center text-white shrink-0">
@@ -1486,7 +2165,6 @@ function SimulationContent() {
           </button>
         </div>
 
-        {/* Progress Bar */}
         <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 overflow-hidden">
           <div
             className="bg-amber-400 h-full transition-all duration-300 ease-out"
@@ -1494,7 +2172,6 @@ function SimulationContent() {
           />
         </div>
 
-        {/* Konten Langkah */}
         <div className="p-5">
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <h3 className="text-sm font-black text-slate-900 dark:text-white tracking-tight">
@@ -1517,7 +2194,6 @@ function SimulationContent() {
             </span>
           </div>
 
-          {/* Tombol Kontrol */}
           <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-1.5">
               <button
