@@ -49,7 +49,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Matriks tanggal 1 s.d. 31 dengan penanda libur hari Jumat",
       "Status Hadir, Alfa, Izin, Sakit dalam satu klik",
     ],
-    url: "/tahfidz/umum/kegiatan?tour=kegiatan",
+    url: "/panduan/simulasi?tour=kegiatan",
     icon: CalendarCheck,
     accentColor: "from-emerald-500 to-teal-700",
   },
@@ -63,7 +63,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Akumulasi perolehan Januari s.d. Desember",
       "Dukungan edit cepat langsung pada sel tabel",
     ],
-    url: "/tahfidz/umum/juz-baru?tour=juz_baru",
+    url: "/panduan/simulasi?tour=juz_baru",
     icon: BookMarked,
     accentColor: "from-teal-600 to-emerald-800",
   },
@@ -77,7 +77,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Terhubung dengan grafik tren Dashboard utama",
       "Filter jangka waktu 7, 14, 30 hari, dan bulan berjalan",
     ],
-    url: "/tahfidz/umum/evaluasi?tour=evaluasi",
+    url: "/panduan/simulasi?tour=evaluasi",
     icon: ClipboardCheck,
     accentColor: "from-blue-600 to-indigo-800",
   },
@@ -91,7 +91,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Pemindai OMR kamera untuk koreksi otomatis",
       "Penilaian objektif berbasis rumus standar KKM 85",
     ],
-    url: "/tahfidz/khotmil/15?tour=khotmil",
+    url: "/panduan/simulasi?tour=khotmil",
     icon: Award,
     accentColor: "from-purple-600 to-violet-800",
   },
@@ -105,7 +105,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Kontrol pemosisian foto, zoom, dan border",
       "Ekspor berkas gambar PNG beresolusi 1080x1350 px",
     ],
-    url: "/alat/flyer-khataman?tour=flyer",
+    url: "/panduan/simulasi?tour=flyer",
     icon: FileImage,
     accentColor: "from-amber-500 to-orange-700",
   },
@@ -119,7 +119,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Pesan dengan variabel dinamis nama, tahap, dan nilai",
       "Pengiriman antrean massal dengan jeda aman anti-blokir",
     ],
-    url: "/alat/kirim-wa?tour=wa",
+    url: "/panduan/simulasi?tour=wa",
     icon: MessageSquare,
     accentColor: "from-green-600 to-emerald-800",
   },
@@ -133,7 +133,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Standarisasi Blok, Asrama, dan Kamar pesantren",
       "Impor & ekspor Excel dengan sistem validasi format",
     ],
-    url: "/santri?tour=santri",
+    url: "/panduan/simulasi?tour=santri",
     icon: Users,
     accentColor: "from-cyan-600 to-blue-800",
   },
@@ -147,7 +147,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Pencatatan nama dan kontak WhatsApp asatidz pembimbing",
       "Deteksi rekap ketidakhadiran santri per kelompok",
     ],
-    url: "/halaqoh?tour=halaqoh",
+    url: "/panduan/simulasi?tour=halaqoh",
     icon: GraduationCap,
     accentColor: "from-sky-600 to-cyan-800",
   },
@@ -161,7 +161,7 @@ const FEATURE_TOURS: FeatureCard[] = [
       "Manajemen akun dan hak akses modul (Sembunyikan/Baca/Edit)",
       "Pencadangan data ke berkas JSON",
     ],
-    url: "/pengaturan?tab=branding&tour=pengaturan",
+    url: "/panduan/simulasi?tour=pengaturan",
     icon: Settings,
     accentColor: "from-slate-600 to-slate-800",
   },
@@ -420,7 +420,7 @@ export function PanduanTabContent() {
       </div>
 
       {/* ================================================================= */}
-      {/* SEKSI 1: TUR INTERAKTIF FITUR UNGGULAN                           */}
+      {/* SEKSI 1: SIMULASI INTERAKTIF FITUR UNGGULAN                      */}
       {/* ================================================================= */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
@@ -428,12 +428,13 @@ export function PanduanTabContent() {
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
               <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">
-                Eksplorasi Fitur Unggulan (Tur Interaktif)
+                Eksplorasi Fitur Unggulan (Simulasi Interaktif & Tur)
               </h3>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Klik salah satu tombol <strong>Mulai Tur</strong> di bawah untuk membuka halaman fitur
-              disertai panduan langkah-demi-langkah interaktif di layar.
+              Buka halaman simulasi mandiri yang dilengkapi <strong>panah petunjuk tombol</strong> dan
+              simulasi aksi langsung saat tombol <em>Lanjut</em> diklik. Data riil pondok 100% aman karena
+              berjalan di sandbox khusus.
             </p>
           </div>
         </div>
@@ -485,7 +486,7 @@ export function PanduanTabContent() {
                 >
                   <span className="flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Mulai Tur Interaktif</span>
+                    <span>Mulai Simulasi Interaktif</span>
                   </span>
                   <ExternalLink className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </Link>
