@@ -47,7 +47,6 @@ async function initWhatsApp() {
     sock = makeWASocket({
       version,
       logger,
-      printQRInTerminal: true,
       auth: state,
       browser: ["LPTQ Blokagung", "Chrome", "1.0.0"],
       syncFullHistory: false,
