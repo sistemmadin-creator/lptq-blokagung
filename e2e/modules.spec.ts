@@ -117,4 +117,32 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       await expect(page.getByRole('heading', { name: /Pengaturan WhatsApp Gateway \(WAHA\)/i })).not.toBeVisible();
     });
   });
+
+  test.describe('4. Modul Panduan Sistem (/pengaturan?tab=panduan)', () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAsAdmin(page);
+    });
+
+    test('memuat materi panduan teknis BAB 7: alur kerja WhatsApp gateway, perbedaan tunnel vs port lokal, dan jaminan gratis', async ({ page }) => {
+      await page.goto('/pengaturan?tab=panduan');
+
+      // Tunggu hingga autentikasi hak akses selesai
+      await expect(page.getByText('Memverifikasi hak akses...')).not.toBeVisible({ timeout: 15000 });
+
+      // Verifikasi judul buku panduan
+      await expect(page.getByRole('heading', { name: /Buku Panduan & Tur Interaktif LPTQ Blokagung/i })).toBeVisible({ timeout: 15000 });
+
+      // Klik untuk memperluas BAB 7
+      const bab7Button = page.getByRole('button', { name: /BAB 7.*Alat Lanjutan/i });
+      await expect(bab7Button).toBeVisible();
+      await bab7Button.click();
+
+      // Verifikasi materi yang baru ditambahkan tampil lengkap
+      await expect(page.getByRole('heading', { name: /Bagaimana Alur Kerjanya Kok Bisa Terhubung/i })).toBeVisible();
+      await expect(page.getByRole('heading', { name: /Apa Beda Pilihan.*Cloudflare HTTPS Tunnel.*Port Lokal/i })).toBeVisible();
+      await expect(page.getByText('Jawabannya: TIDAK, 100% GRATIS SELAMANYA.')).toBeVisible();
+      await expect(page.getByRole('heading', { name: /2 Tips Penting untuk Menjaga Nomor Tetap Aman/i })).toBeVisible();
+      await expect(page.getByRole('heading', { name: /Pembaruan Fitur Flyer Khataman & WhatsApp Web/i })).toBeVisible();
+    });
+  });
 });

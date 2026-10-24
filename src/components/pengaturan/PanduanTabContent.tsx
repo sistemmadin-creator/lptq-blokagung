@@ -99,11 +99,12 @@ const FEATURE_TOURS: FeatureCard[] = [
     id: "flyer",
     title: "Generator Flyer Khataman 30 Juz",
     category: "Alat Lanjutan",
-    desc: "Pembuatan poster digital ucapan khatam Al-Qur'an lengkap dengan ornamen kubah, penanggalan Masehi & Hijriah hisab terpadu.",
+    desc: "Pembuatan poster digital ucapan khatam Al-Qur'an lengkap dengan sistem Template Flyer resmi, penataan geser foto interaktif, dan penanggalan Hijriah terpadu.",
     bullets: [
-      "Deteksi santri khatam 30 juz otomatis",
-      "Kontrol pemosisian foto, zoom, dan border",
-      "Ekspor berkas gambar PNG beresolusi 1080x1350 px",
+      "Sistem Template Flyer preset & kustom (menggantikan tombol Posisi Terkunci)",
+      "Interaksi geser foto santri langsung di kanvas (double-tap di HP & tombol Tengahkan Foto)",
+      "Deteksi santri khatam 30 juz otomatis & penanggalan Masehi/Hijriah hisab",
+      "Ekspor berkas gambar PNG beresolusi tajam (814x1024 px)",
     ],
     url: "/panduan/simulasi?tour=flyer",
     icon: FileImage,
@@ -113,11 +114,12 @@ const FEATURE_TOURS: FeatureCard[] = [
     id: "wa",
     title: "Broadcast Laporan WhatsApp (WAHA Gateway)",
     category: "Alat Lanjutan",
-    desc: "Pengiriman laporan hasil evaluasi khotmil ke nomor WhatsApp wali santri disertai kartu rapor digital bergambar otomatis.",
+    desc: "Pengiriman laporan hasil evaluasi khotmil ke nomor WhatsApp wali santri disertai kartu rapor digital bergambar otomatis (100% gratis selamanya via Baileys & Cloudflare Tunnel).",
     bullets: [
-      "Pembuatan kartu rapor digital otomatis via OpenGraph",
-      "Pesan dengan variabel dinamis nama, tahap, dan nilai",
-      "Pengiriman antrean massal dengan jeda aman anti-blokir",
+      "Koneksi WhatsApp Gateway gratis (Port 3008 & Cloudflare HTTPS Tunnel)",
+      "Scan QR Code WhatsApp langsung di dalam modal aplikasi",
+      "Pembuatan kartu rapor digital otomatis via OpenGraph & pengiriman gambar asli",
+      "Fallback WA Web dengan fitur cerdas Auto-Copy gambar ke Clipboard (Ctrl + V)",
     ],
     url: "/panduan/simulasi?tour=wa",
     icon: MessageSquare,
@@ -258,14 +260,18 @@ const CHAPTERS: ChapterItem[] = [
   {
     id: "bab-7",
     number: "BAB 7",
-    title: "Alat Lanjutan (Flyer & WhatsApp)",
+    title: "Alat Lanjutan (Flyer Khataman & WhatsApp Gateway)",
     summary:
-      "Fasilitas pembuatan ucapan khataman otomatis dan integrasi gateway siaran pesan WhatsApp resmi.",
+      "Panduan lengkap pembuatan flyer khataman dengan sistem template & geser foto interaktif, serta integrasi WhatsApp Gateway (WAHA) gratis tanpa biaya pesan.",
     topics: [
-      "Generator Flyer Khataman 30 Juz dengan Penanggalan Hijriah Otomatis",
-      "Pengaturan Kanvas Foto, Ornamen Kubah, dan Unduh PNG 1080x1350",
-      "Konfigurasi Endpoint Server WhatsApp HTTP API (WAHA)",
-      "Kartu Rapor Digital Bergambar Otomatis & Antrean Kirim Massal Aman",
+      "Alur Kerja Gateway: Vercel -> Cloudflare Tunnel -> Gateway Laptop (Port 3008) -> WhatsApp -> Wali Santri",
+      "Perbedaan Pilihan Cepat: 'Cloudflare HTTPS Tunnel (Untuk Vercel)' vs 'Port Lokal (3008)'",
+      "Kepastian Biaya: 100% Gratis Selamanya (Open Source Baileys, Cloudflare Quick Tunnel, Supabase & Vercel Free Tier)",
+      "2 Tips Keamanan Nomor: Jeda Otomatis Anti-Banned (4-7 detik) & Menjaga Laptop Tetap Menyala",
+      "Prosedur Scan QR Code WhatsApp Langsung di Dalam Modal Aplikasi",
+      "Generator Flyer Khataman: Sistem Template Flyer Preset & Kustom (Menggantikan Tombol Posisi Terkunci)",
+      "Interaktivitas Geser Foto Santri di Kanvas: Mouse Drag di PC & Double-Tap di HP Layar Sentuh",
+      "Pengiriman Kartu Rapor ke WA Web: Auto-Copy Gambar ke Clipboard (Ctrl + V) & Unduh File PNG",
     ],
   },
   {
@@ -582,6 +588,203 @@ export function PanduanTabContent() {
                         ))}
                       </ul>
                     </div>
+
+                    {/* Panduan Lengkap Interaktif Khusus Bab 7 (Flyer & WhatsApp Gateway) */}
+                    {ch.id === "bab-7" && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 space-y-5 text-xs text-slate-700 dark:text-slate-300">
+                        {/* 1. Alur Kerja Gateway */}
+                        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-extrabold flex items-center justify-center text-xs shrink-0">
+                              1
+                            </span>
+                            <h5 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">
+                              Bagaimana Alur Kerjanya Kok Bisa Terhubung &amp; Kirim Pesan?
+                            </h5>
+                          </div>
+
+                          <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Sistem ini terdiri dari <strong>3 komponen utama</strong>:
+                          </p>
+                          <ol className="list-decimal list-inside space-y-1 text-slate-600 dark:text-slate-300 pl-1">
+                            <li><strong>Website LPTQ Blokagung:</strong> Antarmuka web resmi yang diakses pengguna di browser (<code>https://lptq-blokagung.vercel.app</code>).</li>
+                            <li><strong>Server Gateway di Laptop Anda:</strong> Program Node.js dengan engine <em>Baileys</em> yang berjalan lokal di port <code>3008</code>.</li>
+                            <li><strong>Server Resmi WhatsApp / Meta:</strong> Server perpesanan terenkripsi di internet.</li>
+                          </ol>
+
+                          {/* Diagram Alur */}
+                          <div className="p-3.5 rounded-xl bg-slate-900 text-emerald-400 font-mono text-[11px] leading-relaxed overflow-x-auto select-all">
+                            <div>[Website LPTQ di Vercel]</div>
+                            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;(Kirim perintah pesan + foto rapor)</div>
+                            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▼</div>
+                            <div>[Cloudflare HTTPS Tunnel]&nbsp;&nbsp;&lt;--- Jembatan aman resmi dari internet ke laptop</div>
+                            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│</div>
+                            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▼</div>
+                            <div>[Server Gateway di Laptop (Port 3008)]</div>
+                            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;(Mengemas teks &amp; file gambar rapor)</div>
+                            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▼</div>
+                            <div>[Koneksi Perangkat Tertaut WhatsApp]</div>
+                            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;(Lewat nomor HP pengurus lembaga)</div>
+                            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▼</div>
+                            <div>[HP Wali Santri Penerima]</div>
+                          </div>
+
+                          <div className="space-y-2 pt-1">
+                            <h6 className="font-bold text-slate-800 dark:text-slate-200">
+                              Alur dari Scan QR sampai Pesan Terkirim:
+                            </h6>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
+                                <span className="font-bold text-brand block">Tahap 1: Scan QR Code (Autentikasi)</span>
+                                <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
+                                  <li>Server di laptop membuka koneksi aman ke server WhatsApp.</li>
+                                  <li>Server WhatsApp memberikan tiket sesi berupa QR Code.</li>
+                                  <li>Saat Anda scan dengan HP, HP menyetujui laptop sebagai <strong>Perangkat Tertaut</strong> (sama seperti WhatsApp Web).</li>
+                                  <li>Kunci login disimpan di folder <code>waha-gateway/auth_info_baileys/</code> sehingga <strong>tidak perlu scan berulang-ulang</strong>.</li>
+                                </ul>
+                              </div>
+                              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
+                                <span className="font-bold text-brand block">Tahap 2: Pengiriman Gambar Rapor &amp; Teks</span>
+                                <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
+                                  <li>Saat tombol <em>Kirim ke Wali</em> atau <em>Mulai Kirim Broadcast</em> diklik:</li>
+                                  <li>Web mengirim nomor HP wali, teks evaluasi, dan URL gambar kartu rapor resmi.</li>
+                                  <li>Server laptop mengunduh gambar kartu rapor lalu menembakkannya langsung via koneksi WhatsApp.</li>
+                                  <li>Wali santri menerima foto rapor tajam dan teks nilai secara otomatis dari nomor lembaga!</li>
+                                </ul>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 2. Pilihan Cepat: Cloudflare vs Port Lokal */}
+                        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-extrabold flex items-center justify-center text-xs shrink-0">
+                              2
+                            </span>
+                            <h5 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">
+                              Apa Beda Pilihan &quot;Cloudflare HTTPS Tunnel&quot; vs &quot;Port Lokal (3008)&quot;?
+                            </h5>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                            <div className="p-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 space-y-1.5">
+                              <span className="font-bold text-emerald-800 dark:text-emerald-300 block">
+                                ☁️ Cloudflare HTTPS Tunnel (Untuk Vercel)
+                              </span>
+                              <p className="text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                                <strong>Kapan dipakai?</strong> Saat Anda membuka website LPTQ melalui domain internet Vercel (<code>https://lptq-blokagung.vercel.app</code>).
+                              </p>
+                              <p className="text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                                <strong>Alasannya:</strong> Domain Vercel menggunakan <strong>HTTPS</strong>. Browser modern seperti Google Chrome melarang website HTTPS publik memanggil <code>http://localhost</code> secara langsung (aturan <em>Mixed Content &amp; Private Network Access</em>). Cloudflare Tunnel berfungsi sebagai <strong>terowongan aman resmi ber-HTTPS</strong> yang menghubungkan website Vercel ke laptop Anda tanpa terblokir browser.
+                              </p>
+                            </div>
+
+                            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5">
+                              <span className="font-bold text-slate-800 dark:text-slate-200 block">
+                                🏠 Port Lokal (3008)
+                              </span>
+                              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                                <strong>Kapan dipakai?</strong> Jika Anda membuka website LPTQ secara lokal di laptop Anda sendiri (misal alamat di browser adalah <code>http://localhost:3005</code>).
+                              </p>
+                              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                                <strong>Alasannya:</strong> Karena sama-sama di dalam laptop (HTTP ke HTTP), browser tidak memblokirnya sehingga bisa langsung terhubung tanpa bantuan tunnel internet.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 3. Kepastian Biaya: 100% Gratis */}
+                        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-extrabold flex items-center justify-center text-xs shrink-0">
+                              3
+                            </span>
+                            <h5 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">
+                              Apakah Itu Akan Tiba-Tiba Berbayar?
+                            </h5>
+                          </div>
+
+                          <div className="p-3 rounded-xl bg-emerald-100/70 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-100 font-bold">
+                            Jawabannya: TIDAK, 100% GRATIS SELAMANYA.
+                          </div>
+
+                          <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Tidak ada tagihan apa pun yang akan muncul, dengan rincian berikut:
+                          </p>
+
+                          <ul className="space-y-2 text-[11px] text-slate-600 dark:text-slate-300">
+                            <li className="flex items-start gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                              <div>
+                                <strong>Engine WhatsApp Gateway (Baileys &amp; Node.js):</strong> Berlisensi Open Source (MIT) yang bebas dipakai gratis tanpa royalti atau biaya per pesan (berbeda dengan WhatsApp Business API resmi Meta yang bertarif ~Rp 400 - Rp 600 per pesan).
+                              </div>
+                            </li>
+                            <li className="flex items-start gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                              <div>
+                                <strong>Cloudflare Quick Tunnel (trycloudflare.com):</strong> Disediakan secara resmi dan gratis oleh Cloudflare untuk pengembang tanpa memerlukan kartu kredit.
+                              </div>
+                            </li>
+                            <li className="flex items-start gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                              <div>
+                                <strong>Infrastruktur Vercel &amp; Supabase:</strong> Akun yang digunakan berada pada paket <em>Hobby / Community (Free Tier)</em> yang gratis.
+                              </div>
+                            </li>
+                          </ul>
+                        </div>
+
+                        {/* 4. Tips Keamanan Nomor */}
+                        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-2xl p-4 sm:p-5 space-y-2.5">
+                          <h5 className="font-extrabold text-sm text-amber-900 dark:text-amber-200 flex items-center gap-2">
+                            <span>💡</span>
+                            <span>2 Tips Penting untuk Menjaga Nomor Tetap Aman</span>
+                          </h5>
+                          <ul className="space-y-2 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                            <li className="flex items-start gap-2">
+                              <span className="font-bold shrink-0">1.</span>
+                              <div>
+                                <strong>Gunakan Jeda Otomatis (Anti-Banned):</strong> Di pengaturan, biarkan <em>Jeda Minimal: 4 detik</em> dan <em>Jeda Maksimal: 7 detik</em>. Jeda acak ini meniru jeda manusia mengetik sehingga nomor tidak dicurigai sebagai bot spam oleh Meta.
+                              </div>
+                            </li>
+                            <li className="flex items-start gap-2">
+                              <span className="font-bold shrink-0">2.</span>
+                              <div>
+                                <strong>Laptop Harus Menyala Saat Mengirim Broadcast:</strong> Karena mesin pengirimnya berada di laptop ini, pastikan laptop tetap menyala dan terhubung internet saat proses broadcast massal berjalan.
+                              </div>
+                            </li>
+                          </ul>
+                        </div>
+
+                        {/* 5. Pembaruan Fitur Flyer Khataman & Kirim WA Web */}
+                        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm">
+                          <h5 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                            <span>✨</span>
+                            <span>Pembaruan Fitur Flyer Khataman &amp; WhatsApp Web (Rilis Terkini)</span>
+                          </h5>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
+                              <strong className="text-brand block">Flyer Khataman Al-Qur&apos;an (/alat/flyer-khataman)</strong>
+                              <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400">
+                                <li>Tombol <strong>Template Flyer</strong> menggantikan tombol lama <em>Posisi Terkunci</em>.</li>
+                                <li>Dukungan preset resmi: <em>Template Putri (Resmi)</em>, <em>Template Putra (Resmi)</em>, dan <em>Khotmil 15 Juz</em>.</li>
+                                <li>Foto santri dapat <strong>digeser langsung di kanvas pratinjau</strong>. Pada HP layar sentuh, cukup <strong>ketuk 2 kali (double-tap)</strong> untuk mengaktifkan mode geser agar tidak mengganggu scroll halaman.</li>
+                                <li>Tombol cepat <strong>Tengahkan Foto</strong> untuk mereset posisi foto kembali ke <code>0px, 0px</code>.</li>
+                              </ul>
+                            </div>
+                            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
+                              <strong className="text-brand block">Kirim WhatsApp &amp; Rapor Digital (/alat/kirim-wa)</strong>
+                              <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400">
+                                <li><strong>Scan QR Code langsung di layar</strong> modal pengaturan aplikasi Vercel.</li>
+                                <li><strong>Auto-Copy Gambar Rapor ke Clipboard:</strong> Saat klik tombol <em>WA Web</em>, gambar rapor otomatis disalin ke clipboard dan muncul panduan <kbd>Ctrl + V</kbd> di WhatsApp Web.</li>
+                                <li>Tombol bantuan <strong>Unduh Gambar PNG</strong> dan <strong>Salin Gambar</strong> di bawah panel pratinjau.</li>
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -384,7 +384,7 @@ Setelah ujian selesai dan penguji mengarsir bulatan pada LJK:
 
 ---
 
-## BAB 7: ALAT LANJUTAN
+## BAB 7: ALAT LANJUTAN (FLYER KHATAMAN & WHATSAPP GATEWAY)
 
 ### 7.1 Generator Flyer Khataman Santri
 Menu rute: `/alat/flyer-khataman`
@@ -393,49 +393,109 @@ Modul ini memproduksi e-flyer ucapan selamat khatam Al-Qur'an 30 Juz secara digi
 
 1. **Pemilihan Santri**:
    - Sistem otomatis mendeteksi dan menampilkan santri yang telah menyelesaikan seluruh hafalan 30 Juz.
-   - Anda juga dapat mencari santri secara manual melalui kotak pencarian.
-2. **Pengunggahan Foto**:
+   - Anda juga dapat mencari santri secara manual melalui kotak pencarian database.
+2. **Sistem Template Flyer (Pembaruan Terkini)**:
+   - Tombol **Template Flyer** (`🎨 Template Flyer`) menggantikan tombol lama *Posisi Terkunci*.
+   - Menyediakan pilihan template preset resmi: **Template Putri (Resmi)**, **Template Putra (Resmi)**, dan **Template Khotmil 15 Juz**.
+   - Pengurus dapat menyimpan variasi tata letak baru menjadi template tersimpan ke penyimpanan lokal (*LocalStorage*).
+3. **Pengunggahan & Interaksi Geser Foto Santri**:
    - Klik tombol **Unggah Foto Santri**.
-   - Gunakan kontrol posisi, pembesaran (*zoom*), rotasi, dan radius sudut (*border radius*) agar wajah santri pas di dalam bingkai kubah (*dome overlay*).
-3. **Data Biodata dan Penanggalan Otomatis**:
+   - **Interaksi Geser di Kanvas (Desktop)**: Foto santri dapat diklik dan digeser (*drag*) secara bebas langsung di atas kanvas pratinjau. Zoom foto juga dapat diatur dengan roda gulir mouse (*scroll wheel*).
+   - **Interaksi Sentuh (Mobile / HP)**: Pada layar sentuh smartphone, lakukan **ketuk 2 kali (*double-tap*)** untuk mengaktifkan/menonaktifkan mode geser foto (disertai getaran haptic singkat dan notifikasi toast), sehingga pengguna tetap bebas melakukan *scroll* halaman tanpa sengaja menggeser foto.
+   - **Tombol Cepat Tengahkan Foto**: Mengembalikan nilai pergeseran foto (*offset*) ke posisi semula `0px, 0px`.
+4. **Data Biodata dan Penanggalan Otomatis**:
    - Nama santri dan nama orang tua (*Bin / Binti*) terisi otomatis.
    - Tanggal khatam ditampilkan dalam dua format penanggalan resmi: **Tanggal Masehi** dan **Tanggal Hijriah** (dihitung otomatis melalui pustaka hisab terpadu).
-4. **Kustomisasi Layout**:
-   - Jika posisi teks ingin digeser, klik ikon **Buka Kunci Layout (Gembok Terbuka)**. Anda dapat mengatur koordinat X/Y, ukuran huruf (*font size*), serta warna teks.
-5. **Penyimpanan Hasil**:
-   - Klik tombol **Unduh Flyer (PNG)** untuk mengunduh gambar beresolusi tinggi (format 1080x1350 px, cocok untuk Instagram, status WhatsApp, dan cetak foto).
-   - Klik tombol **Salin ke Clipboard** untuk menempelkan gambar secara instan ke aplikasi perpesanan.
+5. **Kustomisasi Detail Koordinat Teks**:
+   - Disediakan accordion opsional **Penyesuaian Detail Koordinat Teks** untuk mengatur koordinat X/Y, ukuran huruf (*font size*), serta warna teks.
+6. **Penyimpanan Hasil**:
+   - Klik tombol **Unduh Flyer (PNG)** untuk mengunduh gambar resolusi tinggi (814x1024 px asli tanpa buram).
+   - Klik tombol **Salin** untuk menempelkan gambar secara instan ke clipboard.
 
-### 7.2 Modul Kirim WhatsApp Terintegrasi (WAHA Gateway)
+### 7.2 Integrasi WhatsApp Gateway (WAHA & Baileys)
 Menu rute: `/alat/kirim-wa`
 
-Modul ini menghubungkan aplikasi dengan nomor resmi WhatsApp LPTQ melalui WhatsApp HTTP API (WAHA).
+Modul ini menghubungkan aplikasi LPTQ dengan nomor resmi WhatsApp lembaga untuk mengirimkan kartu rapor digital dan pesan evaluasi berkala kepada wali santri secara otomatis.
 
-#### Fitur Utama:
-- **Pengecekan Status Gateway**: Menampilkan status koneksi WhatsApp (ONLINE / OFFLINE) secara *real-time*.
-- **Penyaring Santri**: Filter berdasarkan Program Khotmil (15 Juz atau 30 Juz), nomor Tahap, Asrama, dan Status Kirim (Belum Dikirim / Sudah Dikirim).
-- **Pencegah Pesan Ganda (*Anti-Double Sending*)**: Sistem menandai santri yang sudah berhasil dikirimi pesan agar tidak terjadi pengiriman berulang.
+#### 1. Bagaimana Alur Kerjanya Kok Bisa Terhubung & Kirim Pesan?
+Sistem ini terdiri dari **3 komponen utama**:
+1. **Website LPTQ Blokagung** (yang dibuka di browser Chrome: `https://lptq-blokagung.vercel.app` atau `http://localhost:3005`).
+2. **Server Gateway di Laptop Anda** (program Node.js + engine *Baileys* yang berjalan di port `3008`).
+3. **Server Resmi WhatsApp / Meta** di internet.
 
-### 7.3 Pembuatan Rapor Digital Otomatis dan Broadcast Pesan
+```text
+[Website LPTQ di Vercel] 
+          │  (Kirim perintah pesan + foto rapor)
+          ▼
+[Cloudflare HTTPS Tunnel]  <--- Jembatan aman resmi dari internet ke laptop
+          │
+          ▼
+[Server Gateway di Laptop (Port 3008)]
+          │  (Mengemas teks & file gambar rapor)
+          ▼
+[Koneksi Perangkat Tertaut WhatsApp]
+          │  (Lewat nomor HP pengurus lembaga)
+          ▼
+[HP Wali Santri Penerima]
+```
+
+**Alur dari Scan QR sampai Pesan Terkirim:**
+- **Tahap 1: Scan QR Code (Autentikasi)**:
+  - Server di laptop Anda membuka koneksi aman ke server WhatsApp.
+  - Server WhatsApp memberikan tiket sesi berupa QR Code.
+  - Saat Anda melakukan scan dengan aplikasi WhatsApp HP, HP menyetujui laptop Anda sebagai **"Perangkat Tertaut"** (sama persis seperti saat Anda login ke *WhatsApp Web* di browser).
+  - Kunci login ini disimpan di folder `waha-gateway/auth_info_baileys/` di laptop Anda, sehingga Anda **tidak perlu scan QR berulang-ulang**.
+- **Tahap 2: Pengiriman Gambar Rapor & Teks**:
+  - Saat pengurus mengklik **Kirim ke Wali** atau **Mulai Kirim Broadcast**:
+  - Website LPTQ mengirimkan instruksi ke server gateway di laptop berisi:
+    1. Nomor HP wali santri tujuan.
+    2. Teks pesan keterangan evaluasi / kelulusan juz.
+    3. Tautan gambar kartu rapor digital resmi.
+  - Server di laptop Anda mengunduh gambar kartu rapor tersebut, lalu menembakkannya langsung ke WhatsApp wali santri melalui koneksi perangkat tertaut tadi.
+  - Wali santri akan menerima foto rapor digital yang tajam beserta teksnya secara otomatis dari nomor lembaga!
+
+#### 2. Apa Beda Pilihan "Cloudflare HTTPS Tunnel" vs "Port Lokal (3008)"?
+- **☁️ Cloudflare HTTPS Tunnel (Untuk Vercel)**:
+  - **Kapan dipakai?** Saat Anda membuka website LPTQ melalui domain internet Vercel (`https://lptq-blokagung.vercel.app`).
+  - **Alasannya:** Domain Vercel menggunakan **HTTPS** (gembok hijau/aman). Browser modern (seperti Chrome) memiliki aturan keamanan ketat (*Mixed Content & Private Network Access*): browser melarang website HTTPS publik memanggil `http://localhost` secara langsung. Cloudflare Tunnel berfungsi sebagai **terowongan aman resmi ber-HTTPS** yang menghubungkan website Vercel ke server di laptop Anda tanpa terblokir browser.
+- **🏠 Port Lokal (3008)**:
+  - **Kapan dipakai?** Jika Anda membuka website LPTQ secara lokal di laptop Anda sendiri (misal alamat di browser adalah `http://localhost:3005`).
+  - Karena sama-sama di dalam laptop (HTTP ke HTTP), browser tidak memblokirnya sehingga bisa langsung terhubung tanpa bantuan tunnel internet.
+
+#### 3. Apakah Itu Akan Tiba-Tiba Berbayar?
+**Jawabannya: TIDAK, 100% GRATIS SELAMANYA.**
+
+Tidak ada tagihan apa pun yang akan muncul, dengan rincian berikut:
+1. **Engine WhatsApp Gateway (Baileys & Node.js)**:
+   - Engine ini berlisensi **Open Source (MIT)** yang bebas dipakai secara gratis tanpa royalti atau biaya per pesan (berbeda dengan WhatsApp Business API resmi Meta yang bertarif ~Rp 400 - Rp 600 per pesan).
+2. **Cloudflare Quick Tunnel (`trycloudflare.com`)**:
+   - Disediakan secara resmi dan gratis oleh Cloudflare untuk pengembang tanpa memerlukan kartu kredit.
+3. **Infrastruktur Vercel & Supabase**:
+   - Akun yang digunakan berada pada paket *Hobby / Community (Free Tier)* yang gratis.
+
+#### 4. Dua (2) Tips Penting untuk Menjaga Nomor Tetap Aman:
+1. **Gunakan Jeda Otomatis (Anti-Banned)**:
+   - Di pengaturan, biarkan **Jeda Minimal: 4 detik** dan **Jeda Maksimal: 7 detik**.
+   - Jeda acak ini meniru jeda manusia saat mengetik sehingga nomor WhatsApp Anda tidak dicurigai sebagai robot spam oleh server Meta.
+2. **Laptop Harus Menyala Saat Mengirim Broadcast**:
+   - Karena mesin pengirimnya berada di laptop ini, pastikan laptop Anda tetap menyala dan terhubung ke internet saat proses broadcast massal sedang berjalan.
+
+### 7.3 Pembuatan Rapor Digital Otomatis dan Pengiriman via WA Web
 1. **Pembuatan Gambar Rapor Otomatis**:
    - Sistem menyediakan rute dinamis `/api/og/rapor-evaluasi` yang secara otomatis menggambar kartu laporan hasil ujian santri (lengkap dengan kop LPTQ, nilai per juz, rata-rata, dan status kelulusan).
    - Gambar ini dikirimkan langsung sebagai lampiran gambar resmi WhatsApp kepada wali santri.
-2. **Penyuntingan Template Pesan**:
-   - Klik tombol **Atur Template Pesan**.
-   - Anda dapat menggunakan variabel dinamis dalam tanda kurung kurawal ganda:
-     - `{{nama}}`: Nama lengkap santri
-     - `{{kamar}}`: Kamar dan asrama santri
-     - `{{program}}`: Program Khotmil (15 Juz / 30 Juz)
-     - `{{tahap}}`: Nomor tahap ujian
-     - `{{rata_rata}}`: Nilai rata-rata ujian
-     - `{{status}}`: Status kelulusan (TUNTAS / BELUM TUNTAS)
-3. **Prosedur Pengiriman Massal**:
-   - Pilih satu atau beberapa santri di tabel dengan memberi centang.
-   - Klik tombol hijau **Mulai Kirim Antrean**.
-   - Sistem mengirim pesan satu per satu dengan jeda aman (3-5 detik) agar nomor pengirim terhindar dari pemblokiran oleh WhatsApp.
+2. **Pengiriman via WhatsApp Web (Pembaruan Terkini)**:
+   - **Auto-Copy Gambar Rapor ke Clipboard**: Saat pengguna mengeklik tombol **WA Web**, gambar rapor santri secara otomatis disalin ke *Clipboard* perangkat sebagai file PNG asli (`navigator.clipboard.write`).
+   - **Panduan Tempel (Ctrl + V)**: Muncul jendela panduan interaktif yang mengarahkan pengguna saat WhatsApp Web terbuka untuk cukup menekan **<kbd>Ctrl + V</kbd>** (atau *Paste*) di kolom chat. Gambar rapor langsung terlampir bersama teks keterangan nilai.
+   - **Tombol Bantuan Cepat**: Tersedia tombol **Unduh Gambar PNG** dan **Salin Gambar** di bawah panel pratinjau kartu rapor.
+3. **Penyuntingan Template Pesan**:
+   - Klik tombol **Draf Pesan** di bilah kontrol atas.
+   - Anda dapat menggunakan variabel dinamis: `{nama}`, `{asrama}`, `{kamar}`, `{program}`, `{tahap}`, `{rata_rata}`, `{status}`, `{catatan}`.
+4. **Prosedur Pengiriman Massal**:
+   - Pilih santri di tabel dengan memberi centang.
+   - Klik tombol hijau **Mulai Kirim Broadcast**.
+   - Sistem mengirim pesan satu per satu dengan jeda aman anti-banned (4-7 detik).
    - Pengurus dapat menekan tombol **Jeda (Pause)** atau **Lanjut (Play)** sewaktu-waktu.
-4. **Opsi Pengiriman Manual (*Direct Link*)**:
-   - Jika gateway WAHA sedang mati, pengurus tetap dapat mengirim pesan dengan mengeklik tombol **Kirim Manual (wa.me)** pada baris santri. Sistem akan membuka aplikasi WhatsApp Web atau WhatsApp Desktop dengan teks pesan yang sudah terisi lengkap.
 
 ---
 

@@ -62,7 +62,7 @@ export async function loginAsAdmin(page: Page) {
   const ssr = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
       get: () => '',
-      set: (name, value) => {
+      set: (name: string, value: string) => {
         cookieJar.push({ name, value });
       },
       remove: () => {},
