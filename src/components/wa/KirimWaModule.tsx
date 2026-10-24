@@ -1320,7 +1320,7 @@ export function KirimWaModule() {
                   <button
                     type="button"
                     onClick={() => {
-                      const newCfg = { ...config, baseUrl: "https://gorgeous-hart-sky-were.trycloudflare.com" };
+                      const newCfg = { ...config, baseUrl: "https://bathroom-occasional-shape-hunter.trycloudflare.com" };
                       setConfig(newCfg);
                       checkGateway(newCfg);
                     }}
