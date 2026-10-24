@@ -132,6 +132,7 @@ app.get("/api/sessions/:session", (req, res) => {
   res.json({
     name: req.params.session || "default",
     status: currentStatus,
+    qrCode: currentStatus === "SCAN_QR_CODE" ? currentQrCodeDataUrl : null,
     me:
       currentStatus === "WORKING" && connectedUser
         ? {
@@ -142,12 +143,22 @@ app.get("/api/sessions/:session", (req, res) => {
   });
 });
 
+// 1b. Endpoint langsung QR Code image
+app.get("/api/sessions/:session/auth/qr", (req, res) => {
+  if (currentStatus === "SCAN_QR_CODE" && currentQrCodeDataUrl) {
+    res.json({ status: "SCAN_QR_CODE", qrCode: currentQrCodeDataUrl });
+  } else {
+    res.json({ status: currentStatus, qrCode: null });
+  }
+});
+
 // 2. Cek Semua Sesi
 app.get("/api/sessions", (req, res) => {
   res.json([
     {
       name: "default",
       status: currentStatus,
+      qrCode: currentStatus === "SCAN_QR_CODE" ? currentQrCodeDataUrl : null,
       me:
         currentStatus === "WORKING" && connectedUser
           ? {

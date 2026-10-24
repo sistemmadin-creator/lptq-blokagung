@@ -43,6 +43,7 @@ import {
   saveWahaConfig,
   checkWahaSession,
   sendWahaImage,
+  logoutWahaSession,
   compileMessage,
   generateDirectWaLink,
   formatPhoneNumber,
@@ -155,6 +156,19 @@ export function KirimWaModule() {
       setCheckingGateway(false);
     }
   };
+
+  // Auto-polling status saat modal pengaturan terbuka dan menunggu scan QR
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (settingsModalOpen && gatewayStatus.status === "SCAN_QR_CODE") {
+      timer = setInterval(() => {
+        checkGateway(config);
+      }, 3000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [settingsModalOpen, gatewayStatus.status, config]);
 
   // Muat Data Nilai Khotmil Santri
   const loadData = useCallback(async () => {
@@ -694,6 +708,21 @@ export function KirimWaModule() {
             <RefreshCw className={`w-3.5 h-3.5 ${checkingGateway ? "animate-spin" : ""}`} />
           </button>
 
+          {!gatewayStatus.online && (
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsModalOpen(true);
+                checkGateway(config);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-amber-400 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 text-xs font-bold text-amber-800 dark:text-amber-200 transition shadow-sm animate-pulse"
+              title="Pindai QR Code untuk menghubungkan nomor WhatsApp pengirim"
+            >
+              <span>📱</span>
+              <span>Scan QR WhatsApp</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setTemplateModalOpen(true)}
@@ -1169,20 +1198,150 @@ export function KirimWaModule() {
             </div>
 
             <div className="space-y-4 text-xs">
+              {/* ==================== AREA STATUS KONEKSI & SCAN QR WHATSAPP ==================== */}
+              <div className="p-4 rounded-2xl border transition-all duration-300 bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700">
+                {gatewayStatus.online ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-950 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+                        <CheckCircle2 className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-sm text-emerald-700 dark:text-emerald-400">
+                            WhatsApp Berhasil Terhubung!
+                          </span>
+                          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        </div>
+                        <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                          Nomor Pengirim: <strong>+{gatewayStatus.phone || "Aktif"}</strong>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (confirm("Apakah Anda yakin ingin memutuskan koneksi WhatsApp ini untuk mengganti nomor?")) {
+                          await logoutWahaSession(config);
+                          showToast("Sesi WhatsApp telah diputuskan.");
+                          checkGateway(config);
+                        }
+                      }}
+                      className="px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 rounded-xl font-bold transition shrink-0"
+                    >
+                      Putuskan / Logout
+                    </button>
+                  </div>
+                ) : gatewayStatus.status === "SCAN_QR_CODE" && gatewayStatus.qrCode ? (
+                  <div className="text-center space-y-3 py-1">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-xs font-bold animate-pulse">
+                      <span>📱</span>
+                      <span>Scan QR Code WhatsApp di Bawah Ini:</span>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-2xl border-2 border-dashed border-emerald-500 inline-block shadow-md">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={gatewayStatus.qrCode}
+                        alt="QR Code WhatsApp"
+                        className="w-56 h-56 mx-auto rounded-lg select-none"
+                      />
+                    </div>
+
+                    <div className="text-left bg-white dark:bg-slate-900 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 space-y-1">
+                      <p className="font-bold text-slate-800 dark:text-slate-100">Langkah Menghubungkan:</p>
+                      <ol className="list-decimal list-inside space-y-1 leading-relaxed">
+                        <li>Buka aplikasi <strong>WhatsApp</strong> di smartphone / HP Anda.</li>
+                        <li>Ketuk menu titik tiga (⋮) atau <strong>Pengaturan</strong> &gt; <strong>Perangkat Tertaut</strong>.</li>
+                        <li>Ketuk tombol <strong>Tautkan Perangkat</strong> lalu arahkan kamera HP ke QR Code di atas.</li>
+                      </ol>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand" />
+                      <span>Menunggu pemindaian... halaman otomatis terhubung begitu di-scan.</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                        <span className="font-bold text-xs text-rose-600 dark:text-rose-400">
+                          Status Gateway: Offline / Belum Terhubung
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => checkGateway(config)}
+                        disabled={checkingGateway}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-brand hover:underline"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${checkingGateway ? "animate-spin" : ""}`} />
+                        <span>Cek Sinyal Gateway</span>
+                      </button>
+                    </div>
+                    {gatewayStatus.message && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 leading-relaxed">
+                        ℹ️ {gatewayStatus.message}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* URL Base WAHA */}
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   URL Server WAHA (HTTP API):
                 </label>
-                <input
-                  type="text"
-                  value={config.baseUrl}
-                  onChange={(e) => setConfig({ ...config, baseUrl: e.target.value })}
-                  placeholder="Contoh: http://localhost:3000 atau https://waha.pesantren.id"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-mono"
-                />
-                <span className="text-[10px] text-slate-400 mt-1 block">
-                  Alamat IP atau domain tempat Docker WAHA dijalankan (di VPS atau laptop kantor).
+                <div className="flex gap-2 mb-1.5">
+                  <input
+                    type="text"
+                    value={config.baseUrl}
+                    onChange={(e) => setConfig({ ...config, baseUrl: e.target.value })}
+                    placeholder="Contoh: https://...trycloudflare.com atau http://localhost:3008"
+                    className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-mono text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      checkGateway(config);
+                      showToast("Memeriksa koneksi server...");
+                    }}
+                    disabled={checkingGateway}
+                    className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold border border-slate-300 dark:border-slate-700 text-xs shrink-0"
+                  >
+                    Uji Koneksi
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <span className="text-[10px] text-slate-400">Pilihan Cepat:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newCfg = { ...config, baseUrl: "https://gorgeous-hart-sky-were.trycloudflare.com" };
+                      setConfig(newCfg);
+                      checkGateway(newCfg);
+                    }}
+                    className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100"
+                  >
+                    ☁️ Cloudflare HTTPS Tunnel (Untuk Vercel)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newCfg = { ...config, baseUrl: "http://localhost:3008" };
+                      setConfig(newCfg);
+                      checkGateway(newCfg);
+                    }}
+                    className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold border border-slate-200 dark:border-slate-700 hover:bg-slate-200"
+                  >
+                    🏠 Port Lokal (3008)
+                  </button>
+                </div>
+                <span className="text-[10px] text-slate-400 mt-1.5 block leading-relaxed">
+                  Gunakan URL HTTPS Cloudflare Tunnel jika mengakses website dari domain Vercel publik (karena browser memblokir koneksi HTTP ke localhost).
                 </span>
               </div>
 

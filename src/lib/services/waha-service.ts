@@ -183,13 +183,47 @@ export async function checkWahaSession(config: WahaConfig): Promise<WahaSessionS
       online: status === "WORKING",
       status: status,
       phone: data.me?.id ? data.me.id.split("@")[0] : undefined,
+      qrCode: data.qrCode || data.qr || undefined,
+      message: data.message,
     };
   } catch (err: any) {
+    // Berikan pesan khusus jika browser memblokir koneksi HTTP dari situs HTTPS (Mixed Content)
+    const isHttpsOrigin = typeof window !== "undefined" && window.location.protocol === "https:";
+    const isHttpTarget = cleanUrl.startsWith("http://");
+    let errorMsg = err.message || "Network Error";
+
+    if (isHttpsOrigin && isHttpTarget) {
+      errorMsg = "Browser memblokir 'http://' dari situs HTTPS Vercel (Mixed Content). Gunakan URL HTTPS Tunnel atau buka web secara lokal.";
+    }
+
     return {
       online: false,
       status: "OFFLINE",
-      message: `Tidak dapat terhubung ke WAHA (${err.message || "Network Error"}). Pastikan server WAHA menyala.`,
+      message: `Tidak dapat terhubung ke WAHA (${errorMsg}).`,
     };
+  }
+}
+
+/**
+ * Memutuskan sesi WhatsApp (Logout)
+ */
+export async function logoutWahaSession(config: WahaConfig): Promise<{ success: boolean; message?: string }> {
+  const cleanUrl = config.baseUrl.replace(/\/+$/, "");
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (config.apiKey) headers["X-Api-Key"] = config.apiKey;
+
+  try {
+    const res = await fetch(`${cleanUrl}/api/sessions/${config.session}/logout`, {
+      method: "POST",
+      headers,
+    });
+    if (!res.ok) {
+      return { success: false, message: `Gagal logout (${res.status})` };
+    }
+    const data = await res.json();
+    return { success: true, message: data.message || "Berhasil logout." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Gagal menghubungi server WAHA." };
   }
 }
 
