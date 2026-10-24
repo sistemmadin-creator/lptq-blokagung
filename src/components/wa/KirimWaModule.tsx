@@ -28,6 +28,10 @@ import {
   ShieldCheck,
   ChevronDown,
   Info,
+  Download,
+  Copy,
+  Share2,
+  X,
 } from "lucide-react";
 import {
   fetchAllSantriFiltered,
@@ -97,6 +101,14 @@ export function KirimWaModule() {
 
   // Pratinjau (Active Preview)
   const [previewRow, setPreviewRow] = useState<SantriEvaluasiRow | null>(null);
+  const [waWebModalInfo, setWaWebModalInfo] = useState<{
+    open: boolean;
+    namaSantri: string;
+    phone: string;
+    hasImageCopied: boolean;
+  } | null>(null);
+  const [isProcessingWaWeb, setIsProcessingWaWeb] = useState(false);
+  const [isDownloadingRapor, setIsDownloadingRapor] = useState(false);
 
   // Broadcast Runner State
   const [isBroadcasting, setIsBroadcasting] = useState(false);
@@ -339,14 +351,121 @@ export function KirimWaModule() {
     }
   };
 
-  // Kirim satu nomor via tautan langsung WhatsApp Web (Fallback wa.me)
-  const handleOpenDirectWa = (row: SantriEvaluasiRow) => {
+  // Unduh Gambar Kartu Rapor Langsung sebagai PNG
+  const handleDownloadRaporImage = async (row: SantriEvaluasiRow) => {
+    setIsDownloadingRapor(true);
+    try {
+      const imageUrl = buildRaporImageUrl(row);
+      const res = await fetch(imageUrl);
+      const blob = await res.blob();
+
+      const sanitizedName = row.santri.nama_lengkap.trim().replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_]/g, "");
+      const fileName = `Rapor_${sanitizedName}_${jenisProgram}_Tahap${activeTahap}.png`;
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      showToast(`Kartu rapor ${row.santri.nama_lengkap} berhasil diunduh!`);
+    } catch (err) {
+      console.error("Gagal mengunduh kartu rapor", err);
+      alert("Terjadi kendala saat mengunduh gambar kartu rapor.");
+    } finally {
+      setIsDownloadingRapor(false);
+    }
+  };
+
+  // Salin Gambar Kartu Rapor ke Clipboard
+  const handleCopyRaporImage = async (row: SantriEvaluasiRow) => {
+    try {
+      const imageUrl = buildRaporImageUrl(row);
+      const res = await fetch(imageUrl);
+      const blob = await res.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": blob }),
+      ]);
+      showToast("Gambar kartu rapor berhasil disalin ke clipboard!");
+    } catch (err) {
+      console.error("Gagal menyalin gambar ke clipboard", err);
+      alert("Browser tidak mengizinkan salin gambar otomatis. Silakan gunakan tombol Unduh.");
+    }
+  };
+
+  // Kirim satu nomor via WhatsApp Web dengan Auto-Copy Gambar ke Clipboard & Mobile Share API
+  const handleOpenDirectWa = async (row: SantriEvaluasiRow) => {
     if (!row.hasPhone) {
       alert(`Santri ${row.santri.nama_lengkap} belum memiliki nomor WhatsApp wali.`);
       return;
     }
+
+    setIsProcessingWaWeb(true);
     const text = buildMessageText(row);
     const link = generateDirectWaLink(row.phone, text);
+    const imageUrl = buildRaporImageUrl(row);
+
+    // 1. Jika di perangkat HP (Mobile), coba gunakan Web Share API bawaan Android/iOS
+    const isMobile =
+      typeof navigator !== "undefined" &&
+      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    if (isMobile && typeof navigator.share === "function") {
+      try {
+        const imgRes = await fetch(imageUrl);
+        const blob = await imgRes.blob();
+        const file = new File(
+          [blob],
+          `Rapor_${row.santri.nama_lengkap.replace(/\s+/g, "_")}.png`,
+          { type: "image/png" }
+        );
+
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            text,
+            title: `Kartu Rapor ${row.santri.nama_lengkap}`,
+          });
+
+          saveDeliveryLog({
+            santriId: row.santri.id,
+            namaSantri: row.santri.nama_lengkap,
+            noWa: row.phone,
+            jenis: jenisProgram,
+            tahap: activeTahap,
+            status: "manual",
+          });
+
+          showToast(`Berhasil membagikan kartu rapor ke WhatsApp!`);
+          loadData();
+          setIsProcessingWaWeb(false);
+          return;
+        }
+      } catch (shareErr: any) {
+        // Jika user membatalkan dialog share, abaikan tanpa error
+        if (shareErr.name === "AbortError") {
+          setIsProcessingWaWeb(false);
+          return;
+        }
+        console.warn("Web Share API tidak berhasil, lanjut ke fallback WA Web", shareErr);
+      }
+    }
+
+    // 2. Desktop: Otomatis Salin Gambar Rapor ke Clipboard & Buka WA Web
+    let imageCopied = false;
+    try {
+      const imgRes = await fetch(imageUrl);
+      const blob = await imgRes.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": blob }),
+      ]);
+      imageCopied = true;
+    } catch (clipErr) {
+      console.warn("Browser tidak mengizinkan akses clipboard otomatis", clipErr);
+    }
 
     saveDeliveryLog({
       santriId: row.santri.id,
@@ -358,8 +477,17 @@ export function KirimWaModule() {
     });
 
     window.open(link, "_blank");
-    showToast(`Membuka WhatsApp Web untuk ${row.santri.nama_lengkap}...`);
+
+    // Tampilkan panduan Ctrl + V jika berhasil disalin
+    setWaWebModalInfo({
+      open: true,
+      namaSantri: row.santri.nama_lengkap,
+      phone: row.phone,
+      hasImageCopied: imageCopied,
+    });
+
     loadData();
+    setIsProcessingWaWeb(false);
   };
 
   // ==================== ENGINE BROADCAST MASSAL ====================
@@ -957,28 +1085,58 @@ export function KirimWaModule() {
                   </div>
                 </div>
 
-                {/* Tombol Aksi Pratinjau */}
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => handleSendSingleWaha(previewRow)}
-                    disabled={!previewRow.hasPhone}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-brand hover:bg-brand-dark text-white text-xs font-bold transition shadow-sm disabled:opacity-40"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Kirim ke Wali ({previewRow.phone || "No HP Kosong"})</span>
-                  </button>
+                {/* Tombol Aksi Pratinjau & Pengiriman */}
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSendSingleWaha(previewRow)}
+                      disabled={!previewRow.hasPhone}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-brand hover:bg-brand-dark text-white text-xs font-bold transition shadow-sm disabled:opacity-40"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Kirim ke Wali ({previewRow.phone || "No HP Kosong"})</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => handleOpenDirectWa(previewRow)}
-                    disabled={!previewRow.hasPhone}
-                    className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                    title="Buka di WhatsApp Web"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>WA Web</span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDirectWa(previewRow)}
+                      disabled={!previewRow.hasPhone || isProcessingWaWeb}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-emerald-600 dark:border-emerald-500 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition disabled:opacity-40 shadow-sm"
+                      title="Buka di WhatsApp Web (Gambar Rapor otomatis disalin ke Clipboard)"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span>{isProcessingWaWeb ? "Menyiapkan..." : "WA Web"}</span>
+                    </button>
+                  </div>
+
+                  {/* Tombol Pembantu: Unduh Gambar & Salin Gambar Rapor */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadRaporImage(previewRow)}
+                      disabled={isDownloadingRapor}
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-750 transition"
+                      title="Unduh file gambar kartu rapor digital (PNG)"
+                    >
+                      <Download className="w-3.5 h-3.5 text-brand" />
+                      <span>{isDownloadingRapor ? "Mengunduh..." : "Unduh Gambar PNG"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCopyRaporImage(previewRow)}
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-750 transition"
+                      title="Salin gambar kartu rapor ke clipboard untuk di-paste langsung"
+                    >
+                      <Copy className="w-3.5 h-3.5 text-brand" />
+                      <span>Salin Gambar</span>
+                    </button>
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
+                    💡 <strong>Tips Kirim WA Web:</strong> Saat klik &quot;WA Web&quot;, gambar rapor <strong>otomatis disalin ke Clipboard</strong>. Di chatroom WhatsApp Web, cukup tekan <kbd className="px-1 py-0.5 bg-white dark:bg-slate-700 rounded border border-slate-300 dark:border-slate-600 font-mono text-[9px] font-bold">Ctrl + V</kbd> untuk langsung menempelkan gambar beserta teks.
+                  </p>
                 </div>
               </div>
             ) : (
@@ -1217,6 +1375,81 @@ export function KirimWaModule() {
                   Simpan Draf
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL PANDUAN PENGIRIMAN WA WEB ==================== */}
+      {waWebModalInfo && waWebModalInfo.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                <h3 className="font-extrabold text-base text-slate-800 dark:text-slate-100">
+                  Kirim Rapor ke WhatsApp Web
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWaWebModalInfo(null)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+              <p>
+                WhatsApp Web telah dibuka untuk penerima:{" "}
+                <strong className="text-slate-800 dark:text-slate-100">
+                  {waWebModalInfo.namaSantri}
+                </strong>{" "}
+                ({waWebModalInfo.phone}).
+              </p>
+
+              {waWebModalInfo.hasImageCopied ? (
+                <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-emerald-800 dark:text-emerald-300">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>Gambar Rapor Otomatis Tersalin ke Clipboard!</span>
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                    <li>Buka tab WhatsApp Web yang baru saja terbuka.</li>
+                    <li>
+                      Klik kolom ketik pesan lalu tekan{" "}
+                      <kbd className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-emerald-300 dark:border-emerald-700 font-mono font-bold text-slate-800 dark:text-slate-100">
+                        Ctrl + V
+                      </kbd>{" "}
+                      (atau klik kanan &gt; Tempel).
+                    </li>
+                    <li>Gambar kartu rapor akan langsung terlampir di WhatsApp.</li>
+                    <li>
+                      Tekan <strong>Kirim / Enter</strong> bersama teks keterangan nilai.
+                    </li>
+                  </ol>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 space-y-1.5">
+                  <p className="font-bold text-amber-800 dark:text-amber-300">
+                    Perhatian Salin Clipboard
+                  </p>
+                  <p className="text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                    Izin salin gambar otomatis ke clipboard dibatasi oleh browser Anda. Gunakan tombol &quot;Unduh Gambar PNG&quot; pada panel pratinjau untuk melampirkan gambar secara manual di WhatsApp Web.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setWaWebModalInfo(null)}
+                className="px-5 py-2 rounded-xl bg-brand hover:bg-brand-dark text-white text-xs font-bold shadow-sm"
+              >
+                Mengerti
+              </button>
             </div>
           </div>
         </div>

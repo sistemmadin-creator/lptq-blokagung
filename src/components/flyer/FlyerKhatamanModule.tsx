@@ -3,12 +3,15 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import {
-  Lock,
-  Unlock,
+  Palette,
+  Move,
+  Hand,
+  Plus,
+  Save,
+  RotateCcw,
   Upload,
   Download,
   Copy,
-  RotateCcw,
   Sparkles,
   Check,
   Search,
@@ -26,6 +29,10 @@ import {
   ChevronUp,
   AlertCircle,
   Award,
+  Sliders,
+  X,
+  Smartphone,
+  CheckCircle2,
 } from "lucide-react";
 import { fetchAllSantriFiltered, fetchSetoranBulananMerged } from "@/lib/services/tahfidz-service";
 import { formatTanggalLengkapKhatam } from "@/lib/utils/hijri";
@@ -119,9 +126,54 @@ const DEFAULT_PRESET: FlyerLayoutPreset = {
   useDomeOverlay: true,
 };
 
+export interface FlyerTemplateItem {
+  id: string;
+  name: string;
+  description: string;
+  category: "putri" | "putra" | "khusus";
+  isBuiltIn?: boolean;
+  customTemplateUrl?: string | null;
+  preset: FlyerLayoutPreset;
+}
+
 const STORAGE_KEY = "lptq_flyer_preset_v1";
+const TEMPLATES_STORAGE_KEY = "lptq_flyer_saved_templates_v2";
 const DEFAULT_TEMPLATE_URL = "/templates/flyer-khatam-blank.png";
 const DOME_OVERLAY_URL = "/templates/flyer-dome-overlay.png";
+
+const BUILT_IN_TEMPLATES: FlyerTemplateItem[] = [
+  {
+    id: "tpl_putri_default",
+    name: "Template Putri (Resmi)",
+    description: "Format resmi Darussalam Putri dengan bingkai foto sisi kanan dan ornamen kubah depan.",
+    category: "putri",
+    isBuiltIn: true,
+    customTemplateUrl: null,
+    preset: DEFAULT_PRESET,
+  },
+  {
+    id: "tpl_putra_default",
+    name: "Template Putra (Resmi)",
+    description: "Format resmi Darussalam Putra (Bin) dengan tata letak teks dan twibbon selaras.",
+    category: "putra",
+    isBuiltIn: true,
+    customTemplateUrl: null,
+    preset: {
+      ...DEFAULT_PRESET,
+      nama: { ...DEFAULT_PRESET.nama, color: "#0f4d38" },
+      binti: { ...DEFAULT_PRESET.binti, color: "#0f4d38" },
+    },
+  },
+  {
+    id: "tpl_khotmil_15",
+    name: "Template Khotmil 15 Juz",
+    description: "Format flyer apresiasi kelulusan ujian Khotmil 15 Juz santri Darussalam.",
+    category: "khusus",
+    isBuiltIn: true,
+    customTemplateUrl: null,
+    preset: { ...DEFAULT_PRESET },
+  },
+];
 
 export function FlyerKhatamanModule() {
   // State Data Santri
@@ -151,9 +203,23 @@ export function FlyerKhatamanModule() {
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [customTemplateUrl, setCustomTemplateUrl] = useState<string | null>(null);
 
-  // Layout Configuration
+  // Layout & Template Configuration
   const [preset, setPreset] = useState<FlyerLayoutPreset>(DEFAULT_PRESET);
-  const [isLocked, setIsLocked] = useState(true);
+  const [templates, setTemplates] = useState<FlyerTemplateItem[]>(BUILT_IN_TEMPLATES);
+  const [activeTemplateId, setActiveTemplateId] = useState<string>("tpl_putri_default");
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [newTemplateCategory, setNewTemplateCategory] = useState<"putri" | "putra" | "khusus">("putri");
+  const [isSavingNewTemplate, setIsSavingNewTemplate] = useState(false);
+  const [showCoordinateSettings, setShowCoordinateSettings] = useState(false);
+
+  // Drag & Canvas Interactive State
+  const [isDragging, setIsDragging] = useState(false);
+  const [isHoveringPhoto, setIsHoveringPhoto] = useState(false);
+  const [isTouchDragActive, setIsTouchDragActive] = useState(false);
+  const dragStartRef = useRef<{ clientX: number; clientY: number; initialOffsetX: number; initialOffsetY: number } | null>(null);
+  const lastTapRef = useRef<number>(0);
+
   const [activeTabSetting, setActiveTabSetting] = useState<"nama" | "binti" | "biodata" | "tanggal" | "foto">("nama");
   const [previewZoom, setPreviewZoom] = useState(75); // skala persen preview
 
@@ -178,12 +244,25 @@ export function FlyerKhatamanModule() {
     setTanggalOtomatisTeks(formatTanggalLengkapKhatam(new Date()));
   }, []);
 
-  // Muat preset dari LocalStorage
+  // Muat template tersimpan & preset dari LocalStorage
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
+    const savedTemplates = localStorage.getItem(TEMPLATES_STORAGE_KEY);
+    if (savedTemplates) {
       try {
-        const parsed = JSON.parse(saved);
+        const parsed: FlyerTemplateItem[] = JSON.parse(savedTemplates);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const customOnly = parsed.filter((p) => !p.isBuiltIn);
+          setTemplates([...BUILT_IN_TEMPLATES, ...customOnly]);
+        }
+      } catch (err) {
+        console.error("Gagal membaca template flyer dari localStorage", err);
+      }
+    }
+
+    const savedPreset = localStorage.getItem(STORAGE_KEY);
+    if (savedPreset) {
+      try {
+        const parsed = JSON.parse(savedPreset);
         setPreset((prev) => ({ ...prev, ...parsed }));
       } catch (e) {
         console.error("Gagal membaca preset flyer dari localStorage", e);
@@ -191,25 +270,246 @@ export function FlyerKhatamanModule() {
     }
   }, []);
 
-  // Simpan preset saat di-lock
-  const toggleLock = () => {
-    const nextLocked = !isLocked;
-    setIsLocked(nextLocked);
-    if (nextLocked) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(preset));
-      showToast("Tata letak berhasil dikunci dan disimpan!");
-    } else {
-      showToast("Mode penyesuaian posisi aktif. Anda dapat menggeser layer teks & foto.");
+  // Terapkan template terpilih
+  const handleApplyTemplate = (tpl: FlyerTemplateItem) => {
+    setActiveTemplateId(tpl.id);
+    setPreset(tpl.preset);
+    setCustomTemplateUrl(tpl.customTemplateUrl || null);
+    if (tpl.category === "putra") {
+      setBinBinti("Bin");
+    } else if (tpl.category === "putri") {
+      setBinBinti("Binti");
     }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tpl.preset));
+    showToast(`Template "${tpl.name}" berhasil diterapkan!`);
+    setIsTemplateModalOpen(false);
+  };
+
+  // Simpan konfigurasi saat ini menjadi template baru
+  const handleSaveCurrentAsTemplate = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTemplateName.trim()) {
+      alert("Masukkan nama template terlebih dahulu.");
+      return;
+    }
+
+    const newTpl: FlyerTemplateItem = {
+      id: `tpl_custom_${Date.now()}`,
+      name: newTemplateName.trim(),
+      description: `Disimpan pada ${new Date().toLocaleDateString("id-ID")}`,
+      category: newTemplateCategory,
+      isBuiltIn: false,
+      customTemplateUrl: customTemplateUrl,
+      preset: { ...preset },
+    };
+
+    const updated = [...templates, newTpl];
+    setTemplates(updated);
+    setActiveTemplateId(newTpl.id);
+
+    const customOnly = updated.filter((t) => !t.isBuiltIn);
+    localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(customOnly));
+
+    setNewTemplateName("");
+    setIsSavingNewTemplate(false);
+    showToast(`Template "${newTpl.name}" berhasil disimpan!`);
+  };
+
+  // Hapus template kustom
+  const handleDeleteCustomTemplate = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Hapus template kustom ini?")) return;
+    const updated = templates.filter((t) => t.id !== id);
+    setTemplates(updated);
+    if (activeTemplateId === id) {
+      setActiveTemplateId("tpl_putri_default");
+      setPreset(DEFAULT_PRESET);
+      setCustomTemplateUrl(null);
+    }
+    const customOnly = updated.filter((t) => !t.isBuiltIn);
+    localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(customOnly));
+    showToast("Template kustom berhasil dihapus.");
   };
 
   const resetToDefaultPreset = () => {
     if (confirm("Kembalikan tata letak ke posisi standar bawaan Darussalam?")) {
       setPreset(DEFAULT_PRESET);
+      setCustomTemplateUrl(null);
+      setActiveTemplateId("tpl_putri_default");
       localStorage.removeItem(STORAGE_KEY);
       showToast("Tata letak dikembalikan ke pengaturan default.");
     }
   };
+
+  const resetPhotoOffset = () => {
+    setPreset((prev) => ({
+      ...prev,
+      photo: {
+        ...prev.photo,
+        offsetX: 0,
+        offsetY: 0,
+      },
+    }));
+    showToast("Posisi foto santri dikembalikan ke titik tengah.");
+  };
+
+  // Helper konversi koordinat client mouse/touch ke koordinat kanvas (814 x 1024)
+  const getCanvasCoords = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+
+    const scaleX = 814 / rect.width;
+    const scaleY = 1024 / rect.height;
+
+    const canvasX = (clientX - rect.left) * scaleX;
+    const canvasY = (clientY - rect.top) * scaleY;
+
+    const { x, y, width, height } = preset.photo;
+    const isInside =
+      canvasX >= x &&
+      canvasX <= x + width &&
+      canvasY >= y &&
+      canvasY <= y + height;
+
+    return { canvasX, canvasY, isInside, scaleX, scaleY };
+  };
+
+  // Event handler drag mouse (Desktop)
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (!photoDataUrl) return;
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+    if (coords?.isInside) {
+      setIsDragging(true);
+      dragStartRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        initialOffsetX: preset.photo.offsetX,
+        initialOffsetY: preset.photo.offsetY,
+      };
+    }
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (!photoDataUrl) return;
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+    setIsHoveringPhoto(Boolean(coords?.isInside));
+
+    if (isDragging && dragStartRef.current && coords) {
+      const deltaX = (e.clientX - dragStartRef.current.clientX) * coords.scaleX;
+      const deltaY = (e.clientY - dragStartRef.current.clientY) * coords.scaleY;
+
+      setPreset((prev) => ({
+        ...prev,
+        photo: {
+          ...prev.photo,
+          offsetX: Math.round(dragStartRef.current!.initialOffsetX + deltaX),
+          offsetY: Math.round(dragStartRef.current!.initialOffsetY + deltaY),
+        },
+      }));
+    }
+  };
+
+  const handleCanvasMouseUp = () => {
+    if (isDragging) {
+      setIsDragging(false);
+      dragStartRef.current = null;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(preset));
+    }
+  };
+
+  const handleCanvasMouseLeave = () => {
+    setIsHoveringPhoto(false);
+    if (isDragging) {
+      setIsDragging(false);
+      dragStartRef.current = null;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(preset));
+    }
+  };
+
+  // Event handler touch layar sentuh (Mobile HP)
+  const handleCanvasTouchStart = (e: React.TouchEvent) => {
+    if (!photoDataUrl || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const coords = getCanvasCoords(touch.clientX, touch.clientY);
+
+    const now = Date.now();
+    const timeDiff = now - lastTapRef.current;
+
+    // Deteksi Double-Tap (< 350ms)
+    if (timeDiff < 350 && coords?.isInside) {
+      e.preventDefault();
+      const nextState = !isTouchDragActive;
+      setIsTouchDragActive(nextState);
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(35);
+      }
+      showToast(nextState ? "Mode Geser Foto Aktif! Geser foto dengan 1 jari." : "Mode Geser Dinonaktifkan.");
+      lastTapRef.current = 0;
+      return;
+    }
+    lastTapRef.current = now;
+
+    if (isTouchDragActive && coords?.isInside) {
+      e.preventDefault();
+      setIsDragging(true);
+      dragStartRef.current = {
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        initialOffsetX: preset.photo.offsetX,
+        initialOffsetY: preset.photo.offsetY,
+      };
+    } else if (isTouchDragActive && !coords?.isInside) {
+      // Tap di luar area foto menonaktifkan mode geser
+      setIsTouchDragActive(false);
+    }
+  };
+
+  const handleCanvasTouchMove = (e: React.TouchEvent) => {
+    if (!photoDataUrl || !isTouchDragActive || !isDragging || !dragStartRef.current || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const coords = getCanvasCoords(touch.clientX, touch.clientY);
+    if (!coords) return;
+
+    e.preventDefault();
+    const deltaX = (touch.clientX - dragStartRef.current.clientX) * coords.scaleX;
+    const deltaY = (touch.clientY - dragStartRef.current.clientY) * coords.scaleY;
+
+    setPreset((prev) => ({
+      ...prev,
+      photo: {
+        ...prev.photo,
+        offsetX: Math.round(dragStartRef.current!.initialOffsetX + deltaX),
+        offsetY: Math.round(dragStartRef.current!.initialOffsetY + deltaY),
+      },
+    }));
+  };
+
+  const handleCanvasTouchEnd = () => {
+    if (isDragging) {
+      setIsDragging(false);
+      dragStartRef.current = null;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(preset));
+    }
+  };
+
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+    if (coords?.isInside && photoDataUrl) {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 5 : -5;
+      setPreset((prev) => ({
+        ...prev,
+        photo: {
+          ...prev.photo,
+          zoom: Math.min(200, Math.max(50, prev.photo.zoom + delta)),
+        },
+      }));
+    }
+  };
+
+  const activeTemplate = templates.find((t) => t.id === activeTemplateId) || templates[0];
 
   // Muat daftar santri & evaluasi khatam
   useEffect(() => {
@@ -602,29 +902,19 @@ export function FlyerKhatamanModule() {
           </p>
         </div>
 
-        {/* Tombol Kunci Posisi & Download di Atas */}
+        {/* Tombol Template Flyer & Download di Atas */}
         <div className="flex items-center gap-2.5 shrink-0">
           <button
             type="button"
-            onClick={toggleLock}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shadow-sm ${
-              isLocked
-                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                : "bg-amber-500 hover:bg-amber-600 text-white animate-pulse"
-            }`}
-            title={isLocked ? "Buka kunci untuk menggeser posisi data" : "Kunci posisi elemen flyer"}
+            onClick={() => setIsTemplateModalOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold transition shadow-sm"
+            title="Buka Manajemen Template Flyer & Pengaturan Gambar"
           >
-            {isLocked ? (
-              <>
-                <Lock className="w-4 h-4" />
-                <span>Posisi Terkunci</span>
-              </>
-            ) : (
-              <>
-                <Unlock className="w-4 h-4" />
-                <span>Kunci Posisi</span>
-              </>
-            )}
+            <Palette className="w-4 h-4 text-emerald-300" />
+            <span>Template Flyer</span>
+            <span className="hidden sm:inline-block px-1.5 py-0.5 rounded-md bg-white/20 text-[10px] font-semibold text-emerald-100">
+              {activeTemplate.name}
+            </span>
           </button>
 
           <button
@@ -976,6 +1266,31 @@ export function FlyerKhatamanModule() {
                       />
                     </div>
                   </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      onClick={resetPhotoOffset}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Tengahkan Foto</span>
+                    </button>
+                    <span className="text-[10px] text-slate-400">
+                      Offset: {preset.photo.offsetX}px, {preset.photo.offsetY}px
+                    </span>
+                  </div>
+
+                  <div className="text-[10px] text-slate-600 dark:text-slate-400 bg-emerald-50/70 dark:bg-emerald-950/40 p-2.5 rounded-xl border border-emerald-200/60 dark:border-emerald-800/60 space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-emerald-800 dark:text-emerald-300">
+                      <Move className="w-3 h-3" />
+                      <span>Geser Langsung di Pratinjau:</span>
+                    </div>
+                    <p className="leading-relaxed">
+                      • <strong>Desktop:</strong> Klik & tahan mouse di area foto untuk menggeser.<br />
+                      • <strong>HP / Tablet:</strong> <strong>Ketuk 2x</strong> area foto untuk mengaktifkan mode geser tanpa mengganggu scroll halaman.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
@@ -1011,252 +1326,265 @@ export function FlyerKhatamanModule() {
             </div>
           </div>
 
-          {/* 4. PANEL PENGATURAN KOORDINAT & UKURAN (Hanya saat UNLOCKED) */}
-          {!isLocked && (
-            <div className="bg-amber-50/70 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-800/50 rounded-2xl p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-bold text-xs">
-                  <Unlock className="w-4 h-4 text-amber-600" />
-                  <span>Pengaturan Posisi & Ukuran Huruf</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={resetToDefaultPreset}
-                  className="text-[10px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline"
-                >
-                  Reset Standar
-                </button>
+          {/* 4. PANEL PENYESUAIAN KOORDINAT TEKS LANJUTAN (Expandable Accordion) */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
+            <button
+              type="button"
+              onClick={() => setShowCoordinateSettings((prev) => !prev)}
+              className="w-full flex items-center justify-between text-left"
+            >
+              <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-bold text-xs uppercase tracking-wider">
+                <Sliders className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Penyesuaian Detail Koordinat Teks</span>
               </div>
+              <span className="text-slate-400">
+                {showCoordinateSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </span>
+            </button>
 
-              {/* Tab Elemen yang Ingin Diatur */}
-              <div className="flex gap-1.5 overflow-x-auto pb-1">
-                {(["nama", "binti", "biodata", "tanggal", "foto"] as const).map((tab) => (
+            {showCoordinateSettings && (
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-slate-500">Pilih elemen yang disesuaikan:</span>
                   <button
-                    key={tab}
                     type="button"
-                    onClick={() => setActiveTabSetting(tab)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition shrink-0 ${
-                      activeTabSetting === tab
-                        ? "bg-amber-600 text-white"
-                        : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
-                    }`}
+                    onClick={resetToDefaultPreset}
+                    className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:underline font-semibold"
                   >
-                    {tab}
+                    Reset Standar
                   </button>
-                ))}
+                </div>
+
+                {/* Tab Elemen yang Ingin Diatur */}
+                <div className="flex gap-1.5 overflow-x-auto pb-1">
+                  {(["nama", "binti", "biodata", "tanggal", "foto"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setActiveTabSetting(tab)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition shrink-0 ${
+                        activeTabSetting === tab
+                          ? "bg-emerald-700 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                      }`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Kontrol Detail Tab Aktif */}
+                <div className="space-y-3 text-xs">
+                  {activeTabSetting === "nama" && (
+                    <div className="space-y-2.5">
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Ukuran Huruf Nama:</span>
+                          <span className="font-bold">{preset.nama.fontSize}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="24"
+                          max="60"
+                          value={preset.nama.fontSize}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              nama: { ...p.nama, fontSize: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Posisi Y (Vertikal):</span>
+                          <span className="font-bold">{preset.nama.y}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="350"
+                          max="520"
+                          value={preset.nama.y}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              nama: { ...p.nama, y: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTabSetting === "binti" && (
+                    <div className="space-y-2.5">
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Ukuran Huruf Binti:</span>
+                          <span className="font-bold">{preset.binti.fontSize}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="16"
+                          max="32"
+                          value={preset.binti.fontSize}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              binti: { ...p.binti, fontSize: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Posisi Y:</span>
+                          <span className="font-bold">{preset.binti.y}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="500"
+                          max="600"
+                          value={preset.binti.y}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              binti: { ...p.binti, y: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTabSetting === "biodata" && (
+                    <div className="space-y-2.5">
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Ukuran Huruf Biodata:</span>
+                          <span className="font-bold">{preset.biodata.fontSize}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="14"
+                          max="28"
+                          value={preset.biodata.fontSize}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              biodata: { ...p.biodata, fontSize: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Posisi Y Awal:</span>
+                          <span className="font-bold">{preset.biodata.startY}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="550"
+                          max="650"
+                          value={preset.biodata.startY}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              biodata: { ...p.biodata, startY: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Jarak Antar Baris:</span>
+                          <span className="font-bold">{preset.biodata.lineGap}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="25"
+                          max="55"
+                          value={preset.biodata.lineGap}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              biodata: { ...p.biodata, lineGap: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTabSetting === "tanggal" && (
+                    <div className="space-y-2.5">
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Ukuran Huruf Tanggal:</span>
+                          <span className="font-bold">{preset.tanggal.fontSize}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="14"
+                          max="26"
+                          value={preset.tanggal.fontSize}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              tanggal: { ...p.tanggal, fontSize: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                          <span>Posisi Y:</span>
+                          <span className="font-bold">{preset.tanggal.y}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="700"
+                          max="780"
+                          value={preset.tanggal.y}
+                          onChange={(e) =>
+                            setPreset((p) => ({
+                              ...p,
+                              tanggal: { ...p.tanggal, y: Number(e.target.value) },
+                            }))
+                          }
+                          className="w-full accent-emerald-600"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTabSetting === "foto" && (
+                    <div className="space-y-2.5">
+                      <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={preset.useDomeOverlay}
+                          onChange={(e) =>
+                            setPreset((p) => ({ ...p, useDomeOverlay: e.target.checked }))
+                          }
+                          className="rounded accent-emerald-600"
+                        />
+                        <span>Tampilkan Efek Kubah Depan (Foreground Dome)</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
               </div>
-
-              {/* Kontrol Detail Tab Aktif */}
-              <div className="space-y-3 text-xs">
-                {activeTabSetting === "nama" && (
-                  <div className="space-y-2.5">
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Ukuran Huruf Nama:</span>
-                        <span className="font-bold">{preset.nama.fontSize}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="24"
-                        max="60"
-                        value={preset.nama.fontSize}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            nama: { ...p.nama, fontSize: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Posisi Y (Vertikal):</span>
-                        <span className="font-bold">{preset.nama.y}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="350"
-                        max="520"
-                        value={preset.nama.y}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            nama: { ...p.nama, y: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {activeTabSetting === "binti" && (
-                  <div className="space-y-2.5">
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Ukuran Huruf Binti:</span>
-                        <span className="font-bold">{preset.binti.fontSize}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="16"
-                        max="32"
-                        value={preset.binti.fontSize}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            binti: { ...p.binti, fontSize: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Posisi Y:</span>
-                        <span className="font-bold">{preset.binti.y}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="500"
-                        max="600"
-                        value={preset.binti.y}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            binti: { ...p.binti, y: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {activeTabSetting === "biodata" && (
-                  <div className="space-y-2.5">
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Ukuran Huruf Biodata:</span>
-                        <span className="font-bold">{preset.biodata.fontSize}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="14"
-                        max="28"
-                        value={preset.biodata.fontSize}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            biodata: { ...p.biodata, fontSize: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Posisi Y Awal:</span>
-                        <span className="font-bold">{preset.biodata.startY}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="550"
-                        max="650"
-                        value={preset.biodata.startY}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            biodata: { ...p.biodata, startY: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Jarak Antar Baris:</span>
-                        <span className="font-bold">{preset.biodata.lineGap}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="25"
-                        max="55"
-                        value={preset.biodata.lineGap}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            biodata: { ...p.biodata, lineGap: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {activeTabSetting === "tanggal" && (
-                  <div className="space-y-2.5">
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Ukuran Huruf Tanggal:</span>
-                        <span className="font-bold">{preset.tanggal.fontSize}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="14"
-                        max="26"
-                        value={preset.tanggal.fontSize}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            tanggal: { ...p.tanggal, fontSize: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Posisi Y:</span>
-                        <span className="font-bold">{preset.tanggal.y}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="700"
-                        max="780"
-                        value={preset.tanggal.y}
-                        onChange={(e) =>
-                          setPreset((p) => ({
-                            ...p,
-                            tanggal: { ...p.tanggal, y: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full accent-amber-600"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {activeTabSetting === "foto" && (
-                  <div className="space-y-2.5">
-                    <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={preset.useDomeOverlay}
-                        onChange={(e) =>
-                          setPreset((p) => ({ ...p, useDomeOverlay: e.target.checked }))
-                        }
-                        className="rounded accent-amber-600"
-                      />
-                      <span>Tampilkan Efek Kubah Depan (Foreground Dome)</span>
-                    </label>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* ==================== PANEL KANAN: LIVE PREVIEW KANVAS (7 Kolom) ==================== */}
@@ -1267,13 +1595,18 @@ export function FlyerKhatamanModule() {
               <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
                 Pratinjau Flyer HD (814 × 1024 px)
               </span>
-              {isLocked ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-brand-dark dark:text-emerald-300 text-[10px] font-bold">
-                  <Lock className="w-3 h-3" /> Terkunci
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[10px] font-bold">
-                  <Unlock className="w-3 h-3" /> Mode Atur
+              <button
+                type="button"
+                onClick={() => setIsTemplateModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-brand-dark dark:text-emerald-300 text-[10px] font-bold hover:bg-emerald-200 dark:hover:bg-emerald-900 transition"
+                title="Pilih atau kelola template flyer"
+              >
+                <Palette className="w-3 h-3" />
+                <span>Template: {activeTemplate.name}</span>
+              </button>
+              {isTouchDragActive && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold animate-pulse">
+                  <Hand className="w-3 h-3" /> Mode Geser Aktif
                 </span>
               )}
             </div>
@@ -1310,20 +1643,74 @@ export function FlyerKhatamanModule() {
             </div>
           </div>
 
-          {/* Area Kanvas Terpusat */}
-          <div className="flex justify-center items-center bg-slate-100/70 dark:bg-slate-950/50 p-4 rounded-xl overflow-auto min-h-[460px] border border-dashed border-slate-300 dark:border-slate-800">
+          {/* Area Kanvas Terpusat & Interaktif (Dapat Didrag) */}
+          <div className="flex justify-center items-center bg-slate-100/70 dark:bg-slate-950/50 p-4 rounded-xl overflow-auto min-h-[460px] border border-dashed border-slate-300 dark:border-slate-800 relative">
             <div
               style={{
                 width: `${(814 * previewZoom) / 100}px`,
                 maxWidth: "100%",
                 transition: "width 0.2s ease-in-out",
               }}
-              className="relative shadow-2xl rounded-xl overflow-hidden bg-white"
+              className={`relative shadow-2xl rounded-xl overflow-hidden bg-white select-none ${
+                isHoveringPhoto ? (isDragging ? "cursor-grabbing" : "cursor-grab") : ""
+              }`}
+              onMouseDown={handleCanvasMouseDown}
+              onMouseMove={handleCanvasMouseMove}
+              onMouseUp={handleCanvasMouseUp}
+              onMouseLeave={handleCanvasMouseLeave}
+              onTouchStart={handleCanvasTouchStart}
+              onTouchMove={handleCanvasTouchMove}
+              onTouchEnd={handleCanvasTouchEnd}
+              onWheel={handleCanvasWheel}
             >
               <canvas
                 ref={canvasRef}
-                className="w-full h-auto block select-none pointer-events-none"
+                className="w-full h-auto block select-none"
               />
+
+              {/* Visual indicator when Touch Drag is active on Mobile */}
+              {isTouchDragActive && (
+                <div
+                  className="absolute border-2 border-dashed border-emerald-500 rounded-2xl pointer-events-none transition-all duration-75 shadow-[0_0_0_2px_rgba(16,185,129,0.3)] animate-pulse"
+                  style={{
+                    left: `${(preset.photo.x / 814) * 100}%`,
+                    top: `${(preset.photo.y / 1024) * 100}%`,
+                    width: `${(preset.photo.width / 814) * 100}%`,
+                    height: `${(preset.photo.height / 1024) * 100}%`,
+                  }}
+                >
+                  <div className="absolute inset-0 flex items-center justify-center bg-emerald-500/10">
+                    <span className="p-1.5 rounded-full bg-emerald-600 text-white shadow-md">
+                      <Move className="w-4 h-4" />
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Floating Hint when Drag is Active */}
+              {isTouchDragActive && (
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 px-3 py-1 bg-slate-900/90 text-white text-[10px] font-semibold rounded-full shadow-lg backdrop-blur-sm flex items-center gap-1.5 animate-in fade-in">
+                  <Hand className="w-3 h-3 text-emerald-400" />
+                  <span>Mode Geser Aktif (Ketuk di luar untuk selesai)</span>
+                </div>
+              )}
+
+              {/* Quick mobile floating toggle button */}
+              {photoDataUrl && (
+                <button
+                  type="button"
+                  onClick={() => setIsTouchDragActive((prev) => !prev)}
+                  className={`md:hidden absolute bottom-3 right-3 z-20 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold shadow-lg backdrop-blur-md transition ${
+                    isTouchDragActive
+                      ? "bg-amber-500 text-white animate-pulse"
+                      : "bg-slate-900/80 hover:bg-slate-900 text-white"
+                  }`}
+                  title="Aktifkan/nonaktifkan mode geser foto di HP"
+                >
+                  <Move className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{isTouchDragActive ? "Selesai Geser" : "Geser Foto (HP)"}</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1344,6 +1731,203 @@ export function FlyerKhatamanModule() {
           </div>
         </div>
       </div>
+
+      {/* ==================== MODAL MANAJEMEN TEMPLATE FLYER ==================== */}
+      {isTemplateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                  <Palette className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800 dark:text-slate-100">
+                    Manajemen Template Flyer
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Pilih template twibbon resmi atau simpan penataan gambar kustom santri putri & putra.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTemplateModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6">
+              {/* Daftar Template Tersedia */}
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 block mb-3">
+                  Pilih Template yang Digunakan:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {templates.map((tpl) => {
+                    const isActive = tpl.id === activeTemplateId;
+                    return (
+                      <div
+                        key={tpl.id}
+                        className={`p-4 rounded-2xl border transition-all text-left flex flex-col justify-between gap-3 ${
+                          isActive
+                            ? "border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/30 ring-2 ring-emerald-500/20"
+                            : "border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 hover:border-slate-300"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                                tpl.category === "putri"
+                                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                  : tpl.category === "putra"
+                                  ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
+                                  : "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300"
+                              }`}
+                            >
+                              {tpl.category}
+                            </span>
+                            {isActive && (
+                              <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Sedang Aktif
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-bold text-sm text-slate-800 dark:text-slate-100 mt-2">
+                            {tpl.name}
+                          </h4>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
+                            {tpl.description}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800/60">
+                          <button
+                            type="button"
+                            onClick={() => handleApplyTemplate(tpl)}
+                            disabled={isActive}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                              isActive
+                                ? "bg-emerald-600 text-white cursor-default"
+                                : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            {isActive ? "Diterapkan" : "Terapkan Template"}
+                          </button>
+
+                          {!tpl.isBuiltIn && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteCustomTemplate(tpl.id, e)}
+                              className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition"
+                              title="Hapus template kustom"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Simpan Konfigurasi Saat Ini Menjadi Template Baru */}
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+                {!isSavingNewTemplate ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsSavingNewTemplate(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-emerald-500/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition w-full justify-center"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Simpan Penataan Gambar Saat Ini sebagai Template Baru</span>
+                  </button>
+                ) : (
+                  <form
+                    onSubmit={handleSaveCurrentAsTemplate}
+                    className="p-4 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/60 space-y-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                        Simpan Sebagai Template Baru:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsSavingNewTemplate(false)}
+                        className="text-xs text-slate-400 hover:text-slate-600"
+                      >
+                        Batal
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="sm:col-span-2">
+                        <input
+                          type="text"
+                          required
+                          value={newTemplateName}
+                          onChange={(e) => setNewTemplateName(e.target.value)}
+                          placeholder="Nama template (cth: Khataman Haflah 2026)"
+                          className="w-full px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-brand"
+                        />
+                      </div>
+                      <div>
+                        <select
+                          value={newTemplateCategory}
+                          onChange={(e) =>
+                            setNewTemplateCategory(e.target.value as "putri" | "putra" | "khusus")
+                          }
+                          className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-brand"
+                        >
+                          <option value="putri">Putri</option>
+                          <option value="putra">Putra</option>
+                          <option value="khusus">Khusus</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Pengaturan twibbon, koordinat frame foto ({preset.photo.x}, {preset.photo.y}), radius sudut, border, dan tata letak teks saat ini akan tersimpan ke dalam template ini.
+                    </p>
+
+                    <button
+                      type="submit"
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition shadow-sm"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Simpan Template</span>
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={resetToDefaultPreset}
+                className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline font-medium"
+              >
+                Kembalikan ke Standar Resmi
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsTemplateModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-300 transition"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
