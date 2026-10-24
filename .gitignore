@@ -12,3 +12,8 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+e2e/helpers/.auth-cache.json
+
+# WhatsApp Gateway & Local Sessions
+waha-gateway/auth_info_baileys/
+waha-gateway/*.log
