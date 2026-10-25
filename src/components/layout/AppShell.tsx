@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { InteractiveTourGuide } from "@/components/guide/InteractiveTourGuide";
+import { QuickGuideModal } from "@/components/panduan/QuickGuideModal";
 import {
   Users,
   CalendarCheck,
@@ -119,6 +120,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [quickSearch, setQuickSearch] = useState("");
+
+  // State untuk Modal Panduan Kontekstual & Pencarian Cepat
+  const [quickGuideOpen, setQuickGuideOpen] = useState(false);
+
+  // Pintasan Keyboard Global F1 untuk Buka Panduan
+  useEffect(() => {
+    const handleGlobalF1 = (e: KeyboardEvent) => {
+      if (e.key === "F1") {
+        e.preventDefault();
+        setQuickGuideOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleGlobalF1);
+    return () => window.removeEventListener("keydown", handleGlobalF1);
+  }, []);
 
   // State untuk fitur Pin dan Auto-Collapse Sidebar Desktop
   const [isPinned, setIsPinned] = useState(false);
@@ -612,31 +628,57 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
             <div className="hidden sm:block h-6 w-px bg-slate-200 dark:bg-slate-700" />
 
-            {profile && (
-              <div className="flex items-center gap-3">
+            {profile ? (
+              <button
+                type="button"
+                onClick={() => setQuickGuideOpen(true)}
+                title="Buka Panduan Halaman Ini & Pencarian Panduan (Pintasan F1)"
+                aria-label="Buka Panduan Halaman Ini & Pencarian Panduan"
+                className="group flex items-center gap-3 p-1.5 -m-1.5 rounded-2xl hover:bg-slate-100 dark:hover:bg-slate-800 transition text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+              >
                 <div
                   aria-hidden="true"
-                  className="w-9 h-9 rounded-full bg-emerald-100 dark:bg-emerald-950 text-brand-dark dark:text-emerald-300 font-bold flex items-center justify-center text-xs border border-emerald-300 dark:border-emerald-700"
+                  className="relative w-9 h-9 rounded-full bg-emerald-100 dark:bg-emerald-950 text-brand-dark dark:text-emerald-300 font-bold flex items-center justify-center text-xs border border-emerald-300 dark:border-emerald-700 shadow-sm group-hover:scale-105 transition shrink-0"
                 >
                   {userInitial}
+                  <span
+                    className="absolute -bottom-1 -right-1 p-0.5 rounded-full bg-emerald-600 text-white shadow-sm"
+                    title="Buku Panduan Tersedia"
+                  >
+                    <BookOpen className="w-2.5 h-2.5" />
+                  </span>
                 </div>
                 <div className="hidden md:block text-left">
-                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight">
-                    {profile.nama || profile.email}
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition flex items-center gap-1">
+                    <span>{profile.nama || profile.email}</span>
                     {profile.username && (
-                      <span className="text-slate-400 font-normal ml-1 font-mono text-[11px]">
+                      <span className="text-slate-400 font-normal font-mono text-[11px]">
                         (@{profile.username})
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] font-medium text-slate-600 dark:text-slate-400">
-                    Peran: {profile.role.toUpperCase()}
+                  <div className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+                    <span>Peran: {profile.role.toUpperCase()}</span>
                     {profile.halaqoh_kelas && profile.halaqoh_bagian
                       ? ` • Halaqoh ${profile.halaqoh_kelas}${profile.halaqoh_bagian}`
                       : ""}
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold border border-emerald-200 dark:border-emerald-800">
+                      📖 Panduan
+                    </span>
                   </div>
                 </div>
-              </div>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setQuickGuideOpen(true)}
+                title="Buka Panduan Halaman Ini & Pencarian Panduan (Pintasan F1)"
+                aria-label="Buka Panduan Halaman Ini & Pencarian Panduan"
+                className="group flex items-center gap-2 px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition"
+              >
+                <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-xs font-bold">Panduan</span>
+              </button>
             )}
 
             <button
@@ -789,6 +831,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
           </div>
         </footer>
+
+        {/* Modal Pusat Panduan Kontekstual & Pencarian Khusus Panduan */}
+        <Suspense fallback={null}>
+          <QuickGuideModal
+            isOpen={quickGuideOpen}
+            onClose={() => setQuickGuideOpen(false)}
+          />
+        </Suspense>
       </div>
     </div>
   );

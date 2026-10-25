@@ -319,4 +319,65 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       expect(download.suggestedFilename()).toContain('Log_Aktivitas');
     });
   });
+
+  test.describe('7. Pusat Panduan Kontekstual & Pencarian Cepat Dokumentasi', () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAsAdmin(page);
+    });
+
+    test('di halaman /santri: mengklik profil membuka modal panduan spesifik Data Santri Tahfidz dan melakukan pencarian live search', async ({ page }) => {
+      await page.goto('/santri');
+      await expect(page.getByRole('heading', { name: /Data Santri Tahfidz/i })).toBeVisible({ timeout: 15000 });
+
+      // Verifikasi tombol profil di header atas memiliki label/tooltip panduan
+      const profileGuideBtn = page.getByRole('button', { name: /Buka Panduan Halaman Ini & Pencarian Panduan/i });
+      await expect(profileGuideBtn).toBeVisible();
+
+      // Klik tombol profil untuk membuka modal panduan kontekstual
+      await profileGuideBtn.click();
+
+      // Verifikasi modal terbuka dengan judul utama
+      const modalHeading = page.getByRole('heading', { name: /Pusat Panduan & Bantuan LPTQ/i });
+      await expect(modalHeading).toBeVisible();
+
+      // Verifikasi isi panduan otomatis sesuai dengan halaman aktif (/santri)
+      await expect(page.getByText('📍 Panduan Halaman Ini')).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Master Data Santri Tahfidz' })).toBeVisible();
+      await expect(page.getByText(/BAB 3: Pengelolaan Data Santri Tahfidz/i)).toBeVisible();
+
+      // Uji fitur pencarian khusus panduan: ketik "omr"
+      const searchInput = page.getByPlaceholder(/Cari topik panduan/i);
+      await searchInput.fill('omr');
+
+      // Verifikasi hasil live search muncul menyaring topik OMR & Khotmil
+      await expect(page.getByText(/Hasil Pencarian untuk.*omr/i)).toBeVisible();
+      await expect(page.getByText(/BAB 6: Tahfidz Khotmil/i).first()).toBeVisible();
+
+      // Bersihkan pencarian dan verifikasi kembali ke panduan kontekstual halaman
+      await searchInput.fill('');
+      await expect(page.getByRole('heading', { name: 'Master Data Santri Tahfidz' })).toBeVisible();
+
+      // Tutup modal menggunakan tombol Tutup
+      await page.getByRole('button', { name: /Tutup/i }).last().click();
+      await expect(modalHeading).not.toBeVisible();
+    });
+
+    test('di halaman /alat/flyer-khataman: panduan otomatis berubah menyesuaikan modul Flyer Khataman', async ({ page }) => {
+      await page.goto('/alat/flyer-khataman');
+      await expect(page.getByRole('heading', { name: /Flyer Khataman Al-Qur'an/i })).toBeVisible({ timeout: 15000 });
+
+      // Buka modal panduan dari header
+      const profileGuideBtn = page.getByRole('button', { name: /Buka Panduan Halaman Ini & Pencarian Panduan/i });
+      await expect(profileGuideBtn).toBeVisible();
+      await profileGuideBtn.click();
+
+      // Verifikasi panduan otomatis menyajikan konten spesifik Flyer Khataman & BAB 7
+      await expect(page.getByRole('heading', { name: 'Generator Flyer Khataman 30 Juz & Kirim WA' })).toBeVisible();
+      await expect(page.getByText(/BAB 7: Alat Lanjutan.*Flyer Khataman/i)).toBeVisible();
+
+      // Tutup modal menggunakan tombol keyboard Escape
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('heading', { name: /Pusat Panduan & Bantuan LPTQ/i })).not.toBeVisible();
+    });
+  });
 });
