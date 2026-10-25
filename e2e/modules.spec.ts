@@ -380,4 +380,74 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       await expect(page.getByRole('heading', { name: /Pusat Panduan & Bantuan LPTQ/i })).not.toBeVisible();
     });
   });
+
+  test.describe('8. Cetak Lembar LJK Khotmil 15 Juz & 30 Juz (Optimasi 2 LJK per Halaman A4)', () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAsAdmin(page);
+    });
+
+    test('di halaman /tahfidz/khotmil/15: modal cetak LJK menampilkan panduan 2 LJK per lembar A4 dan container cetak tersusun rapi', async ({ page }) => {
+      await page.goto('/tahfidz/khotmil/15');
+      await expect(page.getByRole('heading', { level: 1, name: /Tahfidz Khotmil 15 Juz/i })).toBeVisible({ timeout: 15000 });
+
+      // Verifikasi tombol "Cetak LJK" ada dan dapat diklik
+      const cetakLjkBtn = page.getByRole('button', { name: /Cetak Lembar LJK/i });
+      await expect(cetakLjkBtn).toBeVisible({ timeout: 15000 });
+      await cetakLjkBtn.click();
+
+      // Modal Cetak LJK terbuka
+      const modalHeading = page.getByRole('heading', { name: /Cetak Lembar LJK Standar OMR/i });
+      await expect(modalHeading).toBeVisible();
+
+      // Verifikasi panduan efisiensi kertas A4 (2 LJK per lembar A4)
+      await expect(page.getByText(/1 lembar kertas A4 memuat tepat 2 lembar LJK/i)).toBeVisible();
+
+      // Verifikasi tombol cetak menampilkan hitungan lembar A4 yang dihemat
+      const printBtn = page.getByRole('button', { name: /Cetak .* LJK .* Lembar A4/i });
+      await expect(printBtn).toBeVisible();
+
+      // Verifikasi struktur DOM lembar cetak (print-ljk-container)
+      const a4Sheets = page.locator('.print-ljk-container .a4-page-sheet');
+      const sheetCount = await a4Sheets.count();
+      if (sheetCount > 0) {
+        // Pada halaman A4 pertama, pastikan terdapat garis potong gunting (cut-line)
+        const cutLine = a4Sheets.first().locator('.cut-line');
+        await expect(cutLine).toBeAttached();
+        await expect(cutLine).toContainText('POTONG / GUNTING DI SINI');
+
+        // Pastikan di dalam sheet terdapat elemen LJK dengan penanda sudut (fiducials)
+        const cornerMarker = a4Sheets.first().locator('[title="Corner Top-Left"]').first();
+        await expect(cornerMarker).toBeAttached();
+      }
+
+      // Tutup modal
+      await page.getByRole('button', { name: /Tutup/i }).click();
+      await expect(modalHeading).not.toBeVisible();
+    });
+
+    test('di halaman /tahfidz/khotmil/30: modal cetak LJK berfungsi valid dengan layout 2 LJK per lembar A4', async ({ page }) => {
+      await page.goto('/tahfidz/khotmil/30');
+      await expect(page.getByRole('heading', { level: 1, name: /Tahfidz Khotmil 30 Juz/i })).toBeVisible({ timeout: 15000 });
+
+      // Buka modal Cetak LJK
+      const cetakLjkBtn = page.getByRole('button', { name: /Cetak Lembar LJK/i });
+      await expect(cetakLjkBtn).toBeVisible({ timeout: 15000 });
+      await cetakLjkBtn.click();
+
+      // Modal Cetak LJK terbuka
+      const modalHeading = page.getByRole('heading', { name: /Cetak Lembar LJK Standar OMR/i });
+      await expect(modalHeading).toBeVisible();
+
+      // Verifikasi teks optimasi A4
+      await expect(page.getByText(/Hemat 50% kertas/i)).toBeVisible();
+
+      // Verifikasi tombol cetak siap dengan kalkulasi lembar A4
+      const printBtn = page.getByRole('button', { name: /Cetak .* LJK .* Lembar A4/i });
+      await expect(printBtn).toBeVisible();
+
+      // Tutup modal
+      await page.getByRole('button', { name: /Tutup/i }).click();
+      await expect(modalHeading).not.toBeVisible();
+    });
+  });
 });
