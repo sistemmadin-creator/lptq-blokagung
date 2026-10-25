@@ -365,9 +365,25 @@ export function KhotmilLjkPrintModal({
             }
           `}</style>
           {(() => {
+            const blankTemplateSantri: Santri = {
+              id: "blank-sample-template",
+              no_urut: 1,
+              nama_lengkap: ".......................................................",
+              kode: "................",
+              blok: "-",
+              asrama: "-",
+              kamar: "-",
+              halaqoh_kelas: 1,
+              halaqoh_bagian: "A",
+              halaqoh: "1A",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            const listToRender = targetSantriList.length > 0 ? targetSantriList : [blankTemplateSantri];
+
             const santriPairs: Santri[][] = [];
-            for (let i = 0; i < targetSantriList.length; i += 2) {
-              santriPairs.push(targetSantriList.slice(i, i + 2));
+            for (let i = 0; i < listToRender.length; i += 2) {
+              santriPairs.push(listToRender.slice(i, i + 2));
             }
 
             const juzCount = currentTahapCfg.juzList.length;

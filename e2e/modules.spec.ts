@@ -560,6 +560,10 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
         page.getByText(/Penguji tidak perlu menghitung nilai/i)
       ).toBeVisible();
 
+      // Tunggu hingga santri selesai dimuat dan tombol cetak siap
+      const submitPrintBtn = page.getByRole('button', { name: /Cetak .* LJK .* Lembar A4/i });
+      await expect(submitPrintBtn).toBeVisible({ timeout: 15000 });
+
       // Verifikasi tabel cetak LJK yang disiapkan untuk react-to-print memuat bobot dinamis
       const kesalahanTh = page.locator('.print-ljk-container th').filter({ hasText: /ARSIR TOTAL KESALAHAN/i }).first();
       await expect(kesalahanTh).toBeAttached();
@@ -568,6 +572,39 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       const halamanTh = page.locator('.print-ljk-container th').filter({ hasText: /ARSIR HALAMAN KOSONG/i }).first();
       await expect(halamanTh).toBeAttached();
       await expect(halamanTh).toContainText(/BOBOT 65%/i);
+    });
+  });
+
+  test.describe('11. Modul Kegiatan Tahfidz Umum - Tombol Tambah Libur & Hari Libur Khusus', () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAsAdmin(page);
+    });
+
+    test('Halaman Kegiatan Tahfidz Umum memiliki tombol "Tambah Libur" yang membuka modal Kelola Hari Libur', async ({ page }) => {
+      await page.goto('/tahfidz/umum/kegiatan');
+      await expect(
+        page.getByRole('heading', { level: 1, name: /Kegiatan Tahfidz Umum/i })
+      ).toBeVisible({ timeout: 15000 });
+
+      // Verifikasi tombol "Tambah Libur" terlihat di baris keterangan
+      const tambahLiburBtn = page.getByRole('button', { name: /Tambah Libur/i });
+      await expect(tambahLiburBtn).toBeVisible({ timeout: 10000 });
+
+      // Klik tombol "Tambah Libur"
+      await tambahLiburBtn.click();
+
+      // Verifikasi modal Kelola Hari Libur Tahfidz terbuka
+      await expect(page.getByRole('heading', { name: /Kelola Hari Libur Tahfidz/i })).toBeVisible();
+      await expect(page.getByText(/Tambah tanggal libur selain hari Jumat/i)).toBeVisible();
+
+      // Verifikasi form input libur tersedia
+      await expect(page.locator('input[type="date"]')).toBeVisible();
+      await expect(page.getByPlaceholder(/Contoh: Hari Santri, Libur Haul/i)).toBeVisible();
+      await expect(page.getByRole('button', { name: /Simpan Hari Libur/i })).toBeVisible();
+
+      // Tutup modal
+      await page.getByRole('button', { name: /Tutup dialog hari libur|Tutup/i }).first().click();
+      await expect(page.getByRole('heading', { name: /Kelola Hari Libur Tahfidz/i })).not.toBeVisible();
     });
   });
 });

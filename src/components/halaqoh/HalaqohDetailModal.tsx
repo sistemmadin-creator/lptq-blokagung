@@ -35,6 +35,11 @@ import {
 } from "@/types/database";
 import { type FormasiHalaqohItem } from "@/lib/services/halaqoh-service";
 import { useToast } from "@/components/ui/Toast";
+import {
+  fetchCustomHolidays,
+  checkIsHoliday,
+  type HariLiburItem,
+} from "@/lib/services/holiday-service";
 
 const BULAN_NAMES = [
   "Januari",
@@ -144,6 +149,13 @@ export function HalaqohDetailModal({
   const [rangeEndDay, setRangeEndDay] = useState<number>(Math.min(now.getDate(), 28));
   const [rangeSesi, setRangeSesi] = useState<SesiAbsen | "semua">("semua");
   const [isSavingRange, setIsSavingRange] = useState(false);
+  const [holidays, setHolidays] = useState<HariLiburItem[]>([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchCustomHolidays().then(setHolidays);
+    }
+  }, [isOpen]);
 
   // Santri yang tergabung dalam halaqoh ini
   const halaqohSantri = useMemo(() => {
@@ -242,9 +254,11 @@ export function HalaqohDetailModal({
 
     halaqohSantri.forEach((s) => {
       for (let d = start; d <= end; d++) {
-        if (isFridayDate(tahun, bulan, d)) continue;
-
         targetSessions.forEach((sesType) => {
+          // Lewati hari libur Jumat atau libur khusus
+          const hol = checkIsHoliday(tahun, bulan, d, holidays, sesType);
+          if (hol.isLibur) return;
+
           const currentStatus = getEffectiveStatus(s.id, d, sesType);
           // Hanya isi jika sel masih kosong ("-")
           if (currentStatus === "") {
@@ -703,16 +717,18 @@ export function HalaqohDetailModal({
 
                       {/* Kolom Tanggal 1 s.d. Akhir Bulan dengan Nama Hari Singkat */}
                       {dayNumbers.map((d) => {
-                        const isFriday = isFridayDate(tahun, bulan, d);
+                        const hol = checkIsHoliday(tahun, bulan, d, holidays);
+                        const isFriday = hol.isLibur;
                         const dayName = getDayNameShort(tahun, bulan, d);
                         return (
                           <th
                             key={d}
                             colSpan={sesi === "semua" ? 2 : 1}
+                            title={hol.isLibur ? hol.keterangan : undefined}
                             className={`py-1.5 px-1 border-b border-r border-slate-200 dark:border-slate-700 text-center ${
                               sesi === "semua" ? "min-w-[56px]" : "w-8"
                             } ${
-                              isFriday
+                              hol.isLibur
                                 ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 font-extrabold"
                                 : ""
                             }`}
@@ -720,12 +736,12 @@ export function HalaqohDetailModal({
                             <div className="font-bold">{d}</div>
                             <div
                               className={`text-[9px] font-semibold uppercase ${
-                                isFriday
+                                hol.isLibur
                                   ? "text-rose-600 dark:text-rose-400 font-bold"
                                   : "text-slate-400 dark:text-slate-500"
                               }`}
                             >
-                              {dayName}
+                              {hol.isLibur && !hol.isFriday ? "LIBUR" : dayName}
                             </div>
                           </th>
                         );
@@ -762,20 +778,23 @@ export function HalaqohDetailModal({
                     {sesi === "semua" && (
                       <tr className="bg-slate-100/90 text-[10px] text-slate-500 dark:bg-slate-800/90 dark:text-slate-400">
                         {dayNumbers.map((d) => {
-                          const isFriday = isFridayDate(tahun, bulan, d);
+                          const holP = checkIsHoliday(tahun, bulan, d, holidays, "pagi");
+                          const holM = checkIsHoliday(tahun, bulan, d, holidays, "malam");
                           return (
                             <React.Fragment key={`sub_${d}`}>
                               <th
                                 className={`py-0.5 px-0.5 text-center border-b border-r border-slate-200 dark:border-slate-700 font-bold ${
-                                  isFriday ? "bg-rose-100/50 text-rose-800" : ""
+                                  holP.isLibur ? "bg-rose-100/50 text-rose-800" : ""
                                 }`}
+                                title={holP.isLibur ? holP.keterangan : undefined}
                               >
                                 P
                               </th>
                               <th
                                 className={`py-0.5 px-0.5 text-center border-b border-r border-slate-200 dark:border-slate-700 font-bold ${
-                                  isFriday ? "bg-rose-100/50 text-rose-800" : ""
+                                  holM.isLibur ? "bg-rose-100/50 text-rose-800" : ""
                                 }`}
+                                title={holM.isLibur ? holM.keterangan : undefined}
                               >
                                 M
                               </th>
@@ -801,12 +820,14 @@ export function HalaqohDetailModal({
                       };
 
                       dayNumbers.forEach((d) => {
-                        if (isFridayDate(tahun, bulan, d)) return;
                         if (sesi === "semua") {
-                          checkAndIncrement(getEffectiveStatus(s.id, d, "pagi"));
-                          checkAndIncrement(getEffectiveStatus(s.id, d, "malam"));
+                          const holP = checkIsHoliday(tahun, bulan, d, holidays, "pagi");
+                          const holM = checkIsHoliday(tahun, bulan, d, holidays, "malam");
+                          if (!holP.isLibur) checkAndIncrement(getEffectiveStatus(s.id, d, "pagi"));
+                          if (!holM.isLibur) checkAndIncrement(getEffectiveStatus(s.id, d, "malam"));
                         } else {
-                          checkAndIncrement(getEffectiveStatus(s.id, d, sesi as SesiAbsen));
+                          const hol = checkIsHoliday(tahun, bulan, d, holidays, sesi as SesiAbsen);
+                          if (!hol.isLibur) checkAndIncrement(getEffectiveStatus(s.id, d, sesi as SesiAbsen));
                         }
                       });
 
@@ -830,105 +851,115 @@ export function HalaqohDetailModal({
 
                           {/* Sel Kalender Presensi Tiap Hari */}
                           {dayNumbers.map((d) => {
-                            const isFriday = isFridayDate(tahun, bulan, d);
+                            if (sesi === "semua") {
+                              const holP = checkIsHoliday(tahun, bulan, d, holidays, "pagi");
+                              const holM = checkIsHoliday(tahun, bulan, d, holidays, "malam");
+                              const currentValPagi = getEffectiveStatus(s.id, d, "pagi");
+                              const currentValMalam = getEffectiveStatus(s.id, d, "malam");
 
-                            if (isFriday) {
-                              if (sesi === "semua") {
-                                return (
-                                  <React.Fragment key={d}>
-                                    <td className="py-1 px-0.5 text-center border-r border-slate-200 bg-slate-100/70 text-slate-400 font-mono text-[10px] dark:border-slate-800 dark:bg-slate-800/40">
+                              return (
+                                <React.Fragment key={d}>
+                                  {/* Sesi Pagi */}
+                                  {holP.isLibur ? (
+                                    <td
+                                      className="py-1 px-0.5 text-center border-r border-slate-200 bg-slate-100/70 text-slate-400 font-mono text-[10px] dark:border-slate-800 dark:bg-slate-800/40"
+                                      title={holP.keterangan || "Libur"}
+                                    >
                                       -
                                     </td>
-                                    <td className="py-1 px-0.5 text-center border-r border-slate-200 bg-slate-100/70 text-slate-400 font-mono text-[10px] dark:border-slate-800 dark:bg-slate-800/40">
+                                  ) : (
+                                    <td className="py-1 px-0.5 text-center border-r border-slate-200 dark:border-slate-800 p-0">
+                                      <select
+                                        value={currentValPagi}
+                                        onChange={(e) =>
+                                          handleCellStatusChange(
+                                            s.id,
+                                            d,
+                                            "pagi",
+                                            e.target.value as StatusAbsen | ""
+                                          )
+                                        }
+                                        title={`Pagi - Tgl ${d}: ${s.nama_lengkap}`}
+                                        className={`h-7 w-7 text-center rounded text-[11px] font-bold border cursor-pointer focus:outline-none transition appearance-none [&::-ms-expand]:hidden ${
+                                          currentValPagi === "hadir"
+                                            ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700"
+                                            : currentValPagi === "alfa"
+                                            ? "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700"
+                                            : currentValPagi === "izin"
+                                            ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
+                                            : currentValPagi === "sakit"
+                                            ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
+                                            : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
+                                        }`}
+                                      >
+                                        <option value="">-</option>
+                                        <option value="hadir">H</option>
+                                        <option value="alfa">A</option>
+                                        <option value="izin">I</option>
+                                        <option value="sakit">S</option>
+                                      </select>
+                                    </td>
+                                  )}
+
+                                  {/* Sesi Malam */}
+                                  {holM.isLibur ? (
+                                    <td
+                                      className="py-1 px-0.5 text-center border-r border-slate-200 bg-slate-100/70 text-slate-400 font-mono text-[10px] dark:border-slate-800 dark:bg-slate-800/40"
+                                      title={holM.keterangan || "Libur"}
+                                    >
                                       -
                                     </td>
-                                  </React.Fragment>
-                                );
-                              }
+                                  ) : (
+                                    <td className="py-1 px-0.5 text-center border-r border-slate-200 dark:border-slate-800 p-0">
+                                      <select
+                                        value={currentValMalam}
+                                        onChange={(e) =>
+                                          handleCellStatusChange(
+                                            s.id,
+                                            d,
+                                            "malam",
+                                            e.target.value as StatusAbsen | ""
+                                          )
+                                        }
+                                        title={`Malam - Tgl ${d}: ${s.nama_lengkap}`}
+                                        className={`h-7 w-7 text-center rounded text-[11px] font-bold border cursor-pointer focus:outline-none transition appearance-none [&::-ms-expand]:hidden ${
+                                          currentValMalam === "hadir"
+                                            ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700"
+                                            : currentValMalam === "alfa"
+                                            ? "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700"
+                                            : currentValMalam === "izin"
+                                            ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
+                                            : currentValMalam === "sakit"
+                                            ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
+                                            : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
+                                        }`}
+                                      >
+                                        <option value="">-</option>
+                                        <option value="hadir">H</option>
+                                        <option value="alfa">A</option>
+                                        <option value="izin">I</option>
+                                        <option value="sakit">S</option>
+                                      </select>
+                                    </td>
+                                  )}
+                                </React.Fragment>
+                              );
+                            }
+
+                            // Sesi Tunggal (Pagi atau Malam)
+                            const hol = checkIsHoliday(tahun, bulan, d, holidays, sesi as SesiAbsen);
+                            if (hol.isLibur) {
                               return (
                                 <td
                                   key={d}
                                   className="py-1 px-0.5 text-center border-r border-slate-200 bg-slate-100/70 text-slate-400 font-mono text-[10px] dark:border-slate-800 dark:bg-slate-800/40"
+                                  title={hol.keterangan || "Libur"}
                                 >
                                   -
                                 </td>
                               );
                             }
 
-                            if (sesi === "semua") {
-                              const currentValPagi = getEffectiveStatus(s.id, d, "pagi");
-                              const currentValMalam = getEffectiveStatus(s.id, d, "malam");
-                              return (
-                                <React.Fragment key={d}>
-                                  {/* Sesi Pagi */}
-                                  <td className="py-1 px-0.5 text-center border-r border-slate-200 dark:border-slate-800 p-0">
-                                    <select
-                                      value={currentValPagi}
-                                      onChange={(e) =>
-                                        handleCellStatusChange(
-                                          s.id,
-                                          d,
-                                          "pagi",
-                                          e.target.value as StatusAbsen | ""
-                                        )
-                                      }
-                                      title={`Pagi - Tgl ${d}: ${s.nama_lengkap}`}
-                                      className={`h-7 w-7 text-center rounded text-[11px] font-bold border cursor-pointer focus:outline-none transition appearance-none [&::-ms-expand]:hidden ${
-                                        currentValPagi === "hadir"
-                                          ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700"
-                                          : currentValPagi === "alfa"
-                                          ? "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700"
-                                          : currentValPagi === "izin"
-                                          ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
-                                          : currentValPagi === "sakit"
-                                          ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
-                                          : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
-                                      }`}
-                                    >
-                                      <option value="">-</option>
-                                      <option value="hadir">H</option>
-                                      <option value="alfa">A</option>
-                                      <option value="izin">I</option>
-                                      <option value="sakit">S</option>
-                                    </select>
-                                  </td>
-                                  {/* Sesi Malam */}
-                                  <td className="py-1 px-0.5 text-center border-r border-slate-200 dark:border-slate-800 p-0">
-                                    <select
-                                      value={currentValMalam}
-                                      onChange={(e) =>
-                                        handleCellStatusChange(
-                                          s.id,
-                                          d,
-                                          "malam",
-                                          e.target.value as StatusAbsen | ""
-                                        )
-                                      }
-                                      title={`Malam - Tgl ${d}: ${s.nama_lengkap}`}
-                                      className={`h-7 w-7 text-center rounded text-[11px] font-bold border cursor-pointer focus:outline-none transition appearance-none [&::-ms-expand]:hidden ${
-                                        currentValMalam === "hadir"
-                                          ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700"
-                                          : currentValMalam === "alfa"
-                                          ? "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700"
-                                          : currentValMalam === "izin"
-                                          ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950/80 dark:text-blue-300 dark:border-blue-700"
-                                          : currentValMalam === "sakit"
-                                          ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
-                                          : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
-                                      }`}
-                                    >
-                                      <option value="">-</option>
-                                      <option value="hadir">H</option>
-                                      <option value="alfa">A</option>
-                                      <option value="izin">I</option>
-                                      <option value="sakit">S</option>
-                                    </select>
-                                  </td>
-                                </React.Fragment>
-                              );
-                            }
-
-                            // Sesi Tunggal (Pagi atau Malam)
                             const currentVal = getEffectiveStatus(s.id, d, sesi as SesiAbsen);
                             return (
                               <td
@@ -1461,11 +1492,14 @@ export function HalaqohDetailModal({
                       onChange={(e) => setRangeStartDay(Number(e.target.value))}
                       className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
-                      {dayNumbers.map((d) => (
-                        <option key={d} value={d}>
-                          Tanggal {d} {isFridayDate(tahun, bulan, d) ? "(Jumat - Libur)" : ""}
-                        </option>
-                      ))}
+                      {dayNumbers.map((d) => {
+                        const hol = checkIsHoliday(tahun, bulan, d, holidays);
+                        return (
+                          <option key={d} value={d}>
+                            Tanggal {d} {hol.isLibur ? `(${hol.isFriday ? "Jumat - Libur" : `Libur: ${hol.keterangan}`})` : ""}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
 
@@ -1478,11 +1512,14 @@ export function HalaqohDetailModal({
                       onChange={(e) => setRangeEndDay(Number(e.target.value))}
                       className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
-                      {dayNumbers.map((d) => (
-                        <option key={d} value={d}>
-                          Tanggal {d} {isFridayDate(tahun, bulan, d) ? "(Jumat - Libur)" : ""}
-                        </option>
-                      ))}
+                      {dayNumbers.map((d) => {
+                        const hol = checkIsHoliday(tahun, bulan, d, holidays);
+                        return (
+                          <option key={d} value={d}>
+                            Tanggal {d} {hol.isLibur ? `(${hol.isFriday ? "Jumat - Libur" : `Libur: ${hol.keterangan}`})` : ""}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                 </div>

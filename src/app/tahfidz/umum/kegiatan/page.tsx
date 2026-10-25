@@ -20,6 +20,9 @@ import {
   Table as TableIcon,
   ExternalLink,
   Loader2,
+  CalendarOff,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import {
@@ -29,6 +32,13 @@ import {
   upsertAbsensiBatch,
 } from "@/lib/services/tahfidz-service";
 import { formatKamarDisplay } from "@/lib/services/hierarchy-service";
+import {
+  fetchCustomHolidays,
+  saveCustomHoliday,
+  deleteCustomHoliday,
+  checkIsHoliday,
+  type HariLiburItem,
+} from "@/lib/services/holiday-service";
 import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
@@ -135,6 +145,43 @@ export default function KegiatanAbsensiPage() {
   const [rangeSesi, setRangeSesi] = useState<SesiAbsen | "semua">("semua");
   const [isSavingRange, setIsSavingRange] = useState(false);
 
+  // Modal Kelola Hari Libur Khusus
+  const [holidays, setHolidays] = useState<HariLiburItem[]>([]);
+  const [holidayModalOpen, setHolidayModalOpen] = useState(false);
+  const [newHolidayDate, setNewHolidayDate] = useState<string>("");
+  const [newHolidayKet, setNewHolidayKet] = useState<string>("");
+  const [newHolidaySesi, setNewHolidaySesi] = useState<SesiAbsen | "semua">("semua");
+  const [isSavingHoliday, setIsSavingHoliday] = useState(false);
+  const [isDeletingHolidayId, setIsDeletingHolidayId] = useState<string | null>(null);
+  const [showAllHolidays, setShowAllHolidays] = useState(false);
+
+  // Ambil data hari libur khusus & dengarkan update realtime
+  useEffect(() => {
+    fetchCustomHolidays().then(setHolidays);
+    const handleHolidaysUpdate = (e: Event) => {
+      const customEvt = e as CustomEvent<HariLiburItem[]>;
+      if (customEvt.detail && Array.isArray(customEvt.detail)) {
+        setHolidays(customEvt.detail);
+      }
+    };
+    window.addEventListener("lptq-holidays-updated", handleHolidaysUpdate);
+    return () => window.removeEventListener("lptq-holidays-updated", handleHolidaysUpdate);
+  }, []);
+
+  // Filter libur khusus pada bulan aktif
+  const monthPrefix = `${tahun}-${String(bulan).padStart(2, "0")}`;
+  const monthHolidays = useMemo(() => {
+    return holidays.filter((h) => h.tanggal.startsWith(monthPrefix));
+  }, [holidays, monthPrefix]);
+
+  // Helper cek status hari libur tanggal & sesi tertentu
+  const isHoliday = useCallback(
+    (day: number, sesiTarget?: SesiAbsen | "semua") => {
+      return checkIsHoliday(tahun, bulan, day, holidays, sesiTarget);
+    },
+    [tahun, bulan, holidays]
+  );
+
   // Jumlah hari dalam bulan terpilih (28 - 31)
   const totalDays = new Date(tahun, bulan, 0).getDate();
   const dayNumbers = Array.from({ length: totalDays }, (_, i) => i + 1);
@@ -185,7 +232,7 @@ export default function KegiatanAbsensiPage() {
     showToast,
   ]);
 
-  // Rekap kehadiran seorang santri pada bulan terpilih
+  // Rekap kehadiran seorang santri pada bulan terpilih (melewati hari libur Jumat & libur khusus)
   const computeSantriAbsenSummary = useCallback(
     (santriId: string) => {
       let hadir = 0;
@@ -195,26 +242,37 @@ export default function KegiatanAbsensiPage() {
 
       for (let d = 1; d <= totalDays; d++) {
         if (sesi === "semua") {
-          const sp = absenMap[`${santriId}_${d}_pagi`];
-          const sm = absenMap[`${santriId}_${d}_malam`];
-          [sp, sm].forEach((st) => {
+          const holPagi = checkIsHoliday(tahun, bulan, d, holidays, "pagi");
+          const holMalam = checkIsHoliday(tahun, bulan, d, holidays, "malam");
+          if (!holPagi.isLibur) {
+            const sp = absenMap[`${santriId}_${d}_pagi`];
+            if (sp === "hadir") hadir++;
+            else if (sp === "alfa") alfa++;
+            else if (sp === "izin") izin++;
+            else if (sp === "sakit") sakit++;
+          }
+          if (!holMalam.isLibur) {
+            const sm = absenMap[`${santriId}_${d}_malam`];
+            if (sm === "hadir") hadir++;
+            else if (sm === "alfa") alfa++;
+            else if (sm === "izin") izin++;
+            else if (sm === "sakit") sakit++;
+          }
+        } else {
+          const hol = checkIsHoliday(tahun, bulan, d, holidays, sesi as SesiAbsen);
+          if (!hol.isLibur) {
+            const st = absenMap[`${santriId}_${d}_${sesi}`];
             if (st === "hadir") hadir++;
             else if (st === "alfa") alfa++;
             else if (st === "izin") izin++;
             else if (st === "sakit") sakit++;
-          });
-        } else {
-          const st = absenMap[`${santriId}_${d}_${sesi}`];
-          if (st === "hadir") hadir++;
-          else if (st === "alfa") alfa++;
-          else if (st === "izin") izin++;
-          else if (st === "sakit") sakit++;
+          }
         }
       }
 
       return { hadir, alfa, izin, sakit };
     },
-    [absenMap, totalDays, sesi]
+    [absenMap, totalDays, sesi, tahun, bulan, holidays]
   );
 
   // Pengelompokan santri per halaqoh untuk mode kartu
@@ -259,13 +317,15 @@ export default function KegiatanAbsensiPage() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (holidayModalOpen) setHolidayModalOpen(false);
+        if (rangeModalOpen) setRangeModalOpen(false);
         if (bulkModalOpen) setBulkModalOpen(false);
         if (filterModalOpen) setFilterModalOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filterModalOpen, bulkModalOpen]);
+  }, [filterModalOpen, bulkModalOpen, holidayModalOpen, rangeModalOpen]);
 
   // Hook cetak PDF via react-to-print
   const handlePrint = useReactToPrint({
@@ -343,16 +403,18 @@ export default function KegiatanAbsensiPage() {
     }
   };
 
-  // Hitung rekap status per santri (otomatis Hadir sebagai default)
+  // Hitung rekap status per santri (otomatis Hadir sebagai default, melewati libur Jumat & khusus)
   const countStatus = (santriId: string, st: StatusAbsen): number => {
     let c = 0;
     for (const d of dayNumbers) {
-      if (isFridayDate(tahun, bulan, d)) continue;
       if (sesi === "semua") {
-        if (getEffectiveStatus(santriId, d, "pagi") === st) c++;
-        if (getEffectiveStatus(santriId, d, "malam") === st) c++;
+        const holPagi = isHoliday(d, "pagi");
+        const holMalam = isHoliday(d, "malam");
+        if (!holPagi.isLibur && getEffectiveStatus(santriId, d, "pagi") === st) c++;
+        if (!holMalam.isLibur && getEffectiveStatus(santriId, d, "malam") === st) c++;
       } else {
-        if (getEffectiveStatus(santriId, d, sesi as SesiAbsen) === st) c++;
+        const hol = isHoliday(d, sesi as SesiAbsen);
+        if (!hol.isLibur && getEffectiveStatus(santriId, d, sesi as SesiAbsen) === st) c++;
       }
     }
     return c;
@@ -487,10 +549,11 @@ export default function KegiatanAbsensiPage() {
 
     santriList.forEach((s) => {
       for (let d = start; d <= end; d++) {
-        // Hari Jumat selalu libur, jangan diisi
-        if (isFridayDate(tahun, bulan, d)) continue;
-
         targetSessions.forEach((sesType) => {
+          // Hari libur (Jumat atau libur khusus) jangan diisi
+          const hol = checkIsHoliday(tahun, bulan, d, holidays, sesType);
+          if (hol.isLibur) return;
+
           const currentStatus = getEffectiveStatus(s.id, d, sesType);
           // HANYA jika status masih kosong / "-"
           // Jangan menimpa jika sudah terisi alfa, izin, sakit, atau sudah hadir
@@ -539,6 +602,47 @@ export default function KegiatanAbsensiPage() {
     }
   };
 
+  // Handler simpan hari libur khusus baru
+  const handleSaveHoliday = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newHolidayDate) {
+      showToast("error", "Silakan tentukan tanggal hari libur.");
+      return;
+    }
+    const ket = newHolidayKet.trim() || "Hari Libur Khusus";
+    setIsSavingHoliday(true);
+    try {
+      const updated = await saveCustomHoliday({
+        tanggal: newHolidayDate,
+        keterangan: ket,
+        sesi: newHolidaySesi,
+      });
+      setHolidays(updated);
+      showToast("success", `Hari libur "${ket}" (${newHolidayDate}) berhasil disimpan.`);
+      setNewHolidayKet("");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Gagal menyimpan hari libur.";
+      showToast("error", msg);
+    } finally {
+      setIsSavingHoliday(false);
+    }
+  };
+
+  // Handler hapus hari libur khusus
+  const handleDeleteHoliday = async (id: string, ket: string) => {
+    setIsDeletingHolidayId(id);
+    try {
+      const updated = await deleteCustomHoliday(id);
+      setHolidays(updated);
+      showToast("success", `Hari libur "${ket}" berhasil dihapus.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Gagal menghapus hari libur.";
+      showToast("error", msg);
+    } finally {
+      setIsDeletingHolidayId(null);
+    }
+  };
+
   const handleExportExcel = () => {
     const rows = santriList.map((s, idx) => {
       const rowObj: Record<string, unknown> = {
@@ -549,15 +653,17 @@ export default function KegiatanAbsensiPage() {
         Halaqoh: s.halaqoh,
       };
       for (const d of dayNumbers) {
-        const fri = isFridayDate(tahun, bulan, d);
         if (sesi === "semua") {
+          const holP = isHoliday(d, "pagi");
+          const holM = isHoliday(d, "malam");
           const valP = getEffectiveStatus(s.id, d, "pagi");
           const valM = getEffectiveStatus(s.id, d, "malam");
-          rowObj[`Tgl_${d}_Pagi`] = fri ? "JUMAT" : valP ? valP[0].toUpperCase() : "-";
-          rowObj[`Tgl_${d}_Malam`] = fri ? "JUMAT" : valM ? valM[0].toUpperCase() : "-";
+          rowObj[`Tgl_${d}_Pagi`] = holP.isLibur ? (holP.isFriday ? "JUMAT" : "LIBUR") : valP ? valP[0].toUpperCase() : "-";
+          rowObj[`Tgl_${d}_Malam`] = holM.isLibur ? (holM.isFriday ? "JUMAT" : "LIBUR") : valM ? valM[0].toUpperCase() : "-";
         } else {
+          const hol = isHoliday(d, sesi as SesiAbsen);
           const val = getEffectiveStatus(s.id, d, sesi as SesiAbsen);
-          rowObj[`Tgl_${d}`] = fri ? "JUMAT" : val ? val[0].toUpperCase() : "-";
+          rowObj[`Tgl_${d}`] = hol.isLibur ? (hol.isFriday ? "JUMAT" : "LIBUR") : val ? val[0].toUpperCase() : "-";
         }
       }
       rowObj["Total Hadir"] = countStatus(s.id, "hadir");
@@ -840,6 +946,29 @@ export default function KegiatanAbsensiPage() {
               <CalendarRange className="h-3.5 w-3.5" />
               <span>Pilih Hadir</span>
             </button>
+
+            {/* Tombol Tambah Libur: Kelola hari libur selain hari Jumat */}
+            <button
+              type="button"
+              onClick={() => {
+                const defaultDay = Math.min(now.getDate(), totalDays);
+                setNewHolidayDate(`${tahun}-${String(bulan).padStart(2, "0")}-${String(defaultDay).padStart(2, "0")}`);
+                setNewHolidayKet("");
+                setNewHolidaySesi(sesi === "malam" ? "malam" : sesi === "pagi" ? "pagi" : "semua");
+                setHolidayModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-rose-300 bg-rose-50 text-rose-800 font-bold hover:bg-rose-100 active:scale-95 transition shadow-xs dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300 cursor-pointer mr-1"
+              title="Tambah atau kelola hari libur khusus selain hari Jumat"
+            >
+              <CalendarOff className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" />
+              <span>Tambah Libur</span>
+              {monthHolidays.length > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.2 bg-rose-200 text-rose-900 rounded-full text-[10px] font-extrabold dark:bg-rose-900 dark:text-rose-200">
+                  {monthHolidays.length}
+                </span>
+              )}
+            </button>
+
             <button
               type="button"
               onClick={() => handleOpenBulkModal("hadir")}
@@ -873,6 +1002,11 @@ export default function KegiatanAbsensiPage() {
               S = Sakit
             </button>
             <span className="font-semibold text-slate-700 dark:text-slate-300 ml-1">JUM = Libur</span>
+            {monthHolidays.length > 0 && (
+              <span className="text-rose-600 dark:text-rose-400 font-bold ml-1">
+                ({monthHolidays.length} Libur Khusus)
+              </span>
+            )}
             {sesi === "semua" && (
               <span className="text-emerald-700 font-semibold">(P = Pagi, M = Malam)</span>
             )}
@@ -1124,27 +1258,34 @@ export default function KegiatanAbsensiPage() {
                     Halaqoh
                   </th>
                   {dayNumbers.map((d) => {
-                    const fri = isFridayDate(tahun, bulan, d);
+                    const hol = isHoliday(d);
                     const dayName = getDayNameShort(tahun, bulan, d);
                     return (
                       <th
                         key={d}
                         colSpan={sesi === "semua" ? 2 : 1}
+                        title={hol.isLibur ? hol.keterangan : undefined}
                         className={`px-1 py-2 text-center font-mono text-[11px] ${
                           sesi === "semua" ? "min-w-[56px]" : "min-w-[34px]"
                         } ${
-                          fri ? "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 font-bold" : ""
+                          hol.isLibur
+                            ? hol.isFriday
+                              ? "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 font-bold"
+                              : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-200 font-bold"
+                            : ""
                         }`}
                       >
                         <div className="font-bold">{d}</div>
                         <div
                           className={`text-[9px] font-semibold uppercase ${
-                            fri
-                              ? "text-rose-600 dark:text-rose-400 font-bold"
+                            hol.isLibur
+                              ? hol.isFriday
+                                ? "text-rose-600 dark:text-rose-400 font-bold"
+                                : "text-rose-700 dark:text-rose-300 font-extrabold"
                               : "text-slate-400 dark:text-slate-500"
                           }`}
                         >
-                          {dayName}
+                          {hol.isLibur && !hol.isFriday ? "LIBUR" : dayName}
                         </div>
                       </th>
                     );
@@ -1179,20 +1320,23 @@ export default function KegiatanAbsensiPage() {
                 {sesi === "semua" && (
                   <tr className="bg-slate-100/80 text-[10px] text-slate-500 dark:bg-slate-800/80 dark:text-slate-400">
                     {dayNumbers.map((d) => {
-                      const fri = isFridayDate(tahun, bulan, d);
+                      const holP = isHoliday(d, "pagi");
+                      const holM = isHoliday(d, "malam");
                       return (
                         <React.Fragment key={`sub_hdr_${d}`}>
                           <th
                             className={`py-0.5 px-0.5 text-center border-b border-r border-slate-200 dark:border-slate-700 font-bold ${
-                              fri ? "bg-rose-100/50 text-rose-800" : ""
+                              holP.isLibur ? "bg-rose-100/50 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300" : ""
                             }`}
+                            title={holP.isLibur ? holP.keterangan : undefined}
                           >
                             P
                           </th>
                           <th
                             className={`py-0.5 px-0.5 text-center border-b border-r border-slate-200 dark:border-slate-700 font-bold ${
-                              fri ? "bg-rose-100/50 text-rose-800" : ""
+                              holM.isLibur ? "bg-rose-100/50 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300" : ""
                             }`}
+                            title={holM.isLibur ? holM.keterangan : undefined}
                           >
                             M
                           </th>
@@ -1233,97 +1377,101 @@ export default function KegiatanAbsensiPage() {
 
                       {/* Sel Absensi */}
                       {dayNumbers.map((d) => {
-                        const fri = isFridayDate(tahun, bulan, d);
-                        if (fri) {
-                          if (sesi === "semua") {
-                            return (
-                              <React.Fragment key={d}>
+                        if (sesi === "semua") {
+                          const holP = isHoliday(d, "pagi");
+                          const holM = isHoliday(d, "malam");
+                          const curPagi = getEffectiveStatus(s.id, d, "pagi");
+                          const curMalam = getEffectiveStatus(s.id, d, "malam");
+
+                          return (
+                            <React.Fragment key={d}>
+                              {/* Sesi Pagi */}
+                              {holP.isLibur ? (
                                 <td
                                   className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
-                                  title="Hari Jumat Libur"
+                                  title={holP.keterangan || "Libur"}
                                 >
                                   -
                                 </td>
+                              ) : (
+                                <td className="p-0.5 text-center">
+                                  <select
+                                    value={curPagi}
+                                    onChange={(e) => handleCellChange(s.id, d, "pagi", e.target.value)}
+                                    aria-label={`Pagi santri ${s.nama_lengkap} tanggal ${d}`}
+                                    className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
+                                      curPagi === "hadir"
+                                        ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
+                                        : curPagi === "alfa"
+                                        ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
+                                        : curPagi === "izin"
+                                        ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+                                        : curPagi === "sakit"
+                                        ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                                        : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
+                                    }`}
+                                  >
+                                    <option value="">-</option>
+                                    <option value="hadir">H</option>
+                                    <option value="alfa">A</option>
+                                    <option value="izin">I</option>
+                                    <option value="sakit">S</option>
+                                  </select>
+                                </td>
+                              )}
+
+                              {/* Sesi Malam */}
+                              {holM.isLibur ? (
                                 <td
                                   className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
-                                  title="Hari Jumat Libur"
+                                  title={holM.keterangan || "Libur"}
                                 >
                                   -
                                 </td>
-                              </React.Fragment>
-                            );
-                          }
+                              ) : (
+                                <td className="p-0.5 text-center">
+                                  <select
+                                    value={curMalam}
+                                    onChange={(e) => handleCellChange(s.id, d, "malam", e.target.value)}
+                                    aria-label={`Malam santri ${s.nama_lengkap} tanggal ${d}`}
+                                    className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
+                                      curMalam === "hadir"
+                                        ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
+                                        : curMalam === "alfa"
+                                        ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
+                                        : curMalam === "izin"
+                                        ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
+                                        : curMalam === "sakit"
+                                        ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                                        : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
+                                    }`}
+                                  >
+                                    <option value="">-</option>
+                                    <option value="hadir">H</option>
+                                    <option value="alfa">A</option>
+                                    <option value="izin">I</option>
+                                    <option value="sakit">S</option>
+                                  </select>
+                                </td>
+                              )}
+                            </React.Fragment>
+                          );
+                        }
+
+                        // Sesi Tunggal (Pagi saja atau Malam saja)
+                        const hol = isHoliday(d, sesi as SesiAbsen);
+                        if (hol.isLibur) {
                           return (
                             <td
                               key={d}
                               className="bg-slate-100 dark:bg-slate-800 text-center text-[10px] text-slate-400 select-none"
-                              title="Hari Jumat Libur"
+                              title={hol.keterangan || "Libur"}
                             >
                               -
                             </td>
                           );
                         }
 
-                        if (sesi === "semua") {
-                          const curPagi = getEffectiveStatus(s.id, d, "pagi");
-                          const curMalam = getEffectiveStatus(s.id, d, "malam");
-                          return (
-                            <React.Fragment key={d}>
-                              {/* Sesi Pagi */}
-                              <td className="p-0.5 text-center">
-                                <select
-                                  value={curPagi}
-                                  onChange={(e) => handleCellChange(s.id, d, "pagi", e.target.value)}
-                                  aria-label={`Pagi santri ${s.nama_lengkap} tanggal ${d}`}
-                                  className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
-                                    curPagi === "hadir"
-                                      ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
-                                      : curPagi === "alfa"
-                                      ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
-                                      : curPagi === "izin"
-                                      ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
-                                      : curPagi === "sakit"
-                                      ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                                      : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
-                                  }`}
-                                >
-                                  <option value="">-</option>
-                                  <option value="hadir">H</option>
-                                  <option value="alfa">A</option>
-                                  <option value="izin">I</option>
-                                  <option value="sakit">S</option>
-                                </select>
-                              </td>
-                              {/* Sesi Malam */}
-                              <td className="p-0.5 text-center">
-                                <select
-                                  value={curMalam}
-                                  onChange={(e) => handleCellChange(s.id, d, "malam", e.target.value)}
-                                  aria-label={`Malam santri ${s.nama_lengkap} tanggal ${d}`}
-                                  className={`h-7 w-7 rounded text-center font-bold text-[11px] border focus:outline-none appearance-none [&::-ms-expand]:hidden ${
-                                    curMalam === "hadir"
-                                      ? "bg-emerald-100 text-emerald-900 border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200"
-                                      : curMalam === "alfa"
-                                      ? "bg-rose-100 text-rose-900 border-rose-400 dark:bg-rose-950 dark:text-rose-200"
-                                      : curMalam === "izin"
-                                      ? "bg-amber-100 text-amber-900 border-amber-400 dark:bg-amber-950 dark:text-amber-200"
-                                      : curMalam === "sakit"
-                                      ? "bg-blue-100 text-blue-900 border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                                      : "bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-500 dark:border-slate-800"
-                                  }`}
-                                >
-                                  <option value="">-</option>
-                                  <option value="hadir">H</option>
-                                  <option value="alfa">A</option>
-                                  <option value="izin">I</option>
-                                  <option value="sakit">S</option>
-                                </select>
-                              </td>
-                            </React.Fragment>
-                          );
-                        }
-
-                        // Sesi Tunggal
                         const cur = getEffectiveStatus(s.id, d, sesi as SesiAbsen);
                         return (
                           <td key={d} className="p-0.5 text-center">
@@ -1810,11 +1958,14 @@ export default function KegiatanAbsensiPage() {
                     onChange={(e) => setRangeStartDay(Number(e.target.value))}
                     className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    {dayNumbers.map((d) => (
-                      <option key={d} value={d}>
-                        Tanggal {d} {isFridayDate(tahun, bulan, d) ? "(Jumat - Libur)" : ""}
-                      </option>
-                    ))}
+                    {dayNumbers.map((d) => {
+                      const hol = isHoliday(d);
+                      return (
+                        <option key={d} value={d}>
+                          Tanggal {d} {hol.isLibur ? `(${hol.isFriday ? "Jumat - Libur" : `Libur: ${hol.keterangan}`})` : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
@@ -1827,11 +1978,14 @@ export default function KegiatanAbsensiPage() {
                     onChange={(e) => setRangeEndDay(Number(e.target.value))}
                     className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    {dayNumbers.map((d) => (
-                      <option key={d} value={d}>
-                        Tanggal {d} {isFridayDate(tahun, bulan, d) ? "(Jumat - Libur)" : ""}
-                      </option>
-                    ))}
+                    {dayNumbers.map((d) => {
+                      const hol = isHoliday(d);
+                      return (
+                        <option key={d} value={d}>
+                          Tanggal {d} {hol.isLibur ? `(${hol.isFriday ? "Jumat - Libur" : `Libur: ${hol.keterangan}`})` : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               </div>
@@ -2054,6 +2208,252 @@ export default function KegiatanAbsensiPage() {
           </div>
         </div>
       )}
+      {/* POP-UP 3: MODAL KELOLA HARI LIBUR TAHFIDZ (SELAIN JUMAT) */}
+      {holidayModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-kelola-hari-libur-title"
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Header Modal */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300">
+                  <CalendarOff className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 id="modal-kelola-hari-libur-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    Kelola Hari Libur Tahfidz
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Tambah tanggal libur selain hari Jumat untuk bulan ini atau tanggal mendatang
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHolidayModalOpen(false)}
+                aria-label="Tutup dialog hari libur"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Isi Konten Modal (Scrollable) */}
+            <div className="overflow-y-auto py-4 space-y-4 pr-1 text-xs">
+              {/* Form Tambah Libur Baru */}
+              <form onSubmit={handleSaveHoliday} className="space-y-3.5 bg-rose-50/70 dark:bg-rose-950/30 p-4 rounded-2xl border border-rose-200/80 dark:border-rose-900/40">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-rose-900 dark:text-rose-200 text-xs flex items-center gap-1.5">
+                    <Plus className="h-4 w-4 text-rose-700 dark:text-rose-400" />
+                    <span>Tambah Hari Libur Baru</span>
+                  </span>
+                  <span className="text-[11px] text-rose-700/80 dark:text-rose-300/80">
+                    Bulan aktif: {BULAN_NAMES[bulan - 1]} {tahun}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Pilih Tanggal Libur
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={newHolidayDate}
+                      onChange={(e) => setNewHolidayDate(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 shadow-xs focus:border-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Keterangan / Alasan Libur
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Contoh: Hari Santri, Libur Haul..."
+                      value={newHolidayKet}
+                      onChange={(e) => setNewHolidayKet(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 shadow-xs focus:border-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Cakupan Sesi Presensi
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewHolidaySesi("semua")}
+                      className={`py-1.5 px-2 rounded-xl border text-center font-bold text-[11px] transition ${
+                        newHolidaySesi === "semua"
+                          ? "bg-rose-700 border-rose-700 text-white shadow-xs"
+                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      Pagi & Malam
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewHolidaySesi("pagi")}
+                      className={`py-1.5 px-2 rounded-xl border text-center font-bold text-[11px] transition ${
+                        newHolidaySesi === "pagi"
+                          ? "bg-rose-700 border-rose-700 text-white shadow-xs"
+                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      Hanya Pagi
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewHolidaySesi("malam")}
+                      className={`py-1.5 px-2 rounded-xl border text-center font-bold text-[11px] transition ${
+                        newHolidaySesi === "malam"
+                          ? "bg-rose-700 border-rose-700 text-white shadow-xs"
+                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      Hanya Malam
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="submit"
+                    disabled={isSavingHoliday}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-rose-700 hover:bg-rose-800 rounded-xl shadow transition active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSavingHoliday ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Menyimpan Libur...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Simpan Hari Libur</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+
+              {/* Daftar Hari Libur Terjadwal */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-slate-800 dark:text-slate-200">
+                    {showAllHolidays
+                      ? `Semua Hari Libur Khusus Terjadwal (${holidays.length})`
+                      : `Hari Libur Khusus Bulan ${BULAN_NAMES[bulan - 1]} ${tahun} (${monthHolidays.length})`}
+                  </h3>
+                  {holidays.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllHolidays(!showAllHolidays)}
+                      className="text-[11px] font-semibold text-rose-600 hover:underline dark:text-rose-400 cursor-pointer"
+                    >
+                      {showAllHolidays ? "Hanya Bulan Ini" : "Lihat Semua Bulan"}
+                    </button>
+                  )}
+                </div>
+
+                {(() => {
+                  const targetList = showAllHolidays ? holidays : monthHolidays;
+                  if (targetList.length === 0) {
+                    return (
+                      <div className="p-4 text-center rounded-xl border border-dashed border-slate-300 bg-slate-50/70 text-slate-500 dark:border-slate-800 dark:bg-slate-800/40 text-xs">
+                        {showAllHolidays
+                          ? "Belum ada hari libur khusus yang pernah ditambahkan."
+                          : `Belum ada hari libur khusus di bulan ${BULAN_NAMES[bulan - 1]} ${tahun}.`}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {targetList.map((h) => {
+                        const dateFormatted = new Date(`${h.tanggal}T00:00:00`).toLocaleDateString("id-ID", {
+                          weekday: "long",
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        });
+
+                        return (
+                          <div
+                            key={h.id}
+                            className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-800/80 shadow-xs"
+                          >
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-900 dark:text-white">
+                                  {dateFormatted}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300">
+                                  {h.sesi === "semua"
+                                    ? "Semua Sesi"
+                                    : h.sesi === "pagi"
+                                    ? "Sesi Pagi"
+                                    : "Sesi Malam"}
+                                </span>
+                              </div>
+                              <p className="text-slate-500 dark:text-slate-400 text-xs">
+                                {h.keterangan || "Hari Libur Khusus"}
+                              </p>
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={isDeletingHolidayId === h.id}
+                              onClick={() => handleDeleteHoliday(h.id, h.keterangan)}
+                              title="Hapus hari libur ini (aktifkan kegiatan kembali)"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition disabled:opacity-50 cursor-pointer"
+                            >
+                              {isDeletingHolidayId === h.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Catatan Bantuan Mengenai Hari Jumat */}
+              <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-xl text-xs text-amber-800 dark:text-amber-300">
+                <Info className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                <p>
+                  <strong>Catatan:</strong> Hari Jumat otomatis ditetapkan sebagai hari libur mingguan rutin oleh sistem tanpa perlu ditambahkan manual ke daftar di atas.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer Modal */}
+            <div className="flex items-center justify-end pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setHolidayModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL DETAIL PRESENSI DAN SETORAN HALAQOH */}
       <HalaqohDetailModal
         isOpen={halaqohDetailModalOpen}
