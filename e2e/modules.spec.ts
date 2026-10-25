@@ -167,6 +167,20 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       await expect(page.getByRole('heading', { name: /2 Tips Penting untuk Menjaga Nomor Tetap Aman/i })).toBeVisible();
       await expect(page.getByRole('heading', { name: /Pembaruan Fitur Flyer Khataman & WhatsApp Web/i })).toBeVisible();
     });
+
+    test('simulasi flyer khataman menampilkan avatar kartun santriwati berkerudung yang sopan', async ({ page }) => {
+      await page.goto('/panduan/simulasi?tour=flyer');
+      await expect(page.getByText(/Simulasi: Generator Flyer Khataman 30 Juz/i)).toBeVisible({ timeout: 15000 });
+
+      // Verifikasi tombol unggah foto dan klik untuk memuat foto
+      const uploadBtn = page.getByRole('button', { name: /Unggah Foto Santri/i }).or(page.getByRole('button', { name: /Ganti Foto Santri/i }));
+      await expect(uploadBtn).toBeVisible();
+      await uploadBtn.click();
+
+      // Verifikasi gambar kartun santriwati berkerudung terpasang di background flyer
+      const santriPhotoDiv = page.locator('div[style*="santriwati-kartun.png"]');
+      await expect(santriPhotoDiv).toBeVisible();
+    });
   });
 
   test.describe('5. Modul Khotmil 15 & 30 Juz - Template Excel Kolom Tabel', () => {

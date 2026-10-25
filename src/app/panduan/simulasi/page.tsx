@@ -955,7 +955,7 @@ function SimulationContent() {
                         className="w-full h-full bg-cover bg-center transition-transform duration-300"
                         style={{
                           backgroundImage:
-                            "url('https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80')",
+                            "url('/images/santriwati-kartun.png')",
                           transform: `scale(${flyerZoom / 100})`,
                         }}
                       />
