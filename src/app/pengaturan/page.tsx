@@ -1097,6 +1097,95 @@ function PengaturanContent() {
                   Tahun yang otomatis aktif saat membuka halaman presensi dan setoran.
                 </span>
               </div>
+
+              {/* PENGATURAN KHUSUS PETUNJUK & BOBOT LJK KHOTMIL */}
+              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Petunjuk Penilaian Penguji LJK Khotmil
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={branding.petunjuk_penguji_ljk ?? DEFAULT_BRANDING.petunjuk_penguji_ljk}
+                    onChange={(e) =>
+                      setBranding((prev) => ({ ...prev, petunjuk_penguji_ljk: e.target.value }))
+                    }
+                    placeholder="Penguji tidak perlu menghitung nilai. Cukup arsir Total Kesalahan (35%) dan Halaman Kosong (65%)."
+                    className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 font-medium focus:bg-white focus:border-brand focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                    Teks panduan resmi yang ditampilkan pada modal &quot;Cetak Lembar LJK Standar OMR&quot; dan petunjuk penguji saat munaqosyah.
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Bobot Total Kesalahan (%)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={branding.bobot_kesalahan ?? 35}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setBranding((prev) => ({
+                          ...prev,
+                          bobot_kesalahan: val,
+                        }));
+                      }}
+                      className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 font-bold focus:bg-white focus:border-brand focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                    <span className="text-[11px] text-slate-400 mt-0.5 block">
+                      Bobot penilaian dari kesalahan hafalan (Default: 35%)
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Bobot Halaman Kosong (%)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={branding.bobot_halaman ?? 65}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setBranding((prev) => ({
+                          ...prev,
+                          bobot_halaman: val,
+                        }));
+                      }}
+                      className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 font-bold focus:bg-white focus:border-brand focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                    <span className="text-[11px] text-slate-400 mt-0.5 block">
+                      Bobot penilaian dari kelancaran/halaman terbaca (Default: 65%)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                  <span>
+                    Total Bobot: <strong>{(branding.bobot_kesalahan ?? 35) + (branding.bobot_halaman ?? 65)}%</strong> (Rekomendasi: 100%)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const k = branding.bobot_kesalahan ?? 35;
+                      const h = branding.bobot_halaman ?? 65;
+                      setBranding((prev) => ({
+                        ...prev,
+                        petunjuk_penguji_ljk: `Penguji tidak perlu menghitung nilai. Cukup arsir Total Kesalahan (${k}%) dan Halaman Kosong (${h}%).`,
+                      }));
+                    }}
+                    className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+                  >
+                    Terapkan Bobot ke Teks Petunjuk
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">

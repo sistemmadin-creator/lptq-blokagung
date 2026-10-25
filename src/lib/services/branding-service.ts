@@ -11,6 +11,9 @@ export interface AppBrandingConfig {
   kkm_khotmil: number;           // Standar KKM (default 85)
   target_setoran: number;        // Target setoran per bulan (default 3 juz)
   active_year: number;           // Tahun penilaian aktif (default 2026)
+  petunjuk_penguji_ljk?: string; // Teks petunjuk penguji lembar LJK Khotmil
+  bobot_kesalahan?: number;      // Bobot kesalahan LJK (default: 35%)
+  bobot_halaman?: number;        // Bobot halaman kosong LJK (default: 65%)
   updated_at?: string;
 }
 
@@ -25,6 +28,10 @@ export const DEFAULT_BRANDING: AppBrandingConfig = {
   kkm_khotmil: 85,
   target_setoran: 3,
   active_year: 2026,
+  petunjuk_penguji_ljk:
+    "Penguji tidak perlu menghitung nilai. Cukup arsir Total Kesalahan (35%) dan Halaman Kosong (65%).",
+  bobot_kesalahan: 35,
+  bobot_halaman: 65,
 };
 
 const BRANDING_STORAGE_KEY = "lptq_app_branding_cache";

@@ -14,6 +14,11 @@ import { useReactToPrint } from "react-to-print";
 import { Santri, TahapConfig, JenisKhotmil } from "@/types/database";
 import { encodeKhotmilQrPayload } from "@/lib/omr/khotmil-omr-types";
 import { generateQrDataUrl } from "@/lib/omr/qr-helper";
+import {
+  fetchAppBranding,
+  DEFAULT_BRANDING,
+  type AppBrandingConfig,
+} from "@/lib/services/branding-service";
 
 interface KhotmilLjkPrintModalProps {
   isOpen: boolean;
@@ -41,6 +46,22 @@ export function KhotmilLjkPrintModal({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [qrMap, setQrMap] = useState<SantriQrMap>({});
   const [generatingQr, setGeneratingQr] = useState(false);
+  const [branding, setBranding] = useState<AppBrandingConfig>(DEFAULT_BRANDING);
+
+  // Ambil konfigurasi branding & petunjuk LJK saat modal dibuka
+  useEffect(() => {
+    if (isOpen) {
+      fetchAppBranding().then(setBranding);
+    }
+    const handleUpdate = (e: Event) => {
+      const customEvt = e as CustomEvent<AppBrandingConfig>;
+      if (customEvt.detail) {
+        setBranding(customEvt.detail);
+      }
+    };
+    window.addEventListener("lptq-branding-updated", handleUpdate);
+    return () => window.removeEventListener("lptq-branding-updated", handleUpdate);
+  }, [isOpen]);
 
   // Default pilih semua santri saat modal dibuka
   useEffect(() => {
@@ -189,7 +210,17 @@ export function KhotmilLjkPrintModal({
               <p className="font-semibold mb-1">Panduan Penggunaan Lembar LJK OMR Standar:</p>
               <ul className="list-disc list-inside space-y-1 opacity-90">
                 <li>Lembar LJK dilengkapi <strong>QR Code Santri</strong> dan <strong>4 Titik Sudut Hitam (Fiducial Markers)</strong> untuk deteksi otomatis via kamera browser.</li>
-                <li>Penguji <strong>tidak perlu menghitung nilai</strong>. Cukup arsir <strong>Total Kesalahan (35%)</strong> dan <strong>Halaman Kosong (65%)</strong>.</li>
+                <li>
+                  {branding.petunjuk_penguji_ljk ? (
+                    <span>{branding.petunjuk_penguji_ljk}</span>
+                  ) : (
+                    <>
+                      Penguji <strong>tidak perlu menghitung nilai</strong>. Cukup arsir{" "}
+                      <strong>Total Kesalahan ({branding.bobot_kesalahan ?? 35}%)</strong> dan{" "}
+                      <strong>Halaman Kosong ({branding.bobot_halaman ?? 65}%)</strong>.
+                    </>
+                  )}
+                </li>
                 <li>Format cetak dioptimalkan untuk kertas <strong>A4 Potret: 1 lembar kertas A4 memuat tepat 2 lembar LJK</strong> (atas &amp; bawah) dipisahkan garis potong/gunting. Hemat 50% kertas!</li>
               </ul>
             </div>
@@ -446,13 +477,13 @@ export function KhotmilLjkPrintModal({
                             CATATAN TURUS (PENSIL)
                           </th>
                           <th className="border border-black py-0.5 px-1 font-bold text-[9px]">
-                            ARSIR TOTAL KESALAHAN (BOBOT 35%)
+                            ARSIR TOTAL KESALAHAN (BOBOT {branding.bobot_kesalahan ?? 35}%)
                             <div className="text-[7.5px] font-normal text-gray-700">
                               Puluhan (0-3) &bull; Satuan (0-9)
                             </div>
                           </th>
                           <th className="border border-black py-0.5 px-1 font-bold text-[9px]">
-                            ARSIR HALAMAN KOSONG (BOBOT 65%)
+                            ARSIR HALAMAN KOSONG (BOBOT {branding.bobot_halaman ?? 65}%)
                             <div className="text-[7.5px] font-normal text-gray-700">
                               Puluhan (0-2) &bull; Satuan (0-9)
                             </div>
@@ -568,7 +599,7 @@ export function KhotmilLjkPrintModal({
                         <p>1. Coret turus bebas di Area Catatan Turus saat santri melantunkan ayat.</p>
                         <p>2. Arsir bulatan Total Kesalahan &amp; Halaman Kosong (Cukup 4 bulatan per juz).</p>
                         <p>3. Contoh: Salah 9, Hal Kosong 0 &rarr; Arsir P:[0] S:[9] pd Kesalahan, P:[0] S:[0] pd Halaman.</p>
-                        <p>4. NILAI DIHITUNG OTOMATIS OLEH SISTEM (35% Kesalahan + 65% Keterbacaan Halaman).</p>
+                        <p>4. NILAI DIHITUNG OTOMATIS OLEH SISTEM ({branding.bobot_kesalahan ?? 35}% Kesalahan + {branding.bobot_halaman ?? 65}% Keterbacaan Halaman).</p>
                       </div>
                       <div className="text-center pr-4 shrink-0">
                         <p className={isCompact ? "mb-2 text-[8px]" : "mb-3 text-[8.5px]"}>

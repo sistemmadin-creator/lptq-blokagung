@@ -10,16 +10,18 @@ export interface KhotmilScoreBreakdown {
 }
 
 /**
- * Menghitung nilai tahfidz khotmil berbasis 35% kesalahan dan 65% halaman tidak dibaca:
+ * Menghitung nilai tahfidz khotmil berbasis bobot kesalahan (default 35%) dan bobot halaman tidak dibaca (default 65%):
  * - 1 Juz standar = 20 halaman
- * - Bobot halaman = 65 poin (3.25 poin/halaman)
- * - Bobot kesalahan = 35 poin (1 kesalahan = -1 poin dari 35 poin)
+ * - Bobot halaman = bobotHalaman poin (pointPerHal = bobotHalaman / 20 poin/halaman)
+ * - Bobot kesalahan = bobotKesalahan poin (1 kesalahan = -1 poin dari bobotKesalahan)
  * - Jika halaman kosong >= 20 (tidak membaca 1 juz penuh), nilai = 0
  */
 export function calculateKhotmilScore(
   kesalahan: number,
   halKosong: number,
-  kkm: number = KKM_DEFAULT
+  kkm: number = KKM_DEFAULT,
+  bobotKesalahan: number = 35,
+  bobotHalaman: number = 65
 ): KhotmilScoreBreakdown {
   const safeHal = Math.max(0, Math.min(20, Math.round(halKosong || 0)));
   const safeSalah = Math.max(0, Math.round(kesalahan || 0));
@@ -35,8 +37,9 @@ export function calculateKhotmilScore(
     };
   }
 
-  const skorHalaman = Math.max(0, 65 - safeHal * 3.25);
-  const skorKesalahan = Math.max(0, 35 - safeSalah * 1.0);
+  const pointPerHal = bobotHalaman / 20;
+  const skorHalaman = Math.max(0, bobotHalaman - safeHal * pointPerHal);
+  const skorKesalahan = Math.max(0, bobotKesalahan - safeSalah * 1.0);
   const total = Math.min(100, Math.max(0, skorHalaman + skorKesalahan));
   const nilai = Math.round(total);
 

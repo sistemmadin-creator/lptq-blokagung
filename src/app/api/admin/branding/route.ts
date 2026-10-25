@@ -134,6 +134,18 @@ export async function POST(request: NextRequest) {
       kkm_khotmil: Number(body.kkm_khotmil) || DEFAULT_BRANDING.kkm_khotmil,
       target_setoran: Number(body.target_setoran) || DEFAULT_BRANDING.target_setoran,
       active_year: Number(body.active_year) || DEFAULT_BRANDING.active_year,
+      petunjuk_penguji_ljk:
+        body.petunjuk_penguji_ljk !== undefined
+          ? body.petunjuk_penguji_ljk.trim()
+          : DEFAULT_BRANDING.petunjuk_penguji_ljk,
+      bobot_kesalahan:
+        body.bobot_kesalahan !== undefined
+          ? Number(body.bobot_kesalahan)
+          : DEFAULT_BRANDING.bobot_kesalahan,
+      bobot_halaman:
+        body.bobot_halaman !== undefined
+          ? Number(body.bobot_halaman)
+          : DEFAULT_BRANDING.bobot_halaman,
       updated_at: new Date().toISOString(),
     };
 

@@ -515,4 +515,59 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       await expect(bab6Container.getByText(/Bobot Halaman 65% dan Bobot Kesalahan 35%/i)).toBeVisible();
     });
   });
+
+  test.describe('10. Pengaturan Khusus Petunjuk & Bobot LJK Khotmil di Menu Standar KKM & Tahfidz', () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAsAdmin(page);
+    });
+
+    test('Pengaturan menu Tahfidz memiliki form Petunjuk Penilaian Penguji LJK dan Bobot Kesalahan & Halaman', async ({ page }) => {
+      await page.goto('/pengaturan?tab=tahfidz');
+
+      // Verifikasi judul tab tahfidz
+      await expect(
+        page.getByRole('heading', { name: /Standar Akademik & Kriteria Penilaian Tahfidz/i })
+      ).toBeVisible({ timeout: 15000 });
+
+      // Verifikasi label dan input petunjuk LJK
+      await expect(page.getByText('Petunjuk Penilaian Penguji LJK Khotmil')).toBeVisible();
+      const textarea = page.locator('textarea').filter({ hasText: /Penguji tidak perlu menghitung nilai/i });
+      await expect(textarea).toBeVisible();
+
+      // Verifikasi input bobot kesalahan dan bobot halaman
+      await expect(page.getByText('Bobot Total Kesalahan (%)')).toBeVisible();
+      await expect(page.getByText('Bobot Halaman Kosong (%)')).toBeVisible();
+
+      // Verifikasi tombol shortcut "Terapkan Bobot ke Teks Petunjuk"
+      const shortcutBtn = page.getByRole('button', { name: /Terapkan Bobot ke Teks Petunjuk/i });
+      await expect(shortcutBtn).toBeVisible();
+    });
+
+    test('Modal Cetak LJK Khotmil 15 Juz menampilkan petunjuk dan bobot dinamis', async ({ page }) => {
+      await page.goto('/tahfidz/khotmil/15');
+      await expect(page.getByRole('heading', { level: 1, name: /Tahfidz Khotmil 15 Juz/i })).toBeVisible({ timeout: 15000 });
+
+      // Buka modal Cetak LJK OMR
+      const printBtn = page.getByRole('button', { name: /Cetak Lembar LJK|Cetak LJK/i });
+      await expect(printBtn).toBeVisible({ timeout: 15000 });
+      await printBtn.click();
+
+      // Verifikasi modal cetak terbuka
+      await expect(page.getByRole('heading', { name: /Cetak Lembar LJK Standar OMR/i })).toBeVisible();
+
+      // Verifikasi teks petunjuk resmi terlihat di alert modal
+      await expect(
+        page.getByText(/Penguji tidak perlu menghitung nilai/i)
+      ).toBeVisible();
+
+      // Verifikasi tabel cetak LJK yang disiapkan untuk react-to-print memuat bobot dinamis
+      const kesalahanTh = page.locator('.print-ljk-container th').filter({ hasText: /ARSIR TOTAL KESALAHAN/i }).first();
+      await expect(kesalahanTh).toBeAttached();
+      await expect(kesalahanTh).toContainText(/BOBOT 35%/i);
+
+      const halamanTh = page.locator('.print-ljk-container th').filter({ hasText: /ARSIR HALAMAN KOSONG/i }).first();
+      await expect(halamanTh).toBeAttached();
+      await expect(halamanTh).toContainText(/BOBOT 65%/i);
+    });
+  });
 });

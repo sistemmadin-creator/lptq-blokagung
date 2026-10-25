@@ -92,11 +92,14 @@ export function detectMarkedOption(
  * 1. Deteksi QR Code LPTQ
  * 2. Hitung posisi grid OMR
  * 3. Ekstraksi nilai Kesalahan & Halaman Kosong
- * 4. Hitung skor otomatis (35% salah, 65% hal)
+ * 4. Hitung skor otomatis berbasis bobot kustom
  */
 export function processVideoFrame(
   canvas: HTMLCanvasElement,
-  guideRect?: { x: number; y: number; width: number; height: number }
+  guideRect?: { x: number; y: number; width: number; height: number },
+  bobotKesalahan: number = 35,
+  bobotHalaman: number = 65,
+  kkm: number = 85
 ): ScanFrameResult {
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -196,8 +199,14 @@ export function processVideoFrame(
 
     const totalHalKosong = Math.min(20, detHalP * 10 + detHalS);
 
-    // Hitung Nilai Otomatis (35% Kesalahan, 65% Keterbacaan Halaman)
-    const breakdown = calculateKhotmilScore(totalKesalahan, totalHalKosong);
+    // Hitung Nilai Otomatis berbasis bobot konfigurasi
+    const breakdown = calculateKhotmilScore(
+      totalKesalahan,
+      totalHalKosong,
+      kkm,
+      bobotKesalahan,
+      bobotHalaman
+    );
 
     scannedRows.push({
       juz: juzNum,

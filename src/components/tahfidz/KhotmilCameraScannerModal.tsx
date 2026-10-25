@@ -28,6 +28,11 @@ import {
 } from "@/lib/omr/khotmil-omr-types";
 import { upsertKhotmilNilaiBatch } from "@/lib/services/tahfidz-service";
 import { useToast } from "@/components/ui/Toast";
+import {
+  fetchAppBranding,
+  DEFAULT_BRANDING,
+  type AppBrandingConfig,
+} from "@/lib/services/branding-service";
 
 interface KhotmilCameraScannerModalProps {
   isOpen: boolean;
@@ -65,6 +70,22 @@ export function KhotmilCameraScannerModal({
   const [verifiedResult, setVerifiedResult] =
     useState<ScannedSheetResult | null>(null);
   const [saving, setSaving] = useState(false);
+  const [branding, setBranding] = useState<AppBrandingConfig>(DEFAULT_BRANDING);
+
+  // Ambil branding/bobot konfigurasi saat modal dibuka
+  useEffect(() => {
+    if (isOpen) {
+      fetchAppBranding().then(setBranding);
+    }
+    const handleUpdate = (e: Event) => {
+      const customEvt = e as CustomEvent<AppBrandingConfig>;
+      if (customEvt.detail) {
+        setBranding(customEvt.detail);
+      }
+    };
+    window.addEventListener("lptq-branding-updated", handleUpdate);
+    return () => window.removeEventListener("lptq-branding-updated", handleUpdate);
+  }, [isOpen]);
 
   // Stop camera stream
   const stopCamera = useCallback(() => {
@@ -200,12 +221,18 @@ export function KhotmilCameraScannerModal({
           const guideX = (w - guideW) / 2;
           const guideY = (h - guideH) / 2;
 
-          const res = processVideoFrame(canvas, {
-            x: guideX,
-            y: guideY,
-            width: guideW,
-            height: guideH,
-          });
+          const res = processVideoFrame(
+            canvas,
+            {
+              x: guideX,
+              y: guideY,
+              width: guideW,
+              height: guideH,
+            },
+            branding.bobot_kesalahan ?? 35,
+            branding.bobot_halaman ?? 65,
+            branding.kkm_khotmil || 85
+          );
 
           if (res.status === "success" && res.sheetResult) {
             // Suara getar halus / notifikasi jika didukung
@@ -237,7 +264,7 @@ export function KhotmilCameraScannerModal({
       isSubscribed = false;
       cancelAnimationFrame(animId);
     };
-  }, [isOpen, cameraActive, scanning, verifiedResult]);
+  }, [isOpen, cameraActive, scanning, verifiedResult, branding]);
 
   // Mengubah angka manual pada pop-up konfirmasi
   const handleScoreRowChange = (
@@ -261,7 +288,10 @@ export function KhotmilCameraScannerModal({
 
     const recalculated = calculateKhotmilScore(
       currentRow.kesalahan,
-      currentRow.halKosong
+      currentRow.halKosong,
+      branding.kkm_khotmil || 85,
+      branding.bobot_kesalahan ?? 35,
+      branding.bobot_halaman ?? 65
     );
 
     currentRow.nilai = recalculated.nilai;
@@ -354,7 +384,13 @@ export function KhotmilCameraScannerModal({
         ctx.drawImage(img, 0, 0, targetW, targetH);
         URL.revokeObjectURL(blobUrl);
 
-        const res = processVideoFrame(canvas);
+        const res = processVideoFrame(
+          canvas,
+          undefined,
+          branding.bobot_kesalahan ?? 35,
+          branding.bobot_halaman ?? 65,
+          branding.kkm_khotmil || 85
+        );
         if (res.status === "success" && res.sheetResult) {
           setScanStatus("detected");
           setScanning(false);
@@ -514,7 +550,9 @@ export function KhotmilCameraScannerModal({
                     }`}
                   >
                     <Award className="w-3.5 h-3.5" />
-                    {verifiedResult.lulusSemua ? "TUNTAS (KKM 85)" : "BELUM TUNTAS"}
+                    {verifiedResult.lulusSemua
+                      ? `TUNTAS (KKM ${branding.kkm_khotmil || 85})`
+                      : "BELUM TUNTAS"}
                   </div>
                   <p className="text-xs text-slate-300 mt-1">
                     Rata-rata: <span className="font-bold text-sm text-white">{verifiedResult.rataRata}</span>
