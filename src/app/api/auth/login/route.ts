@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
+import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 
 // In-memory rate limiter untuk proteksi brute force
 interface AttemptRecord {
@@ -162,6 +163,23 @@ export async function POST(request: NextRequest) {
 
     // Berhasil login: reset rekor percobaan gagal
     loginAttempts.delete(rateLimitKey);
+
+    // Catat log aktivitas login
+    try {
+      await recordServerActivityLog({
+        user_id: authData.user?.id || "unknown",
+        username,
+        nama: authData.user?.user_metadata?.nama || username,
+        role: (authData.user?.user_metadata?.role as any) || "asatidz",
+        kategori: "auth",
+        aksi: "Login ke Aplikasi",
+        deskripsi: `Pengguna '${username}' berhasil login ke sistem LPTQ Blokagung.`,
+        modul: "Otoritas & Akses",
+        ip_address: ip,
+      });
+    } catch (logErr) {
+      console.warn("Gagal mencatat log login:", logErr);
+    }
 
     return NextResponse.json({
       success: true,

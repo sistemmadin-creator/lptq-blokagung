@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase, getUserRole } from "@/lib/supabase/server";
+import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 import {
   KHOTMIL_15_TAHAP,
   KHOTMIL_30_TAHAP,
@@ -179,6 +180,21 @@ export async function POST(request: Request) {
     }
 
     const registeredSantriIds = Array.from(new Set(upsertRows.map((u) => u.santri_id)));
+
+    try {
+      await recordServerActivityLog({
+        user_id: user.id,
+        username: user.user_metadata?.username || user.email?.split("@")[0] || "pengurus",
+        nama: user.user_metadata?.nama || "Pengurus Tahfidz",
+        role,
+        kategori: "import",
+        aksi: "Impor Nilai Khotmil",
+        deskripsi: `Berhasil mengimpor ${upsertRows.length} rekaman nilai khotmil untuk ${registeredSantriIds.length} santri.`,
+        modul: "Tahfidz Khotmil",
+      });
+    } catch (logErr) {
+      console.warn("Gagal mencatat log impor khotmil:", logErr);
+    }
 
     return NextResponse.json({
       count: upsertRows.length,

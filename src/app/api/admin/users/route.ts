@@ -1,5 +1,6 @@
 import { createServerSupabase, createServiceRoleClient } from "@/lib/supabase/server";
 import { normalizePermissions, DEFAULT_PERMISSIONS_BY_ROLE } from "@/lib/services/user-permission-service";
+import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 import type { AppRole, UserAccountItem } from "@/types/database";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -257,6 +258,22 @@ export async function POST(request: NextRequest) {
       created_at: createdAuth.user.created_at,
       updated_at: new Date().toISOString(),
     };
+
+    // Catat log aktivitas pembuatan pengguna
+    try {
+      await recordServerActivityLog({
+        user_id: authCheck.user.id,
+        username: authCheck.user.user_metadata?.username || authCheck.user.email?.split("@")[0] || "admin",
+        nama: authCheck.user.user_metadata?.nama || "Administrator",
+        role: "admin",
+        kategori: "user",
+        aksi: "Tambah Pengguna Baru",
+        deskripsi: `Menambahkan pengguna baru "${nama}" (@${username}) dengan peran ${role.toUpperCase()}.`,
+        modul: "Pengguna & Hak Akses",
+      });
+    } catch (logErr) {
+      console.warn("Gagal mencatat log tambah pengguna:", logErr);
+    }
 
     return NextResponse.json({
       success: true,

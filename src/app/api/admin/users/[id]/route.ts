@@ -1,5 +1,6 @@
 import { createServerSupabase, createServiceRoleClient } from "@/lib/supabase/server";
 import { normalizePermissions } from "@/lib/services/user-permission-service";
+import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 import type { AppRole, UserAccountItem } from "@/types/database";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -136,6 +137,22 @@ export async function PUT(
       updated_at: new Date().toISOString(),
     };
 
+    // Catat log aktivitas update pengguna
+    try {
+      await recordServerActivityLog({
+        user_id: authCheck.callerUser.id,
+        username: authCheck.callerUser.user_metadata?.username || authCheck.callerUser.email?.split("@")[0] || "admin",
+        nama: authCheck.callerUser.user_metadata?.nama || "Administrator",
+        role: "admin",
+        kategori: "user",
+        aksi: "Perbarui Pengguna",
+        deskripsi: `Memperbarui data dan otoritas pengguna "${nama}" (@${username}).`,
+        modul: "Pengguna & Hak Akses",
+      });
+    } catch (logErr) {
+      console.warn("Gagal mencatat log perbarui pengguna:", logErr);
+    }
+
     return NextResponse.json({
       success: true,
       message: `Data pengguna "${nama}" (@${username}) berhasil diperbarui.`,
@@ -193,6 +210,22 @@ export async function DELETE(
         },
         { onConflict: "key" }
       );
+    }
+
+    // Catat log aktivitas hapus pengguna
+    try {
+      await recordServerActivityLog({
+        user_id: authCheck.callerUser.id,
+        username: authCheck.callerUser.user_metadata?.username || authCheck.callerUser.email?.split("@")[0] || "admin",
+        nama: authCheck.callerUser.user_metadata?.nama || "Administrator",
+        role: "admin",
+        kategori: "user",
+        aksi: "Hapus Pengguna",
+        deskripsi: `Menghapus akun pengguna (ID: ${targetUserId}) dari sistem.`,
+        modul: "Pengguna & Hak Akses",
+      });
+    } catch (logErr) {
+      console.warn("Gagal mencatat log hapus pengguna:", logErr);
     }
 
     return NextResponse.json({

@@ -8,21 +8,34 @@ const CACHE_FILE = path.join(__dirname, '.auth-cache.json');
 
 export async function loginAsAdmin(page: Page) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    // 1. Gunakan cache file antar-worker jika masih valid (< 60 menit)
+    // 1. Gunakan cache file antar-worker jika masih valid (< 20 menit)
     if (fs.existsSync(CACHE_FILE)) {
       try {
         const stat = fs.statSync(CACHE_FILE);
-        if (Date.now() - stat.mtimeMs < 60 * 60 * 1000) {
+        if (Date.now() - stat.mtimeMs < 20 * 60 * 1000) {
           const cookies = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
           if (Array.isArray(cookies) && cookies.length > 0) {
-            await page.context().addCookies(
-              cookies.map((c: any) => ({
-                name: c.name,
-                value: c.value,
-                url: 'http://localhost:3005',
-              }))
-            );
-            return;
+            // Periksa apakah token di dalamnya belum kedaluwarsa
+            const authCookie = cookies.find((c: any) => c.name.includes('auth-token'));
+            let isExpired = false;
+            if (authCookie?.value) {
+              try {
+                const parsed = JSON.parse(authCookie.value);
+                if (parsed.expires_at && parsed.expires_at * 1000 < Date.now() + 60000) {
+                  isExpired = true;
+                }
+              } catch {}
+            }
+            if (!isExpired) {
+              await page.context().addCookies(
+                cookies.map((c: any) => ({
+                  name: c.name,
+                  value: c.value,
+                  url: 'http://localhost:3005',
+                }))
+              );
+              return;
+            }
           }
         }
       } catch (e) {

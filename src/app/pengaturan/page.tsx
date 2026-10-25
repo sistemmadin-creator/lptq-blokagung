@@ -28,8 +28,11 @@ import {
   Download,
   KeyRound,
   BookOpen,
+  History,
+  Clock,
 } from "lucide-react";
 import { PanduanTabContent } from "@/components/pengaturan/PanduanTabContent";
+import { LogAktivitasTabContent } from "@/components/pengaturan/LogAktivitasTabContent";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
 import {
   SYSTEM_MODULES,
@@ -103,6 +106,11 @@ function PengaturanContent() {
   const [deleteConfirmUser, setDeleteConfirmUser] = useState<UserAccountItem | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
 
+  // SUB-VIEW: PENGGUNA ("users" | "logs")
+  const [penggunaSubView, setPenggunaSubView] = useState<"users" | "logs">(
+    searchParams.get("sub") === "log" || searchParams.get("tab") === "log" ? "logs" : "users"
+  );
+
   // ----------------------------------------------------
   // STATE: TAB 4 - HIERARKI KAMAR
   // ----------------------------------------------------
@@ -140,14 +148,29 @@ function PengaturanContent() {
   }, [router]);
 
   useEffect(() => {
-    if (searchParams.get("tab")) {
-      setActiveTab(searchParams.get("tab") as ActiveTab);
+    const tab = searchParams.get("tab") as ActiveTab;
+    const sub = searchParams.get("sub");
+    if (tab === ("log" as any) || sub === "log") {
+      setActiveTab("pengguna");
+      setPenggunaSubView("logs");
+    } else if (tab) {
+      setActiveTab(tab);
+      if (sub === "users") {
+        setPenggunaSubView("users");
+      }
     }
   }, [searchParams]);
 
   const switchTab = (tab: ActiveTab) => {
     setActiveTab(tab);
     router.replace(`/pengaturan?tab=${tab}`, { scroll: false });
+  };
+
+  const switchPenggunaSubView = (sub: "users" | "logs") => {
+    setPenggunaSubView(sub);
+    router.replace(`/pengaturan?tab=pengguna${sub === "logs" ? "&sub=log" : ""}`, {
+      scroll: false,
+    });
   };
 
   async function loadUsers() {
@@ -782,7 +805,46 @@ function PengaturanContent() {
       {/* =================================================================== */}
       {activeTab === "pengguna" && (
         <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          {/* Subview Switcher: Pengguna & Otoritas vs Log Aktivitas */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-2 bg-slate-100/90 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
+            <div className="inline-flex items-center gap-1.5 p-1 bg-white dark:bg-slate-900 rounded-xl shadow-xs border border-slate-200/60 dark:border-slate-700/60">
+              <button
+                type="button"
+                onClick={() => switchPenggunaSubView("users")}
+                className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  penggunaSubView === "users"
+                    ? "bg-brand text-white shadow-sm"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Daftar Pengguna & Otoritas</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => switchPenggunaSubView("logs")}
+                className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  penggunaSubView === "logs"
+                    ? "bg-brand text-white shadow-sm"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Log Aktivitas</span>
+              </button>
+            </div>
+
+            {/* Retention Notice Pill */}
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-medium self-start sm:self-auto">
+              <Clock className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>Log aktivitas otomatis terhapus setiap <strong>6 bulan</strong> sekali (180 hari).</span>
+            </div>
+          </div>
+
+          {penggunaSubView === "users" ? (
+            <>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             <div className="relative flex-1 max-w-md">
               <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
                 <Search className="w-4 h-4" />
@@ -955,8 +1017,12 @@ function PengaturanContent() {
               </table>
             </div>
           </div>
-        </div>
+        </>
+      ) : (
+        <LogAktivitasTabContent onSwitchToUsers={() => switchPenggunaSubView("users")} />
       )}
+    </div>
+  )}
 
       {/* =================================================================== */}
       {/* TAB 3: STANDAR KKM & TAHFIDZ                                       */}

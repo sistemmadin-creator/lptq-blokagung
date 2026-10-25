@@ -204,4 +204,81 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       expect(download.suggestedFilename()).toContain('Khotmil_30_Juz_Tahap_1');
     });
   });
+
+  test.describe('6. Modul Pengguna & Otoritas - Switch "Log Aktivitas" & Retensi 6 Bulan (/pengaturan?tab=pengguna)', () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAsAdmin(page);
+    });
+
+    test('menampilkan switcher Daftar Pengguna vs Log Aktivitas dan badge retensi 6 bulan', async ({
+      page,
+    }) => {
+      await page.goto('/pengaturan?tab=pengguna');
+
+      // Tunggu hingga verifikasi hak akses selesai dan header pengaturan muncul
+      await expect(
+        page.getByRole('heading', { name: /Pengaturan Aplikasi/i })
+      ).toBeVisible({ timeout: 30000 });
+
+      // Verifikasi switch buttons tersedia
+      const usersSwitchBtn = page.getByRole('button', { name: /Daftar Pengguna & Otoritas/i });
+      const logsSwitchBtn = page.getByRole('button', { name: /Log Aktivitas/i });
+      await expect(usersSwitchBtn).toBeVisible({ timeout: 15000 });
+      await expect(logsSwitchBtn).toBeVisible();
+
+      // Verifikasi badge retensi 6 bulan
+      await expect(
+        page.getByText(/Log aktivitas otomatis terhapus setiap 6 bulan sekali \(180 hari\)/i)
+      ).toBeVisible();
+
+      // Verifikasi tampilan default adalah daftar pengguna
+      await expect(page.getByRole('button', { name: /Tambah Pengguna/i })).toBeVisible();
+
+      // Klik switch ke "Log Aktivitas"
+      await logsSwitchBtn.click();
+
+      // Verifikasi elemen halaman Log Aktivitas tampil
+      await expect(page.getByText(/Total Log Tersimpan/i)).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(/Aktivitas Hari Ini/i)).toBeVisible();
+      await expect(page.getByText(/Retensi Log Otomatis/i)).toBeVisible();
+      await expect(page.getByRole('button', { name: /Ekspor ke Excel/i })).toBeVisible();
+      await expect(page.getByRole('button', { name: /Bersihkan > 6 Bln/i })).toBeVisible();
+
+      // Verifikasi kolom tabel log aktivitas
+      await expect(page.getByRole('columnheader', { name: 'Waktu' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: 'Pengguna' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: 'Kategori' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: /Aksi & Deskripsi Aktivitas/i })).toBeVisible();
+
+      // Klik switch kembali ke "Daftar Pengguna & Otoritas"
+      await usersSwitchBtn.click();
+      await expect(page.getByRole('button', { name: /Tambah Pengguna/i })).toBeVisible();
+    });
+
+    test('navigasi langsung via URL query sub=log membuka halaman Log Aktivitas secara instan', async ({
+      page,
+    }) => {
+      await page.goto('/pengaturan?tab=pengguna&sub=log');
+
+      // Tunggu hingga verifikasi hak akses selesai dan header pengaturan muncul
+      await expect(
+        page.getByRole('heading', { name: /Pengaturan Aplikasi/i })
+      ).toBeVisible({ timeout: 30000 });
+
+      // Verifikasi langsung mendarat di halaman Log Aktivitas
+      await expect(page.getByText(/Total Log Tersimpan/i)).toBeVisible({ timeout: 15000 });
+
+      // Tunggu hingga data log termuat dan tombol ekspor siap digunakan
+      const exportBtn = page.getByRole('button', { name: /Ekspor ke Excel/i });
+      await expect(exportBtn).toBeVisible({ timeout: 15000 });
+      await expect(exportBtn).toBeEnabled({ timeout: 15000 });
+      await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15000 });
+
+      // Uji ekspor excel
+      const downloadPromise = page.waitForEvent('download');
+      await exportBtn.click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toContain('Log_Aktivitas');
+    });
+  });
 });

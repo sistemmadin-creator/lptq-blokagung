@@ -49,6 +49,31 @@ export interface UserAccountItem {
   updated_at?: string;
 }
 
+export type LogKategori =
+  | "Autentikasi"
+  | "Manajemen Pengguna"
+  | "Penilaian Tahfidz"
+  | "Data Santri"
+  | "Pengaturan Sistem"
+  | "WhatsApp Gateway"
+  | "Backup & Restore"
+  | "Ekspor & Cetak"
+  | "Lainnya";
+
+export interface UserActivityLog {
+  id: string;
+  user_id: string;
+  nama: string;
+  username: string;
+  role: AppRole | string;
+  action: string;
+  kategori: LogKategori;
+  deskripsi: string;
+  ip_address?: string;
+  user_agent?: string;
+  created_at: string;
+}
+
 export interface Santri {
   id: string;
   no_urut: number;
