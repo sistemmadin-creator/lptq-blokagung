@@ -33,9 +33,25 @@ import {
   X,
   Smartphone,
   CheckCircle2,
+  Send,
+  MessageSquare,
+  ExternalLink,
+  Loader2,
+  Phone,
+  Info,
 } from "lucide-react";
 import { fetchAllSantriFiltered, fetchSetoranBulananMerged } from "@/lib/services/tahfidz-service";
 import { formatTanggalLengkapKhatam } from "@/lib/utils/hijri";
+import {
+  getWahaConfig,
+  checkWahaSession,
+  sendWahaImage,
+  formatPhoneNumber,
+  generateDirectWaLink,
+  saveDeliveryLog,
+  type WahaConfig,
+  type WahaSessionStatus,
+} from "@/lib/services/waha-service";
 import type { Santri, SetoranBulananRow } from "@/types/database";
 
 interface PhotoSettings {
@@ -226,6 +242,18 @@ export function FlyerKhatamanModule() {
   // Status & Feedback
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+
+  // WhatsApp Gateway & Direct Modal State
+  const [isWaModalOpen, setIsWaModalOpen] = useState(false);
+  const [waRecipientPhone, setWaRecipientPhone] = useState("");
+  const [waCustomMessage, setWaCustomMessage] = useState("");
+  const [wahaConfig, setWahaConfig] = useState<WahaConfig>(getWahaConfig());
+  const [wahaStatus, setWahaStatus] = useState<WahaSessionStatus | null>(null);
+  const [isCheckingWaha, setIsCheckingWaha] = useState(false);
+  const [isSendingWa, setIsSendingWa] = useState(false);
+  const [waErrorMsg, setWaErrorMsg] = useState<string | null>(null);
+  const [miniPreviewUrl, setMiniPreviewUrl] = useState<string | null>(null);
+  const [waWebGuideOpen, setWaWebGuideOpen] = useState(false);
 
   // Refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -875,6 +903,204 @@ export function FlyerKhatamanModule() {
     }
   };
 
+  // ==================== FITUR WHATSAPP (GATEWAY & DIRECT WEB) ====================
+
+  // Buka Modal Kirim WA & Siapkan Template Pesan Apresiasi Khataman
+  const handleOpenWaModal = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      alert("Kanvas flyer belum siap.");
+      return;
+    }
+
+    try {
+      setMiniPreviewUrl(canvas.toDataURL("image/jpeg", 0.75));
+    } catch (e) {
+      console.warn("Gagal membuat miniatur pratinjau flyer", e);
+    }
+
+    // Nomor HP santri / wali
+    const phone = selectedSantri?.no_wa ? formatPhoneNumber(selectedSantri.no_wa) : "";
+    setWaRecipientPhone(phone);
+    setWaErrorMsg(null);
+
+    // Format Pesan Apresiasi Khataman Resmi LPTQ
+    const cleanNama = (namaSantri || "Santri").trim();
+    const cleanBinti = namaBapak ? `${binBinti} Bapak ${namaBapak}` : "";
+    const cleanAsrama = selectedSantri?.asrama
+      ? `Asrama ${selectedSantri.asrama}, Kamar ${selectedSantri.kamar || "-"}`
+      : alamat || "Pondok Pesantren Darussalam";
+
+    const defaultMsg = `Assalamu'alaikum Wr. Wb.
+
+Yth. Bapak/Ibu Wali dari Ananda:
+*${cleanNama}*${cleanBinti ? ` (${cleanBinti})` : ""}
+Lokasi: *${cleanAsrama}*
+
+Alhamdulillah wa Syukurillah, kami dari Pengurus Lembaga Pengembangan Tilawatil Qur'an (LPTQ) Pondok Pesantren Darussalam Blokagung dengan penuh rasa syukur mengabarkan bahwa ananda telah menyelesaikan:
+
+🎉 *KHATAMAN AL-QUR'AN 30 JUZ (BIL HIFDZI)* 🎉
+Tanggal: ${tanggalTampil}
+
+Berikut kami lampirkan Flyer Apresiasi Khataman resmi santri. Semoga ananda senantiasa istiqomah dalam memelihara dan mengamalkan kalam Ilahi, serta ilmunya membawa keberkahan dan syafaat bagi keluarga tercinta di dunia dan akhirat. Aamiin ya Rabbal 'Alamin.
+
+Wassalamu'alaikum Wr. Wb.
+*Pengurus LPTQ Pondok Pesantren Darussalam Blokagung*`;
+
+    setWaCustomMessage(defaultMsg);
+
+    // Muat konfigurasi & periksa koneksi WhatsApp Gateway
+    const cfg = getWahaConfig();
+    setWahaConfig(cfg);
+    setIsWaModalOpen(true);
+
+    setIsCheckingWaha(true);
+    try {
+      const status = await checkWahaSession(cfg);
+      setWahaStatus(status);
+    } catch {
+      setWahaStatus({ online: false, status: "OFFLINE" });
+    } finally {
+      setIsCheckingWaha(false);
+    }
+  };
+
+  // Kirim Flyer Otomatis via WAHA Gateway (Laptop Server)
+  const handleSendWahaGateway = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const cleanPhone = formatPhoneNumber(waRecipientPhone);
+    if (!cleanPhone || cleanPhone.length < 9) {
+      setWaErrorMsg("Nomor WhatsApp tidak valid. Masukkan minimal 9 digit (misal: 08123456789).");
+      return;
+    }
+
+    setIsSendingWa(true);
+    setWaErrorMsg(null);
+
+    try {
+      // Mengambil gambar kanvas beresolusi penuh dalam bentuk data URL
+      const dataUrl = canvas.toDataURL("image/png", 0.95);
+      const res = await sendWahaImage(wahaConfig, cleanPhone, dataUrl, waCustomMessage);
+
+      if (res.success) {
+        saveDeliveryLog({
+          santriId: selectedSantri?.id || `khatam_${Date.now()}`,
+          namaSantri: namaSantri || "Santri",
+          noWa: cleanPhone,
+          jenis: "Flyer Khataman 30 Juz",
+          tahap: "Khotmil Qur'an",
+          status: "success",
+        });
+
+        showToast(`Flyer Khataman berhasil dikirim ke WhatsApp wali (+${cleanPhone})!`);
+        setIsWaModalOpen(false);
+      } else {
+        setWaErrorMsg(
+          res.error || "Gagal mengirim melalui Gateway WAHA. Silakan gunakan tombol Kirim via WhatsApp Web."
+        );
+      }
+    } catch (err: any) {
+      setWaErrorMsg(err.message || "Terjadi kendala teknis saat menghubungi server gateway.");
+    } finally {
+      setIsSendingWa(false);
+    }
+  };
+
+  // Kirim Flyer via WhatsApp Web (Direct / Salin Clipboard Otomatis)
+  const handleSendWaWeb = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const cleanPhone = formatPhoneNumber(waRecipientPhone);
+    if (!cleanPhone || cleanPhone.length < 9) {
+      setWaErrorMsg("Nomor WhatsApp tidak valid. Masukkan minimal 9 digit (misal: 08123456789).");
+      return;
+    }
+
+    setIsSendingWa(true);
+    setWaErrorMsg(null);
+
+    const isMobile =
+      typeof navigator !== "undefined" &&
+      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) {
+        setIsSendingWa(false);
+        setWaErrorMsg("Gagal memproses gambar flyer.");
+        return;
+      }
+
+      // 1. Perangkat HP (Mobile): Gunakan Web Share API jika didukung
+      if (isMobile && typeof navigator.share === "function") {
+        try {
+          const file = new File(
+            [blob],
+            `Flyer_Khatam_${(namaSantri || "Santri").trim().replace(/\s+/g, "_")}.png`,
+            { type: "image/png" }
+          );
+
+          await navigator.share({
+            files: [file],
+            text: waCustomMessage,
+            title: "Flyer Khataman Al-Qur'an LPTQ",
+          });
+
+          saveDeliveryLog({
+            santriId: selectedSantri?.id || `khatam_${Date.now()}`,
+            namaSantri: namaSantri || "Santri",
+            noWa: cleanPhone,
+            jenis: "Flyer Khataman 30 Juz",
+            tahap: "Khotmil Qur'an",
+            status: "manual",
+          });
+
+          showToast("Flyer Khataman berhasil dibagikan via WhatsApp!");
+          setIsWaModalOpen(false);
+          setIsSendingWa(false);
+          return;
+        } catch (shareErr: any) {
+          if (shareErr.name === "AbortError") {
+            setIsSendingWa(false);
+            return;
+          }
+          console.warn("Web Share API gagal, fallback ke WhatsApp Web", shareErr);
+        }
+      }
+
+      // 2. Desktop: Salin Flyer ke Clipboard & Buka WhatsApp Web
+      let copied = false;
+      try {
+        if (navigator.clipboard && window.ClipboardItem) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": blob }),
+          ]);
+          copied = true;
+        }
+      } catch (clipErr) {
+        console.warn("Gagal menyalin gambar ke clipboard", clipErr);
+      }
+
+      saveDeliveryLog({
+        santriId: selectedSantri?.id || `khatam_${Date.now()}`,
+        namaSantri: namaSantri || "Santri",
+        noWa: cleanPhone,
+        jenis: "Flyer Khataman 30 Juz",
+        tahap: "Khotmil Qur'an",
+        status: "manual",
+      });
+
+      const waLink = generateDirectWaLink(cleanPhone, waCustomMessage);
+      window.open(waLink, "_blank");
+
+      setIsSendingWa(false);
+      setIsWaModalOpen(false);
+      setWaWebGuideOpen(true);
+    }, "image/png");
+  };
+
   return (
     <div className="space-y-6">
       {/* Toast Notifikasi */}
@@ -902,12 +1128,12 @@ export function FlyerKhatamanModule() {
           </p>
         </div>
 
-        {/* Tombol Template Flyer & Download di Atas */}
-        <div className="flex items-center gap-2.5 shrink-0">
+        {/* Tombol Template Flyer, Download, dan Kirim WA di Atas */}
+        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
           <button
             type="button"
             onClick={() => setIsTemplateModalOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold transition shadow-sm"
+            className="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold transition shadow-sm"
             title="Buka Manajemen Template Flyer & Pengaturan Gambar"
           >
             <Palette className="w-4 h-4 text-emerald-300" />
@@ -921,10 +1147,20 @@ export function FlyerKhatamanModule() {
             type="button"
             onClick={handleDownload}
             disabled={isExporting}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-brand text-white text-xs sm:text-sm font-bold hover:bg-brand-dark transition shadow-sm disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2.5 rounded-xl bg-brand text-white text-xs sm:text-sm font-bold hover:bg-brand-dark transition shadow-sm disabled:opacity-50"
           >
             <Download className="w-4 h-4" />
             <span>Unduh PNG</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleOpenWaModal}
+            className="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold transition shadow-sm"
+            title="Kirim Flyer Khataman via WhatsApp ke Wali Santri"
+          >
+            <Send className="w-4 h-4 text-emerald-200" />
+            <span>Kirim WA</span>
           </button>
         </div>
       </div>
@@ -1640,6 +1876,16 @@ export function FlyerKhatamanModule() {
                 <Copy className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Salin</span>
               </button>
+
+              <button
+                type="button"
+                onClick={handleOpenWaModal}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-xs font-bold text-emerald-700 dark:text-emerald-300 transition"
+                title="Kirim flyer langsung via WhatsApp"
+              >
+                <Send className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span className="hidden sm:inline">Kirim WA</span>
+              </button>
             </div>
           </div>
 
@@ -1923,6 +2169,270 @@ export function FlyerKhatamanModule() {
                 className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-300 transition"
               >
                 Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL KIRIM FLYER VIA WHATSAPP ==================== */}
+      {isWaModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                  <Send className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800 dark:text-slate-100">
+                    Kirim Flyer Khataman via WhatsApp
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Kirim flyer apresiasi dan ucapan doa selamat langsung ke nomor WhatsApp wali santri.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsWaModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 space-y-4 overflow-y-auto">
+              {/* Ringkasan Santri & Miniatur Thumbnail */}
+              <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 flex items-center gap-4">
+                {miniPreviewUrl ? (
+                  <div className="relative w-16 h-20 rounded-xl overflow-hidden border border-emerald-300 dark:border-emerald-700 shadow-sm shrink-0 bg-white">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={miniPreviewUrl}
+                      alt="Thumbnail Flyer"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-16 h-20 rounded-xl bg-emerald-200 dark:bg-emerald-800 flex items-center justify-center shrink-0">
+                    <FileImage className="w-6 h-6 text-emerald-700 dark:text-emerald-300" />
+                  </div>
+                )}
+
+                <div className="space-y-1 min-w-0">
+                  <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold">
+                    <Award className="w-3 h-3" />
+                    <span>Khataman 30 Juz Bil Hifdzi</span>
+                  </div>
+                  <h4 className="text-sm font-extrabold text-slate-800 dark:text-slate-100 truncate">
+                    {namaSantri || "Nama Santri"}
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-300">
+                    {namaBapak ? `${binBinti} Bapak ${namaBapak}` : "-"}
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {selectedSantri?.asrama
+                      ? `Asrama ${selectedSantri.asrama}, Kamar ${selectedSantri.kamar || "-"}`
+                      : alamat || "Pondok Pesantren Darussalam"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Input Nomor WhatsApp Wali */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>Nomor WhatsApp Wali Santri:</span>
+                  </span>
+                  {selectedSantri?.no_wa ? (
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                      ✓ Otomatis dari Database
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                      * Harap masukkan nomor tujuan
+                    </span>
+                  )}
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={waRecipientPhone}
+                    onChange={(e) => setWaRecipientPhone(e.target.value)}
+                    placeholder="Contoh: 081234567890 atau 6281234567890"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs sm:text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition font-mono"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Nomor akan otomatis diformat ke standar internasional (+62) saat pengiriman.
+                </p>
+              </div>
+
+              {/* Textarea Pesan / Doa Apresiasi */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                  <span>Pesan Apresiasi &amp; Doa (Dapat Disesuaikan):</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Mendukung format *tebal* &amp; _miring_</span>
+                </label>
+                <textarea
+                  rows={6}
+                  value={waCustomMessage}
+                  onChange={(e) => setWaCustomMessage(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition leading-relaxed font-sans"
+                />
+              </div>
+
+              {/* Status Server WhatsApp Gateway */}
+              <div className="p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {isCheckingWaha ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+                  ) : wahaStatus?.online ? (
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                      {isCheckingWaha
+                        ? "Memeriksa Status Gateway WAHA..."
+                        : wahaStatus?.online
+                        ? `Gateway WAHA Online (+${wahaStatus.phone || "Aktif"})`
+                        : "Gateway WAHA Offline (Server Laptop)"}
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                      {wahaStatus?.online
+                        ? "Siap mengirim gambar flyer otomatis di latar belakang."
+                        : "Gunakan tombol WhatsApp Web di bawah untuk salin gambar otomatis ke clipboard."}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsCheckingWaha(true);
+                    try {
+                      const st = await checkWahaSession(wahaConfig);
+                      setWahaStatus(st);
+                    } catch {
+                      setWahaStatus({ online: false, status: "OFFLINE" });
+                    } finally {
+                      setIsCheckingWaha(false);
+                    }
+                  }}
+                  disabled={isCheckingWaha}
+                  className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300 shrink-0 transition"
+                >
+                  Cek Ulang
+                </button>
+              </div>
+
+              {/* Alert Pesan Error jika Pengiriman Terkendala */}
+              {waErrorMsg && (
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 flex items-start gap-2.5 text-xs text-rose-800 dark:text-rose-200">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+                  <span>{waErrorMsg}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer: Dual Engine Action Buttons */}
+            <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setIsWaModalOpen(false)}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-300 transition"
+              >
+                Batal
+              </button>
+
+              <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                {/* Opsi 1: WhatsApp Web Direct */}
+                <button
+                  type="button"
+                  onClick={handleSendWaWeb}
+                  disabled={isSendingWa || !waRecipientPhone.trim()}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition shadow-sm disabled:opacity-50"
+                  title="Salin gambar flyer ke clipboard & buka WhatsApp Web"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Kirim via WA Web</span>
+                </button>
+
+                {/* Opsi 2: Gateway Otomatis */}
+                <button
+                  type="button"
+                  onClick={handleSendWahaGateway}
+                  disabled={isSendingWa || !waRecipientPhone.trim()}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
+                  title="Kirim pesan gambar langsung via server WAHA"
+                >
+                  {isSendingWa ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Mengirim...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5 text-emerald-200" />
+                      <span>Kirim Otomatis (WAHA)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== DIALOG PANDUAN SALIN CLIPBOARD WA WEB ==================== */}
+      {waWebGuideOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="p-2.5 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 shrink-0">
+                <CheckCircle2 className="w-6 h-6" />
+              </span>
+              <div>
+                <h4 className="text-sm font-extrabold text-slate-800 dark:text-slate-100">
+                  Flyer Otomatis Tersalin ke Clipboard!
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Tab WhatsApp Web telah dibuka untuk wali santri.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 space-y-2 text-xs text-emerald-900 dark:text-emerald-200">
+              <p className="font-bold">Langkah mudah melampirkan flyer:</p>
+              <ol className="list-decimal list-inside space-y-1.5 text-[11px] leading-relaxed">
+                <li>Buka tab WhatsApp Web yang baru saja terbuka di browser Anda.</li>
+                <li>
+                  Klik kolom ketik pesan lalu tekan{" "}
+                  <kbd className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-emerald-300 dark:border-emerald-700 font-mono font-bold text-slate-800 dark:text-slate-100">
+                    Ctrl + V
+                  </kbd>{" "}
+                  (atau klik kanan &gt; Tempel).
+                </li>
+                <li>Gambar flyer resolusi tinggi akan langsung terlampir di WhatsApp.</li>
+                <li>
+                  Tekan <strong>Kirim / Enter</strong> bersama teks doa apresiasi kelulusan.
+                </li>
+              </ol>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setWaWebGuideOpen(false)}
+                className="px-5 py-2 rounded-xl bg-brand hover:bg-brand-dark text-white text-xs font-bold shadow-sm"
+              >
+                Mengerti
               </button>
             </div>
           </div>

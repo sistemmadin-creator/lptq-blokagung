@@ -67,6 +67,30 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       await centerBtn.click();
       await expect(page.getByText(/Offset: 0px, 0px/i)).toBeVisible();
     });
+
+    test('memiliki tombol "Kirim WA" di header dan toolbar, serta membuka modal kirim WhatsApp dengan informasi santri', async ({ page }) => {
+      await page.goto('/alat/flyer-khataman');
+
+      // Verifikasi tombol "Kirim WA" di header atas
+      const kirimWaBtn = page.getByRole('button', { name: /Kirim WA/i }).first();
+      await expect(kirimWaBtn).toBeVisible();
+
+      // Buka modal Kirim WA
+      await kirimWaBtn.click();
+
+      // Verifikasi modal terbuka dengan judul dan elemen form
+      const modalHeading = page.getByRole('heading', { name: /Kirim Flyer Khataman via WhatsApp/i });
+      await expect(modalHeading).toBeVisible();
+
+      // Verifikasi komponen input nomor HP wali, textarea ucapan, dan tombol dual engine
+      await expect(page.getByPlaceholder(/081234567890/i)).toBeVisible();
+      await expect(page.getByRole('button', { name: /Kirim via WA Web/i })).toBeVisible();
+      await expect(page.getByRole('button', { name: /Kirim Otomatis \(WAHA\)/i })).toBeVisible();
+
+      // Tutup modal dengan tombol Batal
+      await page.getByRole('button', { name: /Batal/i }).click();
+      await expect(modalHeading).not.toBeVisible();
+    });
   });
 
   test.describe('3. Modul Kirim WhatsApp Evaluasi & Khotmil (/alat/kirim-wa)', () => {
