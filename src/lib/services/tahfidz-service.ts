@@ -261,6 +261,11 @@ export async function saveSantri(
 
 export async function deleteSantriById(id: string) {
   const supabase = createClient();
+  // Bersihkan relasi nilai khotmil, setoran, dan absensi santri terlebih dahulu jika ada
+  await supabase.from("khotmil_nilai").delete().eq("santri_id", id);
+  await supabase.from("setoran").delete().eq("santri_id", id);
+  await supabase.from("absensi").delete().eq("santri_id", id);
+
   const { error } = await supabase.from("santri").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
@@ -268,6 +273,11 @@ export async function deleteSantriById(id: string) {
 export async function deleteSantriBatch(ids: string[]) {
   if (!ids || ids.length === 0) return;
   const supabase = createClient();
+  // Bersihkan relasi anak secara massal
+  await supabase.from("khotmil_nilai").delete().in("santri_id", ids);
+  await supabase.from("setoran").delete().in("santri_id", ids);
+  await supabase.from("absensi").delete().in("santri_id", ids);
+
   const { error } = await supabase.from("santri").delete().in("id", ids);
   if (error) throw new Error(error.message);
 }
@@ -825,5 +835,26 @@ export async function fetchKhotmilRegisteredSantriIds(
 
   const ids = Array.from(new Set((data || []).map((row) => row.santri_id).filter(Boolean)));
   return ids;
+}
+
+/**
+ * Menghapus seluruh catatan nilai khotmil seorang santri untuk jenis tertentu
+ * sehingga santri dapat dikeluarkan sepenuhnya dari daftar ujian khotmil.
+ */
+export async function deleteKhotmilSantriRegistration(
+  santriId: string,
+  jenis: JenisKhotmil
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("khotmil_nilai")
+    .delete()
+    .eq("santri_id", santriId)
+    .eq("jenis", jenis);
+
+  if (error) {
+    console.error("Gagal menghapus nilai khotmil santri:", error);
+    throw new Error(error.message);
+  }
 }
 

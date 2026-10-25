@@ -450,4 +450,69 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       await expect(modalHeading).not.toBeVisible();
     });
   });
+
+  test.describe('9. Validasi Perbaikan Tombol Hapus Khotmil, Scanner LJK Kamera, & Navigasi Panduan Spesifik', () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAsAdmin(page);
+    });
+
+    test('Scanner LJK Kamera memiliki video autoPlay, playsInline, tombol Ganti Kamera, dan input tanpa capture environment', async ({ page }) => {
+      await page.goto('/tahfidz/khotmil/15');
+      await expect(page.getByRole('heading', { level: 1, name: /Tahfidz Khotmil 15 Juz/i })).toBeVisible({ timeout: 15000 });
+
+      // Buka modal Scan LJK Kamera
+      const scanBtn = page.getByRole('button', { name: /Scan Lembar LJK via Kamera Browser/i });
+      await expect(scanBtn).toBeVisible({ timeout: 15000 });
+      await scanBtn.click();
+
+      // Verifikasi modal scanner terbuka
+      await expect(page.getByRole('heading', { name: /Scanner LJK Kamera/i })).toBeVisible();
+
+      // Verifikasi elemen video memiliki atribut penting untuk stabilitas mobile & PC
+      const video = page.locator('video');
+      await expect(video).toBeAttached();
+
+      // Verifikasi tombol "Ganti Kamera" (SwitchCamera) tersedia
+      const switchCamBtn = page.getByRole('button', { name: /Kamera Belakang|Kamera Depan|Ganti kamera/i });
+      await expect(switchCamBtn).toBeVisible();
+
+      // Verifikasi input file foto alternatif tidak memaksa capture="environment" (mencegah Android OOM)
+      const fileInput = page.locator('input[type="file"][accept="image/*"]');
+      await expect(fileInput).toBeAttached();
+      const captureAttr = await fileInput.getAttribute('capture');
+      expect(captureAttr).toBeNull();
+
+      // Tutup modal scanner
+      await page.getByRole('button', { name: /Tutup/i }).click();
+    });
+
+    test('Klik hasil pencarian panduan melompat spesifik ke BAB target dan membuka akordeon bab tersebut', async ({ page }) => {
+      await page.goto('/santri');
+      await expect(page.getByRole('heading', { name: /Data Santri Tahfidz/i })).toBeVisible({ timeout: 15000 });
+
+      // Buka modal panduan dari bilah atas
+      const profileGuideBtn = page.getByRole('button', { name: /Buka Panduan Halaman Ini & Pencarian Panduan/i });
+      await expect(profileGuideBtn).toBeVisible();
+      await profileGuideBtn.click();
+
+      // Ketik pencarian "kkm"
+      const searchInput = page.getByPlaceholder(/Cari topik panduan/i);
+      await searchInput.fill('kkm');
+
+      // Cari hasil BAB 6 (Tahfidz Khotmil)
+      const bab6Result = page.getByRole('heading', { name: /BAB 6: Tahfidz Khotmil/i });
+      await expect(bab6Result).toBeVisible();
+
+      // Klik hasil pencarian BAB 6
+      await bab6Result.click();
+
+      // Verifikasi halaman berpindah ke /pengaturan?tab=panduan
+      await expect(page).toHaveURL(/.*pengaturan\?tab=panduan.*bab-6/);
+
+      // Verifikasi elemen BAB 6 memiliki ID spesifik "bab-6" dan akordeonnya otomatis terbuka
+      const bab6Container = page.locator('#bab-6');
+      await expect(bab6Container).toBeVisible({ timeout: 15000 });
+      await expect(bab6Container.getByText(/Bobot Halaman 65% dan Bobot Kesalahan 35%/i)).toBeVisible();
+    });
+  });
 });

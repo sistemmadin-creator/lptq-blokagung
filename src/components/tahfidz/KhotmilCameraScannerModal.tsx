@@ -14,6 +14,7 @@ import {
   Upload,
   RefreshCw,
   Award,
+  SwitchCamera,
 } from "lucide-react";
 import { JenisKhotmil, TahapConfig } from "@/types/database";
 import {
@@ -52,6 +53,7 @@ export function KhotmilCameraScannerModal({
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(true);
@@ -73,43 +75,77 @@ export function KhotmilCameraScannerModal({
     setCameraActive(false);
   }, []);
 
-  // Start camera stream
-  const startCamera = useCallback(async () => {
-    stopCamera();
-    setCameraError(null);
-    setVerifiedResult(null);
-    setScanning(true);
-    setScanStatus("searching");
+  // Start camera stream dengan toleransi fallback untuk perangkat desktop/webcam
+  const startCamera = useCallback(
+    async (modeOverride?: "environment" | "user") => {
+      stopCamera();
+      setCameraError(null);
+      setVerifiedResult(null);
+      setScanning(true);
+      setScanStatus("searching");
 
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Peramban Anda tidak mendukung akses kamera langsung.");
+      const targetMode = modeOverride || facingMode;
+
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Peramban Anda tidak mendukung akses kamera langsung.");
+        }
+
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: targetMode },
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+            },
+            audio: false,
+          });
+        } catch (firstErr) {
+          // Fallback untuk desktop PC / webcam jika facingMode spesifik tidak didukung driver
+          console.warn("Mencoba fallback getUserMedia video standar:", firstErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.onloadedmetadata = async () => {
+            try {
+              await videoRef.current?.play();
+              setCameraActive(true);
+            } catch (pErr) {
+              console.error("Video play error saat loadedmetadata:", pErr);
+            }
+          };
+
+          try {
+            await videoRef.current.play();
+            setCameraActive(true);
+          } catch (_) {
+            // Ditangani oleh onloadedmetadata
+          }
+        }
+      } catch (err: any) {
+        console.error("Gagal memulai kamera:", err);
+        setCameraError(
+          err.name === "NotAllowedError"
+            ? "Akses kamera ditolak. Berikan izin kamera di pengaturan browser Anda."
+            : err.message || "Gagal mengakses kamera perangkat."
+        );
       }
+    },
+    [facingMode, stopCamera]
+  );
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
-
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setCameraActive(true);
-      }
-    } catch (err: any) {
-      console.error("Gagal memulai kamera:", err);
-      setCameraError(
-        err.name === "NotAllowedError"
-          ? "Akses kamera ditolak. Berikan izin kamera di pengaturan browser Anda."
-          : err.message || "Gagal mengakses kamera perangkat."
-      );
-    }
-  }, [stopCamera]);
+  const toggleFacingMode = () => {
+    const nextMode = facingMode === "environment" ? "user" : "environment";
+    setFacingMode(nextMode);
+    startCamera(nextMode);
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -138,21 +174,31 @@ export function KhotmilCameraScannerModal({
       if (
         video &&
         canvas &&
-        video.readyState === video.HAVE_ENOUGH_DATA &&
-        video.videoWidth > 0
+        video.readyState >= 2 &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0
       ) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        // Optimasi resolusi canvas maksimal 1280px agar tidak boros RAM di perangkat mobile
+        let w = video.videoWidth;
+        let h = video.videoHeight;
+        const maxW = 1280;
+        if (w > maxW) {
+          h = Math.round((h * maxW) / w);
+          w = maxW;
+        }
+
+        canvas.width = w;
+        canvas.height = h;
         const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
         if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(video, 0, 0, w, h);
 
           // Area viewfinder acuan
-          const guideW = canvas.width * 0.85;
-          const guideH = canvas.height * 0.70;
-          const guideX = (canvas.width - guideW) / 2;
-          const guideY = (canvas.height - guideH) / 2;
+          const guideW = w * 0.85;
+          const guideH = h * 0.70;
+          const guideX = (w - guideW) / 2;
+          const guideY = (h - guideH) / 2;
 
           const res = processVideoFrame(canvas, {
             x: guideX,
@@ -177,12 +223,12 @@ export function KhotmilCameraScannerModal({
         }
       }
 
-      // Jadwalkan scan frame berikutnya (setiap ~180ms)
+      // Jadwalkan scan frame berikutnya (setiap ~200ms)
       setTimeout(() => {
         if (isSubscribed && scanning) {
           animId = requestAnimationFrame(scanFrame);
         }
-      }, 180);
+      }, 200);
     };
 
     animId = requestAnimationFrame(scanFrame);
@@ -272,38 +318,66 @@ export function KhotmilCameraScannerModal({
     }
   };
 
-  // Upload file gambar alternatif jika kamera bermasalah
+  // Upload file gambar alternatif jika kamera bermasalah (dengan kompresi/downsample anti OOM HP)
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = canvasRef.current || document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          const res = processVideoFrame(canvas);
-          if (res.status === "success" && res.sheetResult) {
-            setScanStatus("detected");
-            setScanning(false);
-            setVerifiedResult(res.sheetResult);
-            showToast("success", "Gambar LJK berhasil dibaca!");
-          } else {
-            showToast(
-              "error",
-              res.errorMessage || "Tidak dapat mendeteksi QR Code atau LJK pada gambar ini."
-            );
-          }
+    // Reset value input agar bisa upload file yang sama jika perlu
+    e.target.value = "";
+
+    const blobUrl = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = () => {
+      // DOWN-SAMPLE GAMBAR (MAKSIMAL 1280px) UNTUK MENCEGAH OUT-OF-MEMORY PADA HP ANDROID
+      let targetW = img.width;
+      let targetH = img.height;
+      const MAX_DIM = 1280;
+
+      if (targetW > MAX_DIM || targetH > MAX_DIM) {
+        if (targetW > targetH) {
+          targetH = Math.round((targetH * MAX_DIM) / targetW);
+          targetW = MAX_DIM;
+        } else {
+          targetW = Math.round((targetW * MAX_DIM) / targetH);
+          targetH = MAX_DIM;
         }
-      };
-      img.src = event.target?.result as string;
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        URL.revokeObjectURL(blobUrl);
+
+        const res = processVideoFrame(canvas);
+        if (res.status === "success" && res.sheetResult) {
+          setScanStatus("detected");
+          setScanning(false);
+          setVerifiedResult(res.sheetResult);
+          showToast("success", "Gambar LJK berhasil dibaca!");
+        } else {
+          showToast(
+            "error",
+            res.errorMessage ||
+              "Tidak dapat mendeteksi QR Code atau LJK pada gambar ini. Pastikan gambar terang dan tidak miring."
+          );
+        }
+      } else {
+        URL.revokeObjectURL(blobUrl);
+      }
     };
-    reader.readAsDataURL(file);
+
+    img.onerror = () => {
+      URL.revokeObjectURL(blobUrl);
+      showToast("error", "Gagal memproses file gambar.");
+    };
+
+    img.src = blobUrl;
   };
 
   if (!isOpen) return null;
@@ -339,14 +413,26 @@ export function KhotmilCameraScannerModal({
 
         {/* Area Scanner / Verifikasi */}
         <div className="relative flex-1 bg-black flex flex-col items-center justify-center overflow-hidden min-h-[360px]">
-          {/* Canvas tersembunyi untuk analisis citra */}
-          <canvas ref={canvasRef} className="hidden" />
+          {/* Canvas tersembunyi untuk analisis citra (tidak display:none agar konteks 2D tetap aktif di semua browser) */}
+          <canvas
+            ref={canvasRef}
+            style={{
+              position: "absolute",
+              left: -9999,
+              top: -9999,
+              width: 1,
+              height: 1,
+              opacity: 0,
+              pointerEvents: "none",
+            }}
+          />
 
           {/* MODE 1: Kamera Sedang Aktif Memindai */}
           {!verifiedResult && (
             <div className="relative w-full h-full flex items-center justify-center bg-black">
               <video
                 ref={videoRef}
+                autoPlay
                 playsInline
                 muted
                 className="w-full h-full object-cover max-h-[58vh]"
@@ -386,7 +472,7 @@ export function KhotmilCameraScannerModal({
                   <p className="text-xs text-slate-400 mb-5 max-w-xs">{cameraError}</p>
                   <div className="flex gap-2">
                     <button
-                      onClick={startCamera}
+                      onClick={() => startCamera()}
                       className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold text-white transition flex items-center gap-1.5"
                     >
                       <RefreshCw className="w-3.5 h-3.5" /> Coba Lagi
@@ -529,12 +615,11 @@ export function KhotmilCameraScannerModal({
           )}
         </div>
 
-        {/* Input File Tersembunyi untuk Upload Foto Alternatif */}
+        {/* Input File Tersembunyi untuk Upload Foto Alternatif (tanpa capture environment agar user dapat memilih dari galeri atau kamera tanpa OOM) */}
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          capture="environment"
           onChange={handleImageUpload}
           className="hidden"
         />
@@ -542,18 +627,33 @@ export function KhotmilCameraScannerModal({
         {/* Footer Actions */}
         <div className="p-4 sm:p-5 border-t border-slate-800 flex items-center justify-between bg-slate-900/90">
           {!verifiedResult ? (
-            <div className="flex items-center justify-between w-full">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-white transition"
-              >
-                <Upload className="w-4 h-4" /> Unggah Foto Alternatif
-              </button>
+            <div className="flex items-center justify-between w-full gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  title="Pilih atau jepret foto LJK"
+                >
+                  <Upload className="w-4 h-4 text-emerald-400" />
+                  <span>Unggah Foto Alternatif</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleFacingMode}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  title="Ganti kamera belakang / depan"
+                >
+                  <SwitchCamera className="w-4 h-4 text-emerald-400" />
+                  <span className="hidden sm:inline">
+                    {facingMode === "environment" ? "Kamera Belakang" : "Kamera Depan"}
+                  </span>
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition shrink-0"
               >
                 Tutup
               </button>

@@ -188,6 +188,12 @@ export function QuickGuideModal({ isOpen, onClose }: QuickGuideModalProps) {
                       onClick={() => {
                         onClose();
                         router.push(item.url);
+                        if (typeof window !== "undefined" && item.url.includes("#")) {
+                          const targetHash = item.url.split("#")[1];
+                          if (window.location.pathname.includes("/pengaturan")) {
+                            window.location.hash = targetHash;
+                          }
+                        }
                       }}
                       className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 hover:bg-emerald-50/60 dark:bg-slate-800/40 dark:hover:bg-emerald-950/30 transition cursor-pointer group flex items-start gap-3"
                     >
@@ -375,7 +381,10 @@ export function QuickGuideModal({ isOpen, onClose }: QuickGuideModalProps) {
                       type="button"
                       onClick={() => {
                         onClose();
-                        router.push(`/pengaturan?tab=panduan#${bab.hash}`);
+                        router.push(`/pengaturan?tab=panduan&bab=${bab.hash}#${bab.hash}`);
+                        if (typeof window !== "undefined" && window.location.pathname.includes("/pengaturan")) {
+                          window.location.hash = bab.hash;
+                        }
                       }}
                       className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-left transition group"
                     >

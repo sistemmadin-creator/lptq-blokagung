@@ -40,6 +40,7 @@ import {
   fetchSantriAbsensiDetail,
   fetchPembimbingMap,
   fetchKhotmilRegisteredSantriIds,
+  deleteKhotmilSantriRegistration,
   fetchSantriSetoranDetailTahun,
   fetchCurrentUserProfile,
 } from "@/lib/services/tahfidz-service";
@@ -334,13 +335,21 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
     }
   };
 
-  // Keluarkan santri dari daftar Khotmil
-  const handleUnregisterSantri = (santriId: string, namaSantri: string) => {
-    if (!confirm(`Apakah Anda yakin ingin mengeluarkan ${namaSantri} dari daftar ${judul}?`)) {
+  // Keluarkan santri dari daftar Khotmil (Hapus nilai di Supabase & registrasi lokal)
+  const handleUnregisterSantri = async (santriId: string, namaSantri: string) => {
+    if (
+      !confirm(
+        `Apakah Anda yakin ingin mengeluarkan ${namaSantri} dan menghapus seluruh nilai ujiannya dari ${judul}?`
+      )
+    ) {
       return;
     }
 
     try {
+      // 1. Hapus catatan nilai santri dari Supabase
+      await deleteKhotmilSantriRegistration(santriId, jenis);
+
+      // 2. Hapus ID santri dari localStorage
       let currentReg: string[] = [];
       const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
       if (stored) currentReg = JSON.parse(stored);
@@ -348,10 +357,19 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
       const filtered = currentReg.filter((id) => id !== santriId);
       localStorage.setItem(`lptq_registered_khotmil_${jenis}`, JSON.stringify(filtered));
 
+      // 3. Bersihkan nilaiMap lokal untuk santri ini
+      setNilaiMap((prev) => {
+        const next = { ...prev };
+        for (const j of currentTahapCfg.juzList) {
+          delete next[`${santriId}_${j}`];
+        }
+        return next;
+      });
+
       showToast("success", `${namaSantri} telah dihapus dari daftar ${judul}.`);
-      loadData();
+      await loadData();
     } catch (e: any) {
-      showToast("error", "Gagal memperbarui pendaftaran: " + e.message);
+      showToast("error", "Gagal menghapus santri dari daftar: " + (e.message || "Kesalahan"));
     }
   };
 

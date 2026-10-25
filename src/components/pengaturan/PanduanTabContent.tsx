@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import {
   BookOpen,
@@ -320,6 +320,42 @@ export function PanduanTabContent() {
   const printRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedChapter, setExpandedChapter] = useState<string | null>("bab-1");
+  const [targetHighlightBab, setTargetHighlightBab] = useState<string | null>(null);
+
+  // Deteksi hash URL / query param saat halaman dibuka atau saat hash berubah untuk auto-expand dan auto-scroll ke BAB target
+  useEffect(() => {
+    const handleCheckTargetBab = () => {
+      if (typeof window === "undefined") return;
+      const hash = window.location.hash ? window.location.hash.replace("#", "") : null;
+      const urlParams = new URLSearchParams(window.location.search);
+      const babParam = urlParams.get("bab") || hash;
+
+      if (babParam) {
+        const found = CHAPTERS.find(
+          (c) => c.id.toLowerCase() === babParam.toLowerCase()
+        );
+        if (found) {
+          setExpandedChapter(found.id);
+          setTargetHighlightBab(found.id);
+
+          setTimeout(() => {
+            const el = document.getElementById(found.id);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          }, 250);
+
+          setTimeout(() => {
+            setTargetHighlightBab(null);
+          }, 4000);
+        }
+      }
+    };
+
+    handleCheckTargetBab();
+    window.addEventListener("hashchange", handleCheckTargetBab);
+    return () => window.removeEventListener("hashchange", handleCheckTargetBab);
+  }, []);
 
   const handlePrint = useReactToPrint({
     content: () => printRef.current,
@@ -533,10 +569,16 @@ export function PanduanTabContent() {
         <div className="space-y-2.5">
           {filteredChapters.map((ch) => {
             const isExpanded = expandedChapter === ch.id;
+            const isHighlighted = targetHighlightBab === ch.id;
             return (
               <div
                 key={ch.id}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden transition"
+                id={ch.id}
+                className={`scroll-mt-24 rounded-2xl overflow-hidden transition-all duration-500 ${
+                  isHighlighted
+                    ? "bg-emerald-50/90 dark:bg-emerald-950/50 border-2 border-emerald-500 ring-4 ring-emerald-500/25 shadow-xl shadow-emerald-500/10 scale-[1.01]"
+                    : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+                }`}
               >
                 <button
                   type="button"

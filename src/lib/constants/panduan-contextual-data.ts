@@ -610,7 +610,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
     snippet:
       "Profil sistem LPTQ Blokagung, tumpukan teknologi Next.js 14 & Supabase, matriks 5 peran pengguna, dan izin granular per modul.",
     keywords: ["arsitektur", "supabase", "nextjs", "peran", "role", "admin", "pengurus", "pembimbing", "operator", "viewer", "pendahuluan", "rls"],
-    url: "/pengaturan?tab=panduan#bab-1",
+    url: "/pengaturan?tab=panduan&bab=bab-1#bab-1",
     type: "bab",
   },
   {
@@ -621,7 +621,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
     snippet:
       "Prosedur autentikasi login, semat pin sidebar responsif, bilah atas pencarian cepat santri, sakelar tema gelap, dan pengamanan sesi.",
     keywords: ["login", "masuk", "password", "kata sandi", "sidebar", "navigasi", "mode gelap", "dark mode", "keluar", "logout", "keamanan"],
-    url: "/pengaturan?tab=panduan#bab-2",
+    url: "/pengaturan?tab=panduan&bab=bab-2#bab-2",
     type: "bab",
   },
   {
@@ -632,7 +632,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
     snippet:
       "Pencatatan NIS santri, nomor WhatsApp wali internasional (+62), hirarki Blok Asrama Kamar, impor massal Excel template resmi, dan ekspor cetak.",
     keywords: ["santri", "biodata", "nis", "asrama", "kamar", "blok", "whatsapp", "wali", "impor excel", "import", "ekspor", "cetak", "a4"],
-    url: "/pengaturan?tab=panduan#bab-3",
+    url: "/pengaturan?tab=panduan&bab=bab-3#bab-3",
     type: "bab",
   },
   {
@@ -643,7 +643,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
     snippet:
       "Pembagian 10 kelas halaqoh (target 3 juz/kelas, rombel A-F), penugasan asatidz pembina, kontak WA guru, dan pemantauan santri alfa.",
     keywords: ["halaqoh", "kelas", "rombel", "ustadz", "pembimbing", "guru", "alfa", "absen", "target juz", "kelompok"],
-    url: "/pengaturan?tab=panduan#bab-4",
+    url: "/pengaturan?tab=panduan&bab=bab-4#bab-4",
     type: "bab",
   },
   {
@@ -654,7 +654,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
     snippet:
       "Presensi harian Pagi & Malam, tombol 'Set Semua Hadir', kalender bulanan, setoran ziyadah juz baru Jan-Des, dan evaluasi mutqin pengurus.",
     keywords: ["kegiatan", "presensi", "kehadiran", "pagi", "malam", "shubuh", "maghrib", "set semua hadir", "juz baru", "ziyadah", "evaluasi", "mutqin"],
-    url: "/pengaturan?tab=panduan#bab-5",
+    url: "/pengaturan?tab=panduan&bab=bab-5#bab-5",
     type: "bab",
   },
   {
@@ -665,7 +665,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
     snippet:
       "Ujian munaqosyah berjenjang (5 tahap pada 15 juz; 9 tahap pada 30 juz), rumus baku KKM 85, cetak LJK ber-QR Code, dan koreksi kamera OMR.",
     keywords: ["khotmil", "15 juz", "30 juz", "ujian", "munaqosyah", "kkm", "85", "ljk", "omr", "kamera", "scan", "kelulusan", "rekap khotmil"],
-    url: "/pengaturan?tab=panduan#bab-6",
+    url: "/pengaturan?tab=panduan&bab=bab-6#bab-6",
     type: "bab",
   },
   {
@@ -697,7 +697,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
       "ctrl v",
       "clipboard",
     ],
-    url: "/pengaturan?tab=panduan#bab-7",
+    url: "/pengaturan?tab=panduan&bab=bab-7#bab-7",
     type: "bab",
   },
   {
@@ -708,7 +708,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
     snippet:
       "Branding visual lembaga, nilai KKM, manajemen akun pengguna bertingkat, cadangan JSON (backup), dan log aktivitas retensi 6 bulan.",
     keywords: ["pengaturan", "branding", "logo", "favicon", "kkm", "backup", "cadangan json", "pengguna", "user", "otoritas", "log aktivitas", "retensi", "6 bulan", "180 hari"],
-    url: "/pengaturan?tab=panduan#bab-8",
+    url: "/pengaturan?tab=panduan&bab=bab-8#bab-8",
     type: "bab",
   },
   {
@@ -719,7 +719,7 @@ export const GUIDE_SEARCH_INDEX: GuideSearchItem[] = [
     snippet:
       "SOP penerimaan santri baru, SOP presensi harian ba'da Shubuh & Maghrib, SOP ujian khotmil LJK & OMR, serta SOP siaran WhatsApp ke wali santri.",
     keywords: ["sop", "standar operasional", "prosedur", "tata tertib", "wisuda", "pengumuman", "wali santri"],
-    url: "/pengaturan?tab=panduan#bab-9",
+    url: "/pengaturan?tab=panduan&bab=bab-9#bab-9",
     type: "bab",
   },
 
