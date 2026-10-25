@@ -52,6 +52,7 @@ import {
   type TahapConfig,
 } from "@/types/database";
 import { HalaqohBadge } from "@/components/ui/Badges";
+import * as XLSX from "xlsx";
 import {
   downloadKhotmilTemplateExcel,
   exportJsonToExcel,
@@ -543,14 +544,13 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
       const summary = computeRowSummary(s.id);
       const obj: Record<string, string | number> = {
         No: idx + 1,
-        Kode: s.kode,
-        "Nama Lengkap": s.nama_lengkap,
-        Asrama: s.asrama,
-        Halaqoh: s.halaqoh,
+        "Nama Santri": s.nama_lengkap,
+        Asrama: s.asrama || "-",
+        Halaqoh: s.halaqoh || "-",
       };
       currentTahapCfg.juzList.forEach((j) => {
         const v = nilaiMap[`${s.id}_${j}`];
-        obj[`Juz_${j}`] = typeof v === "number" ? v : "-";
+        obj[`Juz ${j}`] = typeof v === "number" ? v : "-";
       });
       obj["Rata-rata"] = summary.rataRata ?? "-";
       obj["Status KKM (85)"] = summary.lulus ? "Tuntas / Lulus" : "Belum Tuntas";
@@ -565,26 +565,140 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
     showToast("success", "Tabel nilai Khotmil berhasil diekspor ke Excel.");
   };
 
-  // Impor Nilai Khotmil Excel
+  // Impor Nilai Khotmil Excel (Mendukung format kolom tabel baru & format normalisasi lama)
   const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setImporting(true);
-    setImportProgress("Memvalidasi berkas nilai...");
+    setImportProgress("Membaca dan memvalidasi berkas nilai...");
 
     try {
-      const requiredHeaders = ["Kode", "Jenis", "Tahap", "Juz", "Nilai"];
-      const parsedRows = await parseExcelFileWithValidation(file, requiredHeaders);
-      const chunks = chunkArray(parsedRows, 100);
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        throw new Error("Berkas Excel tidak memiliki lembar kerja (sheet).");
+      }
+
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
+        defval: "",
+      });
+
+      if (rawRows.length === 0) {
+        throw new Error("Berkas Excel kosong atau tidak memiliki baris data.");
+      }
+
+      const firstRowKeys = Object.keys(rawRows[0]);
+      const isLegacy = ["Kode", "Jenis", "Tahap", "Juz", "Nilai"].every((h) =>
+        firstRowKeys.some((k) => k.trim().toLowerCase() === h.toLowerCase())
+      );
+
+      interface ImportPayloadRow {
+        santri: string;
+        jenis: string;
+        tahap: number;
+        juz: number;
+        nilai: number;
+      }
+
+      const payloadRows: ImportPayloadRow[] = [];
+
+      if (isLegacy) {
+        // Format normalisasi lama (Kode, Jenis, Tahap, Juz, Nilai)
+        rawRows.forEach((r) => {
+          const santriVal = String(r.Kode || r.kode || "").trim();
+          const jVal = String(r.Jenis || r.jenis || jenis).trim();
+          const tVal = Number(r.Tahap || r.tahap || activeTahap);
+          const juzVal = Number(r.Juz || r.juz);
+          const nVal = Number(r.Nilai || r.nilai);
+
+          if (santriVal && !Number.isNaN(juzVal) && !Number.isNaN(nVal)) {
+            payloadRows.push({
+              santri: santriVal,
+              jenis: jVal,
+              tahap: tVal,
+              juz: juzVal,
+              nilai: Math.round(nVal),
+            });
+          }
+        });
+      } else {
+        // Format kolom tabel baru (No, Nama Santri, Asrama, Halaqoh, Juz 1, Juz 2, ...)
+        const santriKey = firstRowKeys.find((k) =>
+          /^(nama\s*santri|nama\s*lengkap|nama|santri|kode\s*santri|kode)$/i.test(k.trim())
+        );
+
+        if (!santriKey) {
+          throw new Error(
+            "Kolom nama santri (misal: 'Nama Santri' atau 'Kode') tidak ditemukan pada berkas Excel. Silakan gunakan format template yang disediakan."
+          );
+        }
+
+        // Temukan seluruh kolom Juz (misal: 'Juz 1', 'Juz 2', 'Juz_1', dsb.)
+        const juzColumns: { key: string; juz: number }[] = [];
+        firstRowKeys.forEach((k) => {
+          const m = k.trim().match(/^juz[\s_]*(\d+)$/i);
+          if (m) {
+            juzColumns.push({ key: k, juz: parseInt(m[1], 10) });
+          }
+        });
+
+        if (juzColumns.length === 0) {
+          throw new Error(
+            "Kolom Juz (misal: 'Juz 1', 'Juz 2', dst.) tidak ditemukan. Unduh Template Excel Nilai terlebih dahulu."
+          );
+        }
+
+        rawRows.forEach((r) => {
+          const santriVal = String(r[santriKey] ?? "").trim();
+          if (!santriVal) return;
+
+          juzColumns.forEach(({ key, juz }) => {
+            const rawVal = r[key];
+            if (rawVal === "" || rawVal === null || rawVal === undefined || rawVal === "-") {
+              return;
+            }
+            const num = Number(rawVal);
+            if (!Number.isNaN(num) && num >= 0 && num <= 100) {
+              payloadRows.push({
+                santri: santriVal,
+                jenis,
+                tahap: activeTahap,
+                juz,
+                nilai: Math.round(num),
+              });
+            }
+          });
+        });
+      }
+
+      if (payloadRows.length === 0) {
+        throw new Error(
+          "Tidak ditemukan data nilai angka (0 - 100) yang valid untuk diimpor. Pastikan nilai telah diisi di kolom Juz."
+        );
+      }
+
+      const chunks = chunkArray(payloadRows, 100);
       let importedCount = 0;
+      const allRegisteredSantriIds: string[] = [];
 
       for (let idx = 0; idx < chunks.length; idx++) {
-        setImportProgress(`Mengunggah baris ${idx * 100 + 1} s.d ${Math.min((idx + 1) * 100, parsedRows.length)}...`);
+        setImportProgress(
+          `Mengunggah nilai baris ${idx * 100 + 1} s.d ${Math.min(
+            (idx + 1) * 100,
+            payloadRows.length
+          )}...`
+        );
         const res = await fetch("/api/import/khotmil", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rows: chunks[idx] }),
+          body: JSON.stringify({
+            rows: chunks[idx],
+            jenis,
+            tahap: activeTahap,
+          }),
         });
 
         const json = await res.json();
@@ -592,6 +706,22 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
           throw new Error(json.error || "Gagal mengimpor nilai ke server.");
         }
         importedCount += json.count ?? chunks[idx].length;
+        if (Array.isArray(json.registeredSantriIds)) {
+          allRegisteredSantriIds.push(...json.registeredSantriIds);
+        }
+      }
+
+      // Daftarkan santri yang nilainya berhasil diimpor ke penyimpanan lokal
+      if (allRegisteredSantriIds.length > 0) {
+        try {
+          let localRegistered: string[] = [];
+          const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
+          if (stored) localRegistered = JSON.parse(stored);
+          const merged = Array.from(new Set([...localRegistered, ...allRegisteredSantriIds]));
+          localStorage.setItem(`lptq_registered_khotmil_${jenis}`, JSON.stringify(merged));
+        } catch (e) {
+          console.error("Gagal memperbarui local storage khotmil:", e);
+        }
       }
 
       showToast("success", `Berhasil mengimpor ${importedCount} data nilai Khotmil.`);
@@ -1160,12 +1290,22 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
               </div>
             ) : (
               <div className="space-y-3 py-4">
-                {/* Pilihan 1: Template Excel */}
+                {/* Pilihan 1: Template Excel Nilai Kolom Tabel */}
                 <button
                   type="button"
                   onClick={() => {
-                    downloadKhotmilTemplateExcel();
-                    showToast("success", "Template nilai Khotmil berhasil diunduh.");
+                    downloadKhotmilTemplateExcel({
+                      jenis,
+                      tahap: activeTahap,
+                      tahapLabel: currentTahapCfg.label,
+                      rentangLabel: currentTahapCfg.rentangLabel,
+                      juzList: currentTahapCfg.juzList,
+                      santriList,
+                    });
+                    showToast(
+                      "success",
+                      `Template nilai ${currentTahapCfg.label} (${currentTahapCfg.rentangLabel}) berhasil diunduh.`
+                    );
                     setExcelModalOpen(false);
                   }}
                   className="w-full flex items-center gap-3.5 p-3 rounded-xl border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/50 transition text-left group dark:border-slate-800 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/20"
@@ -1175,10 +1315,10 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                   </div>
                   <div className="flex-1">
                     <p className="text-sm font-bold text-slate-800 group-hover:text-emerald-900 dark:text-slate-200 dark:group-hover:text-emerald-300">
-                      Template Excel Nilai
+                      Template Excel Nilai ({currentTahapCfg.label})
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Unduh format template kosong nilai Khotmil untuk impor massal
+                      Format kolom tabel: No, Nama Santri, Asrama, Halaqoh, {currentTahapCfg.rentangLabel}
                     </p>
                   </div>
                 </button>

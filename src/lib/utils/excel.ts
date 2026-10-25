@@ -361,24 +361,86 @@ export async function downloadSantriTemplateExcel(customRules?: HierarchyRule[])
   URL.revokeObjectURL(url);
 }
 
-export function downloadKhotmilTemplateExcel() {
-  const sampleRows = [
-    {
-      Kode: "S-1001",
-      Jenis: "khotmil15",
-      Tahap: 1,
-      Juz: 1,
-      Nilai: 88,
-    },
-    {
-      Kode: "S-1001",
-      Jenis: "khotmil15",
-      Tahap: 1,
-      Juz: 2,
-      Nilai: 90,
-    },
+export interface KhotmilTemplateOptions {
+  jenis?: "khotmil15" | "khotmil30";
+  tahap?: number;
+  tahapLabel?: string;
+  rentangLabel?: string;
+  juzList?: number[];
+  santriList?: Array<{
+    id: string;
+    kode: string;
+    nama_lengkap: string;
+    asrama?: string | null;
+    halaqoh?: string | null;
+  }>;
+}
+
+export function downloadKhotmilTemplateExcel(options?: KhotmilTemplateOptions) {
+  const jenis = options?.jenis ?? "khotmil15";
+  const tahap = options?.tahap ?? 1;
+  const juzList = options?.juzList && options.juzList.length > 0 ? options.juzList : [1, 2, 3, 4, 5];
+  const santriList = options?.santriList ?? [];
+
+  // Bangun baris data template sesuai format kolom tabel:
+  // (No, Nama Santri, Asrama, Halaqoh, Juz X, Juz Y, ...)
+  let rows: Record<string, string | number>[];
+
+  if (santriList.length > 0) {
+    rows = santriList.map((s, idx) => {
+      const rowObj: Record<string, string | number> = {
+        No: idx + 1,
+        "Nama Santri": s.nama_lengkap,
+        Asrama: s.asrama && s.asrama !== "-" ? s.asrama : "-",
+        Halaqoh: s.halaqoh && s.halaqoh !== "-" ? s.halaqoh : "-",
+      };
+      juzList.forEach((j) => {
+        rowObj[`Juz ${j}`] = ""; // Dikosongkan agar pengurus/asatidz dapat mengisi angka nilai
+      });
+      return rowObj;
+    });
+  } else {
+    // Contoh data sampel jika belum ada santri terdaftar di tahap ini (seperti pada Khotmil 30 Juz Tahap 1)
+    rows = [
+      {
+        No: 1,
+        "Nama Santri": "Ahmad Fauzi Darussalam",
+        Asrama: "Maqomin Amin",
+        Halaqoh: "1A",
+      },
+      {
+        No: 2,
+        "Nama Santri": "Muhammad Rizky Pratama",
+        Asrama: "Al Multazam",
+        Halaqoh: "2B",
+      },
+    ];
+
+    rows.forEach((r, rIdx) => {
+      juzList.forEach((j, jIdx) => {
+        r[`Juz ${j}`] = 85 + ((rIdx * 3 + jIdx * 2) % 12);
+      });
+    });
+  }
+
+  // Buat lembar kerja XLSX dan atur lebar kolom agar rapi dan tidak terpotong di Excel
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  worksheet["!cols"] = [
+    { wch: 6 },  // No
+    { wch: 32 }, // Nama Santri
+    { wch: 22 }, // Asrama
+    { wch: 14 }, // Halaqoh
+    ...juzList.map(() => ({ wch: 10 })), // Kolom tiap Juz
   ];
-  exportJsonToExcel(sampleRows, "Template_Import_Khotmil_LPTQ_Blokagung", "TemplateKhotmil");
+
+  const workbook = XLSX.utils.book_new();
+  const sheetName = `Tahap_${tahap}`;
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+
+  const fileName = `Template_Import_${
+    jenis === "khotmil30" ? "Khotmil_30_Juz" : "Khotmil_15_Juz"
+  }_Tahap_${tahap}_LPTQ_Blokagung`;
+  XLSX.writeFile(workbook, `${fileName}.xlsx`);
 }
 
 export async function parseExcelFileWithValidation(

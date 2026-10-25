@@ -126,11 +126,10 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
     test('memuat materi panduan teknis BAB 7: alur kerja WhatsApp gateway, perbedaan tunnel vs port lokal, dan jaminan gratis', async ({ page }) => {
       await page.goto('/pengaturan?tab=panduan');
 
-      // Tunggu hingga autentikasi hak akses selesai
-      await expect(page.getByText('Memverifikasi hak akses...')).not.toBeVisible({ timeout: 15000 });
-
-      // Verifikasi judul buku panduan
-      await expect(page.getByRole('heading', { name: /Buku Panduan & Tur Interaktif LPTQ Blokagung/i })).toBeVisible({ timeout: 15000 });
+      // Verifikasi judul buku panduan (toleransi jeda jaringan Supabase profil)
+      await expect(
+        page.getByRole('heading', { name: /Buku Panduan & Tur Interaktif LPTQ Blokagung/i })
+      ).toBeVisible({ timeout: 25000 });
 
       // Klik untuk memperluas BAB 7
       const bab7Button = page.getByRole('button', { name: /BAB 7.*Alat Lanjutan/i });
@@ -143,6 +142,66 @@ test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
       await expect(page.getByText('Jawabannya: TIDAK, 100% GRATIS SELAMANYA.')).toBeVisible();
       await expect(page.getByRole('heading', { name: /2 Tips Penting untuk Menjaga Nomor Tetap Aman/i })).toBeVisible();
       await expect(page.getByRole('heading', { name: /Pembaruan Fitur Flyer Khataman & WhatsApp Web/i })).toBeVisible();
+    });
+  });
+
+  test.describe('5. Modul Khotmil 15 & 30 Juz - Template Excel Kolom Tabel', () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAsAdmin(page);
+    });
+
+    test('Khotmil 15 Juz: membuka modal Excel dan mengunduh template dengan format kolom tabel yang sesuai', async ({
+      page,
+    }) => {
+      await page.goto('/tahfidz/khotmil/15');
+      await expect(
+        page.getByRole('heading', { name: 'Tahfidz Khotmil 15 Juz', exact: true })
+      ).toBeVisible({ timeout: 15000 });
+
+      // Buka modal Menu Excel Khotmil
+      const excelBtn = page.getByRole('button', { name: /Menu Excel/i }).or(page.locator('button[title*="Excel"]')).or(page.locator('button:has(svg.lucide-file-spreadsheet)'));
+      await expect(excelBtn.first()).toBeVisible();
+      await excelBtn.first().click();
+
+      // Verifikasi modal terbuka
+      await expect(page.getByRole('heading', { name: /Menu Excel Khotmil/i })).toBeVisible();
+
+      // Verifikasi tombol Template Excel Nilai (Tahap 1) dan format kolom tabel
+      await expect(page.getByText(/Template Excel Nilai \(Tahap 1\)/i)).toBeVisible();
+      await expect(page.getByText(/Format kolom tabel: No, Nama Santri, Asrama, Halaqoh, Juz 1 - 5/i)).toBeVisible();
+
+      // Uji unduh template dan periksa nama berkas
+      const downloadPromise = page.waitForEvent('download');
+      await page.getByText(/Template Excel Nilai \(Tahap 1\)/i).click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toContain('Khotmil_15_Juz_Tahap_1');
+    });
+
+    test('Khotmil 30 Juz: membuka modal Excel dan mengunduh template dengan format kolom tabel yang sesuai', async ({
+      page,
+    }) => {
+      await page.goto('/tahfidz/khotmil/30');
+      await expect(
+        page.getByRole('heading', { name: 'Tahfidz Khotmil 30 Juz', exact: true })
+      ).toBeVisible({ timeout: 15000 });
+
+      // Buka modal Menu Excel Khotmil
+      const excelBtn = page.locator('button:has(svg.lucide-file-spreadsheet)').or(page.getByRole('button', { name: /Menu Excel/i }));
+      await expect(excelBtn.first()).toBeVisible();
+      await excelBtn.first().click();
+
+      // Verifikasi modal terbuka
+      await expect(page.getByRole('heading', { name: /Menu Excel Khotmil/i })).toBeVisible();
+
+      // Verifikasi tombol Template Excel Nilai (Tahap 1) dan format kolom tabel
+      await expect(page.getByText(/Template Excel Nilai \(Tahap 1\)/i)).toBeVisible();
+      await expect(page.getByText(/Format kolom tabel: No, Nama Santri, Asrama, Halaqoh, Juz 1 - 5/i)).toBeVisible();
+
+      // Uji unduh template dan periksa nama berkas
+      const downloadPromise = page.waitForEvent('download');
+      await page.getByText(/Template Excel Nilai \(Tahap 1\)/i).click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toContain('Khotmil_30_Juz_Tahap_1');
     });
   });
 });
