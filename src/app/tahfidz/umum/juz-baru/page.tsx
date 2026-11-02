@@ -6,7 +6,7 @@ export default function JuzBaruPage() {
     <SetoranModule
       tipe="juz_baru"
       judul="Setoran Juz Baru (Pembimbing Halaqoh)"
-      deskripsi="Rekap perolehan tambahan hafalan Juz Baru santri per bulan (Januari s.d. Desember) kepada pembimbing halaqoh."
+      deskripsi="Pencatatan dan pemantauan proses setoran hafalan Juz Baru santri berbasis halaman (1 Juz = 20 Halaman) kepada pembimbing halaqoh."
     />
   );
 }

@@ -106,9 +106,35 @@ export interface SetoranRecord {
   tanggal: string;
   tipe: TipeSetoran;
   jumlah_juz_tambahan: number;
+  jumlah_halaman?: number;
   catatan: string | null;
   penginput: string | null;
   created_at: string;
+}
+
+export interface RiwayatSetoranItem {
+  id: string;
+  santri_id: string;
+  tanggal: string;
+  tipe: TipeSetoran;
+  jumlah_halaman: number;
+  jumlah_juz_tambahan: number;
+  catatan: string | null;
+  penginput: string | null;
+  created_at: string;
+  no: number;
+  totalHalamanKumulatif: number;
+  rincianStatus: string;
+}
+
+export function formatHalamanToJuzStatus(totalHalaman: number): string {
+  const safeHalaman = Math.max(0, Math.round(totalHalaman));
+  const juz = Math.floor(safeHalaman / 20);
+  const sisa = safeHalaman % 20;
+  if (juz === 0) {
+    return `Juz 0 Halaman ${sisa}`;
+  }
+  return `${juz} Juz Halaman ${sisa}`;
 }
 
 export interface SetoranBulananRow {
@@ -136,6 +162,7 @@ export interface SetoranBulananRow {
   nov: number;
   des: number;
   total_setoran: number;
+  total_halaman?: number;
 }
 
 export interface KhotmilNilaiRecord {

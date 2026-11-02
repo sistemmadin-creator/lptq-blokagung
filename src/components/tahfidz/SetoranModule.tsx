@@ -27,6 +27,8 @@ import {
   Sparkles,
   Calendar,
   AlertTriangle,
+  Trash2,
+  History,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import { createClient } from "@/lib/supabase/client";
@@ -38,6 +40,9 @@ import {
   deleteAllSetoran,
   saveSetoranBulanDirect,
   fetchCurrentUserProfile,
+  fetchRiwayatSetoranHalaman,
+  insertSetoranHalaman,
+  deleteSetoranLogById,
 } from "@/lib/services/tahfidz-service";
 import { canUserEdit } from "@/lib/services/user-permission-service";
 import type { Profile, ModuleKey } from "@/types/database";
@@ -46,10 +51,12 @@ import {
   HALAQOH_BAGIAN_LIST,
   HALAQOH_KELAS_LIST,
   PEMETAAN_HALAQOH_KELAS,
+  formatHalamanToJuzStatus,
   type HalaqohBagian,
   type Santri,
   type SetoranBulananRow,
   type TipeSetoran,
+  type RiwayatSetoranItem,
 } from "@/types/database";
 import { DataTable } from "@/components/ui/DataTable";
 import { HalaqohBadge } from "@/components/ui/Badges";
@@ -101,7 +108,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   const [cardPage, setCardPage] = useState(1);
   const cardPageSize = 6;
 
-  // Status Modal Detail Evaluasi & Naik Halaqoh (Khusus Evaluasi)
+  // Status Modal Detail Evaluasi & Naik Halaqoh
   const [evaluasiModalOpen, setEvaluasiModalOpen] = useState(false);
   const [selectedEvaluasiSantri, setSelectedEvaluasiSantri] = useState<SetoranBulananRow | null>(null);
   const [naikHalaqohModalOpen, setNaikHalaqohModalOpen] = useState(false);
@@ -115,6 +122,97 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     badge: string;
     isDanger: boolean;
   } | null>(null);
+
+  // State untuk Riwayat Setor Per Halaman (Khusus Juz Baru)
+  const [riwayatList, setRiwayatList] = useState<RiwayatSetoranItem[]>([]);
+  const [loadingRiwayat, setLoadingRiwayat] = useState(false);
+  const [inputHalaman, setInputHalaman] = useState<number | "">("");
+  const [inputTanggal, setInputTanggal] = useState<string>(toLocalIsoDate(now));
+  const [inputCatatan, setInputCatatan] = useState<string>("");
+  const [isSavingSetoranHalaman, setIsSavingSetoranHalaman] = useState(false);
+
+  const loadRiwayat = useCallback(
+    async (santriId: string) => {
+      setLoadingRiwayat(true);
+      try {
+        const data = await fetchRiwayatSetoranHalaman(santriId, tipe);
+        setRiwayatList(data);
+      } catch (err: any) {
+        console.error("Gagal memuat riwayat setor:", err);
+      } finally {
+        setLoadingRiwayat(false);
+      }
+    },
+    [tipe]
+  );
+
+  useEffect(() => {
+    if (evaluasiModalOpen && selectedEvaluasiSantri) {
+      loadRiwayat(selectedEvaluasiSantri.santri_id);
+      setInputHalaman("");
+      setInputCatatan("");
+      setInputTanggal(toLocalIsoDate(new Date()));
+    }
+  }, [evaluasiModalOpen, selectedEvaluasiSantri, loadRiwayat]);
+
+  const handleTambahHalaman = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEvaluasiSantri) return;
+    const hlm = Number(inputHalaman);
+    if (!hlm || hlm <= 0) {
+      showToast("error", "Jumlah halaman harus diisi angka minimal 1.");
+      return;
+    }
+
+    const currentTotalHlm =
+      riwayatList.length > 0
+        ? riwayatList[riwayatList.length - 1].totalHalamanKumulatif
+        : (selectedEvaluasiSantri.total_halaman || Math.round(selectedEvaluasiSantri.total_setoran * 20));
+
+    if (currentTotalHlm + hlm > 600) {
+      const sisaBisa = Math.max(0, 600 - currentTotalHlm);
+      showToast(
+        "error",
+        `Batas maksimal hafalan Al-Qur'an adalah 30 Juz (600 Halaman). Santri sudah mencapai ${currentTotalHlm} halaman (sisa yang dapat ditambah: ${sisaBisa} halaman).`
+      );
+      return;
+    }
+
+    setIsSavingSetoranHalaman(true);
+    try {
+      await insertSetoranHalaman({
+        santri_id: selectedEvaluasiSantri.santri_id,
+        tanggal: inputTanggal || toLocalIsoDate(),
+        tipe: "juz_baru",
+        jumlah_halaman: hlm,
+        catatan: inputCatatan.trim() || undefined,
+      });
+
+      showToast("success", `Alhamdulillah, setoran +${hlm} halaman berhasil disimpan.`);
+      setInputHalaman("");
+      setInputCatatan("");
+      await loadRiwayat(selectedEvaluasiSantri.santri_id);
+      await loadData();
+    } catch (err: any) {
+      showToast("error", err.message || "Gagal menyimpan setoran halaman.");
+    } finally {
+      setIsSavingSetoranHalaman(false);
+    }
+  };
+
+  const handleDeleteRiwayatItem = async (itemId: string, itemHlm: number) => {
+    if (!confirm(`Hapus catatan setoran +${itemHlm} halaman ini?`)) return;
+    try {
+      await deleteSetoranLogById(itemId);
+      showToast("success", "Catatan setoran berhasil dihapus.");
+      if (selectedEvaluasiSantri) {
+        await loadRiwayat(selectedEvaluasiSantri.santri_id);
+      }
+      await loadData();
+    } catch (err: any) {
+      showToast("error", err.message || "Gagal menghapus catatan setoran.");
+    }
+  };
 
   const [santriOptions, setSantriOptions] = useState<Santri[]>([]);
   const [rows, setRows] = useState<SetoranBulananRow[]>([]);
@@ -386,26 +484,46 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   };
 
   const handleExportExcel = () => {
-    const formatted = rows.map((r, idx) => ({
-      No: idx + 1,
-      Kode: r.kode,
-      Nama: r.nama_lengkap,
-      Kamar: formatKamarDisplay(r.kode_kamar, r.kamar),
-      Halaqoh: r.halaqoh,
-      Jan: r.jan,
-      Feb: r.feb,
-      Mar: r.mar,
-      Apr: r.apr,
-      Mei: r.mei,
-      Jun: r.jun,
-      Jul: r.jul,
-      Agu: r.agu,
-      Sep: r.sep,
-      Okt: r.okt,
-      Nov: r.nov,
-      Des: r.des,
-      "Total Setoran": r.total_setoran,
-    }));
+    const formatted = rows.map((r, idx) => {
+      const totalHlm =
+        r.total_halaman !== undefined
+          ? r.total_halaman
+          : Math.round(r.total_setoran * 20);
+
+      if (tipe === "juz_baru") {
+        return {
+          No: idx + 1,
+          Kode: r.kode,
+          Nama: r.nama_lengkap,
+          Status: formatHalamanToJuzStatus(totalHlm),
+          "Total Halaman": totalHlm,
+          Kamar: formatKamarDisplay(r.kode_kamar, r.kamar),
+          Halaqoh: r.halaqoh,
+          "Proses Target (3 Juz)": `${totalHlm}/60 Hlm (${Math.min(100, Math.round((totalHlm / 60) * 100))}%)`,
+        };
+      }
+
+      return {
+        No: idx + 1,
+        Kode: r.kode,
+        Nama: r.nama_lengkap,
+        Kamar: formatKamarDisplay(r.kode_kamar, r.kamar),
+        Halaqoh: r.halaqoh,
+        Jan: r.jan,
+        Feb: r.feb,
+        Mar: r.mar,
+        Apr: r.apr,
+        Mei: r.mei,
+        Jun: r.jun,
+        Jul: r.jul,
+        Agu: r.agu,
+        Sep: r.sep,
+        Okt: r.okt,
+        Nov: r.nov,
+        Des: r.des,
+        "Total Setoran": r.total_setoran,
+      };
+    });
     exportJsonToExcel(formatted, `Rekap_${tipe}_${tahun}`, "RekapSetoran");
     showToast("success", "Rekap setoran berhasil diekspor ke Excel.");
   };
@@ -539,6 +657,31 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         </button>
       ),
     },
+    ...(tipe === "juz_baru"
+      ? [
+          {
+            id: "status_hafalan",
+            header: "STATUS",
+            cell: ({ row }: { row: { original: SetoranBulananRow } }) => {
+              const totalHlm =
+                row.original.total_halaman !== undefined
+                  ? row.original.total_halaman
+                  : Math.round(row.original.total_setoran * 20);
+              const statusStr = formatHalamanToJuzStatus(totalHlm);
+              return (
+                <div className="flex flex-col whitespace-nowrap">
+                  <span className="font-mono font-bold text-xs text-emerald-900 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1 rounded-lg inline-block shadow-xs">
+                    {statusStr}
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 pl-0.5">
+                    Total: {totalHlm} Halaman
+                  </span>
+                </div>
+              );
+            },
+          },
+        ]
+      : []),
     {
       id: "kamar",
       header: "KAMAR",
@@ -555,56 +698,129 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         <HalaqohBadge kelas={row.original.halaqoh_kelas} bagian={row.original.halaqoh_bagian} />
       ),
     },
-    ...monthKeys.map((m, mIdx) => ({
-      id: String(m.key),
-      header: m.label,
-      cell: ({ row }: { row: { original: SetoranBulananRow } }) => {
-        const val = Number(row.original[m.key] ?? 0);
-        return (
-          <div className="flex items-center justify-center p-0">
-            <input
-              type="number"
-              step="0.05"
-              min="0"
-              max="30"
-              key={`${row.original.santri_id}_${String(m.key)}_${val}`}
-              defaultValue={val > 0 ? val : ""}
-              placeholder="-"
-              onBlur={(e) => {
-                const text = e.target.value.trim();
-                const num = text === "" ? 0 : Number(text);
-                if (num !== val) {
-                  handleDirectMonthChange(
-                    row.original.santri_id,
-                    mIdx + 1,
-                    num,
-                    row.original.nama_lengkap
-                  );
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  (e.target as HTMLInputElement).blur();
-                }
-              }}
-              className="h-7 w-11 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
-              title={`Isi/ubah setoran ${row.original.nama_lengkap} bulan ${m.label}`}
-            />
-          </div>
-        );
-      },
-    })),
-    {
-      accessorKey: "total_setoran",
-      header: "TOTAL SETORAN",
-      cell: ({ row }) => (
-        <span className="font-mono font-bold text-emerald-900 dark:text-emerald-300">
-          {row.original.total_setoran} Juz
-        </span>
-      ),
-    },
-    ...(tipe === "evaluasi"
+    ...(tipe === "juz_baru"
       ? [
+          {
+            id: "proses",
+            header: "PROSES",
+            cell: ({ row }: { row: { original: SetoranBulananRow } }) => {
+              const totalHlm =
+                row.original.total_halaman !== undefined
+                  ? row.original.total_halaman
+                  : Math.round(row.original.total_setoran * 20);
+              const targetHalaqohHlm = 60; // 3 Juz = 60 Halaman
+              const isTargetMet = totalHlm >= targetHalaqohHlm;
+              const progressPct = Math.min(100, Math.round((totalHlm / targetHalaqohHlm) * 100));
+
+              return (
+                <div className="flex items-center gap-3 min-w-[240px] max-w-[320px]">
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between text-[11px] font-mono mb-1">
+                      <span className="font-bold text-slate-700 dark:text-slate-300">
+                        {totalHlm} / {targetHalaqohHlm} Hlm
+                      </span>
+                      <span
+                        className={
+                          isTargetMet
+                            ? "font-bold text-emerald-600 dark:text-emerald-400"
+                            : "text-slate-500 dark:text-slate-400 font-medium"
+                        }
+                      >
+                        {progressPct}%
+                      </span>
+                    </div>
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                      <div
+                        className={`h-full transition-all duration-300 ${
+                          isTargetMet ? "bg-emerald-600" : "bg-emerald-500"
+                        }`}
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {isTargetMet ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedNaikHalaqohSantri(row.original);
+                        setNaikHalaqohModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 transition shrink-0 shadow-xs"
+                      title="Target 3 Juz (60 Hlm) terpenuhi! Klik untuk Kenaikan Halaqoh"
+                    >
+                      <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>Naik</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedEvaluasiSantri(row.original);
+                        setEvaluasiModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition shrink-0 shadow-xs"
+                      title="Buka detail proses & riwayat setoran santri"
+                    >
+                      <Plus className="h-3 w-3 text-emerald-600" />
+                      <span>Setor</span>
+                    </button>
+                  )}
+                </div>
+              );
+            },
+          },
+        ]
+      : [
+          ...monthKeys.map((m, mIdx) => ({
+            id: String(m.key),
+            header: m.label,
+            cell: ({ row }: { row: { original: SetoranBulananRow } }) => {
+              const val = Number(row.original[m.key] ?? 0);
+              return (
+                <div className="flex items-center justify-center p-0">
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="30"
+                    key={`${row.original.santri_id}_${String(m.key)}_${val}`}
+                    defaultValue={val > 0 ? val : ""}
+                    placeholder="-"
+                    onBlur={(e) => {
+                      const text = e.target.value.trim();
+                      const num = text === "" ? 0 : Number(text);
+                      if (num !== val) {
+                        handleDirectMonthChange(
+                          row.original.santri_id,
+                          mIdx + 1,
+                          num,
+                          row.original.nama_lengkap
+                        );
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    className="h-7 w-11 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
+                    title={`Isi/ubah setoran ${row.original.nama_lengkap} bulan ${m.label}`}
+                  />
+                </div>
+              );
+            },
+          })),
+          {
+            accessorKey: "total_setoran",
+            header: "TOTAL SETORAN",
+            cell: ({ row }: { row: { original: SetoranBulananRow } }) => (
+              <span className="font-mono font-bold text-emerald-900 dark:text-emerald-300">
+                {row.original.total_setoran} Juz
+              </span>
+            ),
+          },
           {
             id: "status_evaluasi",
             header: "STATUS TARGET",
@@ -643,8 +859,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
               );
             },
           },
-        ]
-      : []),
+        ]),
   ];
 
   const handleDeleteSelected = async (selectedIds: string[]) => {
@@ -923,21 +1138,87 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                           <tr className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20 text-slate-600 dark:text-slate-400">
                             <th className="px-1.5 py-1.5 font-semibold w-7 text-center text-slate-400 text-[11px]">No</th>
                             <th className="px-1.5 py-1.5 font-semibold text-slate-700 dark:text-slate-300 text-[11px]">Nama Santri</th>
-                            <th className="px-1 py-1.5 font-semibold text-center w-10 text-[11px]">Kamar</th>
-                            {cardMonthKeys.map((m) => (
-                              <th key={String(m.key)} className="px-0.5 py-1.5 text-center font-semibold w-10 text-[11px]">
-                                {m.label}
-                              </th>
-                            ))}
-                            <th className="px-1 py-1.5 font-semibold text-center w-11 text-[11px]">Total</th>
-                            {tipe === "evaluasi" && (
-                              <th className="no-print px-1.5 py-1.5 font-semibold text-center w-24 text-[11px]">Aksi</th>
+                            {tipe === "juz_baru" ? (
+                              <>
+                                <th className="px-1.5 py-1.5 font-semibold text-center text-[11px]">Status</th>
+                                <th className="px-1 py-1.5 font-semibold text-center w-10 text-[11px]">Kamar</th>
+                                <th className="px-1.5 py-1.5 font-semibold text-center text-[11px] w-28">Proses</th>
+                              </>
+                            ) : (
+                              <>
+                                <th className="px-1 py-1.5 font-semibold text-center w-10 text-[11px]">Kamar</th>
+                                {cardMonthKeys.map((m) => (
+                                  <th key={String(m.key)} className="px-0.5 py-1.5 text-center font-semibold w-10 text-[11px]">
+                                    {m.label}
+                                  </th>
+                                ))}
+                                <th className="px-1 py-1.5 font-semibold text-center w-11 text-[11px]">Total</th>
+                                <th className="no-print px-1.5 py-1.5 font-semibold text-center w-24 text-[11px]">Aksi</th>
+                              </>
                             )}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                           {grp.rows.map((r, idx) => {
-                            const isTargetMet = r.total_setoran >= 3;
+                            const totalHlm =
+                              r.total_halaman !== undefined
+                                ? r.total_halaman
+                                : Math.round(r.total_setoran * 20);
+                            const isTargetMet = tipe === "juz_baru" ? totalHlm >= 60 : r.total_setoran >= 3;
+                            const progressPct = Math.min(100, Math.round((totalHlm / 60) * 100));
+
+                            if (tipe === "juz_baru") {
+                              return (
+                                <tr key={r.santri_id} className="transition hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                  <td className="px-1.5 py-1.5 font-mono text-slate-400 text-center text-[11px]">{idx + 1}</td>
+                                  <td className="px-1.5 py-1.5 font-semibold min-w-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedEvaluasiSantri(r);
+                                        setEvaluasiModalOpen(true);
+                                      }}
+                                      className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400 truncate max-w-[110px] sm:max-w-[130px] block text-xs"
+                                      title={`Klik detail Setoran: ${r.nama_lengkap}`}
+                                    >
+                                      {r.nama_lengkap}
+                                    </button>
+                                  </td>
+                                  <td className="px-1.5 py-1.5 text-center font-mono font-bold text-emerald-900 dark:text-emerald-300 text-[10px] whitespace-nowrap">
+                                    {formatHalamanToJuzStatus(totalHlm)}
+                                  </td>
+                                  <td className="px-1 py-1.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300 text-[11px]">
+                                    {formatKamarDisplay(r.kode_kamar, r.kamar)}
+                                  </td>
+                                  <td className="px-1.5 py-1.5 text-center">
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="flex-1">
+                                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                                          <div
+                                            className={`h-full ${isTargetMet ? "bg-emerald-600" : "bg-emerald-500"}`}
+                                            style={{ width: `${progressPct}%` }}
+                                          />
+                                        </div>
+                                      </div>
+                                      <span className="font-mono text-[9px] text-slate-500 whitespace-nowrap">{totalHlm}/60</span>
+                                      {isTargetMet && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedNaikHalaqohSantri(r);
+                                            setNaikHalaqohModalOpen(true);
+                                          }}
+                                          className="rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-bold text-emerald-800 hover:bg-emerald-200"
+                                        >
+                                          Naik
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+
                             return (
                               <tr key={r.santri_id} className="transition hover:bg-slate-50 dark:hover:bg-slate-800/50">
                                 <td className="px-1.5 py-1 font-mono text-slate-400 text-center text-[11px]">{idx + 1}</td>
@@ -949,7 +1230,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                                       setEvaluasiModalOpen(true);
                                     }}
                                     className="text-left font-semibold text-slate-800 hover:text-emerald-800 hover:underline dark:text-slate-100 dark:hover:text-emerald-400 truncate max-w-[110px] sm:max-w-[130px] block text-xs"
-                                    title={tipe === "evaluasi" ? `Klik detail Evaluasi: ${r.nama_lengkap}` : `Klik detail Setoran: ${r.nama_lengkap}`}
+                                    title={`Klik detail Evaluasi: ${r.nama_lengkap}`}
                                   >
                                     {r.nama_lengkap}
                                   </button>
@@ -996,38 +1277,36 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                                 <td className="px-1 py-1 text-center font-mono font-bold text-emerald-900 dark:text-emerald-300 whitespace-nowrap text-[11px]">
                                   {r.total_setoran} <span className="text-[10px] text-emerald-600 font-normal">Jz</span>
                                 </td>
-                                {tipe === "evaluasi" && (
-                                  <td className="no-print px-1.5 py-1 text-center">
-                                    <div className="inline-flex items-center gap-1 whitespace-nowrap">
-                                      {isTargetMet ? (
-                                        <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                          <CheckCircle2 className="h-2.5 w-2.5" />
-                                          <span>Selesai</span>
-                                        </span>
-                                      ) : (
-                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                                          Proses
-                                        </span>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setSelectedNaikHalaqohSantri(r);
-                                          setNaikHalaqohModalOpen(true);
-                                        }}
-                                        className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold transition ${
-                                          isTargetMet
-                                            ? "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-                                            : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                                        }`}
-                                        title="Naikkan ke Halaqoh Baru"
-                                      >
-                                        <TrendingUp className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
-                                        <span>Naik</span>
-                                      </button>
-                                    </div>
-                                  </td>
-                                )}
+                                <td className="no-print px-1.5 py-1 text-center">
+                                  <div className="inline-flex items-center gap-1 whitespace-nowrap">
+                                    {isTargetMet ? (
+                                      <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                        <CheckCircle2 className="h-2.5 w-2.5" />
+                                        <span>Selesai</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                        Proses
+                                      </span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedNaikHalaqohSantri(r);
+                                        setNaikHalaqohModalOpen(true);
+                                      }}
+                                      className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold transition ${
+                                        isTargetMet
+                                          ? "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                          : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                                      }`}
+                                      title="Naikkan ke Halaqoh Baru"
+                                    >
+                                      <TrendingUp className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
+                                      <span>Naik</span>
+                                    </button>
+                                  </div>
+                                </td>
                               </tr>
                             );
                           })}
@@ -1358,7 +1637,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
       )}
 
       {/* ========================================================================= */}
-      {/* POP-UP 3: DETAIL EVALUASI HAFALAN SANTRI (GAMBAR 4)                       */}
+      {/* POP-UP 3: DETAIL EVALUASI HAFALAN & SETORAN JUZ BARU                      */}
       {/* ========================================================================= */}
       {evaluasiModalOpen && selectedEvaluasiSantri && (
         <div
@@ -1367,7 +1646,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
           aria-modal="true"
           aria-labelledby="modal-evaluasi-title"
         >
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+          <div className={`w-full ${tipe === "juz_baru" ? "max-w-2xl" : "max-w-lg"} max-h-[92vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900`}>
             {/* Header Dialog */}
             <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
@@ -1415,17 +1694,28 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                 <div className="mt-3 flex items-center justify-between border-t border-slate-200/80 pt-2.5 text-xs dark:border-slate-700/60">
                   <span className="text-slate-500">Target Halaqoh Ini:</span>
                   <span className="font-bold text-slate-800 dark:text-slate-200">
-                    {PEMETAAN_HALAQOH_KELAS[selectedEvaluasiSantri.halaqoh_kelas] || "-"} (Minimal 3 Juz)
+                    {PEMETAAN_HALAQOH_KELAS[selectedEvaluasiSantri.halaqoh_kelas] || "-"} (Minimal 3 Juz / 60 Halaman)
                   </span>
                 </div>
               </div>
 
               {/* Status & Progress Target */}
               {(() => {
+                const totalHlm =
+                  tipe === "juz_baru"
+                    ? riwayatList.length > 0
+                      ? riwayatList[riwayatList.length - 1].totalHalamanKumulatif
+                      : (selectedEvaluasiSantri.total_halaman !== undefined
+                          ? selectedEvaluasiSantri.total_halaman
+                          : Math.round(selectedEvaluasiSantri.total_setoran * 20))
+                    : Math.round(selectedEvaluasiSantri.total_setoran * 20);
+
                 const targetMin = 3;
-                const safeTotal = Math.min(30, selectedEvaluasiSantri.total_setoran);
-                const isCompleted = safeTotal >= targetMin;
-                const progressPct = Math.min(100, Math.round((safeTotal / targetMin) * 100));
+                const targetHlm = 60;
+                const safeTotalJuz = Math.min(30, Number((totalHlm / 20).toFixed(2)));
+                const isCompleted = tipe === "juz_baru" ? totalHlm >= targetHlm : selectedEvaluasiSantri.total_setoran >= targetMin;
+                const progressPct = Math.min(100, Math.round((totalHlm / targetHlm) * 100));
+                const statusStr = formatHalamanToJuzStatus(totalHlm);
 
                 return (
                   <div className="space-y-3">
@@ -1434,7 +1724,9 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                         {tipe === "evaluasi" ? "Capaian Setoran Evaluasi:" : "Capaian Setoran Juz Baru:"}
                       </span>
                       <span className="font-mono font-bold text-emerald-800 dark:text-emerald-300">
-                        {safeTotal} / {targetMin} Juz ({progressPct}%)
+                        {tipe === "juz_baru"
+                          ? `${statusStr} / 3 Juz (${progressPct}%)`
+                          : `${selectedEvaluasiSantri.total_setoran} / ${targetMin} Juz (${progressPct}%)`}
                       </span>
                     </div>
 
@@ -1453,29 +1745,27 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                           <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                           <div className="text-xs">
                             <p className="font-bold text-emerald-900 dark:text-emerald-200">
-                              {tipe === "evaluasi" ? "Target Halaqoh Selesai!" : "Target Hafalan Tercapai!"}
+                              {tipe === "evaluasi" ? "Target Halaqoh Selesai!" : "Target Hafalan Tercapai (100%)!"}
                             </p>
                             <p className="text-emerald-700 dark:text-emerald-400">
                               {tipe === "evaluasi"
                                 ? "Santri telah memenuhi target hafalan dan siap dinaikkan ke halaqoh berikutnya."
-                                : `Santri telah mencapai total ${safeTotal} Juz hafalan baru.`}
+                                : `Santri telah mencapai total ${statusStr} (${totalHlm} Halaman) dan siap dinaikkan ke halaqoh berikutnya.`}
                             </p>
                           </div>
                         </div>
 
-                        {tipe === "evaluasi" && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
-                              setNaikHalaqohModalOpen(true);
-                            }}
-                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-emerald-800 px-3.5 py-2 text-xs font-bold text-white shadow hover:bg-emerald-900 transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
-                          >
-                            <TrendingUp className="h-4 w-4" />
-                            <span>Naik Halaqoh</span>
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
+                            setNaikHalaqohModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-emerald-800 px-3.5 py-2 text-xs font-bold text-white shadow hover:bg-emerald-900 transition dark:bg-emerald-700 dark:hover:bg-emerald-800 shrink-0"
+                        >
+                          <TrendingUp className="h-4 w-4" />
+                          <span>Naik Halaqoh</span>
+                        </button>
                       </div>
                     ) : (
                       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-800/60 dark:bg-amber-950/30">
@@ -1484,86 +1774,243 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                             {tipe === "evaluasi" ? "Masih dalam proses hafalan" : "Masih dalam proses setoran juz baru"}
                           </p>
                           <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                            Kurang {(targetMin - safeTotal).toFixed(2)} Juz untuk menyelesaikan target halaqoh ini.
+                            {tipe === "juz_baru"
+                              ? `Kurang ${formatHalamanToJuzStatus(Math.max(0, targetHlm - totalHlm))} (${Math.max(0, targetHlm - totalHlm)} Hlm) untuk target 3 Juz halaqoh ini.`
+                              : `Kurang ${(targetMin - safeTotalJuz).toFixed(2)} Juz untuk menyelesaikan target halaqoh ini.`}
                           </p>
                         </div>
 
-                        {tipe === "evaluasi" && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
-                              setNaikHalaqohModalOpen(true);
-                            }}
-                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300"
-                            title="Buka opsi kenaikan halaqoh manual oleh penguji"
-                          >
-                            <TrendingUp className="h-3.5 w-3.5" />
-                            <span>Naik Halaqoh Manual</span>
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedNaikHalaqohSantri(selectedEvaluasiSantri);
+                            setNaikHalaqohModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300 shrink-0"
+                          title="Buka opsi kenaikan halaqoh manual oleh pembimbing/penguji"
+                        >
+                          <TrendingUp className="h-3.5 w-3.5" />
+                          <span>Naik Halaqoh Manual</span>
+                        </button>
                       </div>
                     )}
                   </div>
                 );
               })()}
 
-              {/* Rincian Evaluasi Bulanan (Jan - Des) */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Rincian Setoran Bulanan ({tahun}):
-                  </p>
-                  <span className="text-[11px] text-slate-400">
-                    Dapat diisi langsung & otomatis simpan
-                  </span>
-                </div>
-                <div className="grid grid-cols-6 gap-2 text-center text-xs">
-                  {monthKeys.map((m, mIdx) => {
-                    const val = Number(selectedEvaluasiSantri[m.key] ?? 0);
-                    return (
-                      <div
-                        key={String(m.key)}
-                        className={`rounded-xl p-2 border transition ${
-                          val > 0
-                            ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 font-bold"
-                            : "border-slate-200 bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-800/30"
-                        }`}
-                      >
-                        <div className="text-[10px] font-bold uppercase text-slate-500 mb-1">{m.label}</div>
-                        <input
-                          type="number"
-                          step="0.05"
-                          min="0"
-                          max="30"
-                          key={`${selectedEvaluasiSantri.santri_id}_${String(m.key)}_${val}`}
-                          defaultValue={val > 0 ? val : ""}
-                          placeholder="-"
-                          onBlur={(e) => {
-                            const text = e.target.value.trim();
-                            const num = text === "" ? 0 : Number(text);
-                            if (num !== val) {
-                              handleDirectMonthChange(
-                                selectedEvaluasiSantri.santri_id,
-                                mIdx + 1,
-                                num,
-                                selectedEvaluasiSantri.nama_lengkap
-                              );
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              (e.target as HTMLInputElement).blur();
-                            }
-                          }}
-                          className="w-full h-8 text-center font-mono text-sm font-bold bg-white/70 dark:bg-slate-900/70 rounded-lg border border-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-700"
-                          title={`Ubah setoran bulan ${m.label}`}
-                        />
+              {/* KONTEN DETAIL: JUZ BARU (PROSES SETORAN) vs EVALUASI (BULANAN) */}
+              {tipe === "juz_baru" ? (
+                <div className="space-y-4 pt-2">
+                  <div className="border-t border-slate-200/80 dark:border-slate-800 pt-3">
+                    <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 mb-1">
+                      Proses Setoran
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Input pertambahan halaman setoran santri. Sistem otomatis mengalkulasi capaian Juz & Halaman secara kumulatif.
+                    </p>
+                  </div>
+
+                  {/* Form Input Tambah Halaman */}
+                  {canEdit && (
+                    <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-4 dark:border-emerald-800/60 dark:bg-emerald-950/20">
+                      <form onSubmit={handleTambahHalaman} className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                          <div className="sm:col-span-4">
+                            <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                              Tanggal Setor
+                            </label>
+                            <input
+                              type="date"
+                              value={inputTanggal}
+                              onChange={(e) => setInputTanggal(e.target.value)}
+                              className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-mono text-slate-800 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                              required
+                            />
+                          </div>
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                              Tambah Halaman <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="600"
+                              step="1"
+                              placeholder="1, 2, 5, 13..."
+                              value={inputHalaman}
+                              onChange={(e) =>
+                                setInputHalaman(e.target.value === "" ? "" : Number(e.target.value))
+                              }
+                              className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-mono font-bold text-slate-800 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                              required
+                            />
+                          </div>
+                          <div className="sm:col-span-5">
+                            <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                              Catatan (Opsional)
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Surat / ayat..."
+                              value={inputCatatan}
+                              onChange={(e) => setInputCatatan(e.target.value)}
+                              className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-800 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 italic">
+                            *Setiap 20 halaman diakumulasi menjadi 1 Juz
+                          </span>
+                          <button
+                            type="submit"
+                            disabled={isSavingSetoranHalaman || inputHalaman === ""}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-800 px-4 py-2 text-xs font-bold text-white shadow hover:bg-emerald-900 disabled:opacity-50 transition dark:bg-emerald-700 dark:hover:bg-emerald-800"
+                          >
+                            {isSavingSetoranHalaman ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Plus className="h-3.5 w-3.5" />
+                            )}
+                            <span>Simpan Setoran</span>
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+
+                  {/* Tabel Riwayat Setor */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <History className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
+                        <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                          Riwayat Setor
+                        </h4>
                       </div>
-                    );
-                  })}
+                      <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                        {riwayatList.length} Catatan
+                      </span>
+                    </div>
+
+                    {loadingRiwayat ? (
+                      <div className="flex items-center justify-center p-8 text-slate-400 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <Loader2 className="h-5 w-5 animate-spin mr-2 text-emerald-600" />
+                        <span className="text-xs">Memuat riwayat setoran...</span>
+                      </div>
+                    ) : riwayatList.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center text-xs text-slate-400 dark:border-slate-800 dark:bg-slate-800/20">
+                        Belum ada riwayat setoran. Masukkan jumlah halaman pada formulir di atas untuk memulai.
+                      </div>
+                    ) : (
+                      <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="sticky top-0 bg-slate-100/95 dark:bg-slate-800/95 backdrop-blur border-b border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-semibold">
+                            <tr>
+                              <th className="px-3 py-2 text-center w-12 font-mono text-[11px]">No</th>
+                              <th className="px-3 py-2 text-[11px]">Tanggal</th>
+                              <th className="px-3 py-2 text-center text-[11px]">Tambah Halaman</th>
+                              <th className="px-3 py-2 text-[11px]">Rincian Status</th>
+                              {canEdit && <th className="px-3 py-2 text-center w-12 text-[11px]">Aksi</th>}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900">
+                            {riwayatList.map((item) => (
+                              <tr key={item.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition">
+                                <td className="px-3 py-2 text-center font-mono text-slate-400 text-[11px]">{item.no}</td>
+                                <td className="px-3 py-2 font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                                  {item.tanggal}
+                                  {item.catatan && (
+                                    <span className="block text-[10px] text-slate-500 italic font-sans">{item.catatan}</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-center font-mono font-bold text-slate-800 dark:text-slate-200">
+                                  <span className="inline-block bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-[11px]">
+                                    +{item.jumlah_halaman} Halaman
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 font-mono font-bold text-emerald-800 dark:text-emerald-300 text-xs">
+                                  {item.rincianStatus}
+                                </td>
+                                {canEdit && (
+                                  <td className="px-3 py-2 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteRiwayatItem(item.id, item.jumlah_halaman)}
+                                      title="Hapus catatan setoran ini"
+                                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                /* Evaluasi Bulanan (Jan - Des) */
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Rincian Setoran Bulanan ({tahun}):
+                    </p>
+                    <span className="text-[11px] text-slate-400">
+                      Dapat diisi langsung & otomatis simpan
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-6 gap-2 text-center text-xs">
+                    {monthKeys.map((m, mIdx) => {
+                      const val = Number(selectedEvaluasiSantri[m.key] ?? 0);
+                      return (
+                        <div
+                          key={String(m.key)}
+                          className={`rounded-xl p-2 border transition ${
+                            val > 0
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 font-bold"
+                              : "border-slate-200 bg-white text-slate-400 dark:border-slate-800 dark:bg-slate-800/30"
+                          }`}
+                        >
+                          <div className="text-[10px] font-bold uppercase text-slate-500 mb-1">{m.label}</div>
+                          <input
+                            type="number"
+                            step="0.05"
+                            min="0"
+                            max="30"
+                            key={`${selectedEvaluasiSantri.santri_id}_${String(m.key)}_${val}`}
+                            defaultValue={val > 0 ? val : ""}
+                            placeholder="-"
+                            onBlur={(e) => {
+                              const text = e.target.value.trim();
+                              const num = text === "" ? 0 : Number(text);
+                              if (num !== val) {
+                                handleDirectMonthChange(
+                                  selectedEvaluasiSantri.santri_id,
+                                  mIdx + 1,
+                                  num,
+                                  selectedEvaluasiSantri.nama_lengkap
+                                );
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            className="w-full h-8 text-center font-mono text-sm font-bold bg-white/70 dark:bg-slate-900/70 rounded-lg border border-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-700"
+                            title={`Ubah setoran bulan ${m.label}`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800">

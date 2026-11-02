@@ -5,12 +5,14 @@ import type {
   JenisKhotmil,
   KhotmilNilaiRecord,
   Profile,
+  RiwayatSetoranItem,
   Santri,
   SesiAbsen,
   SetoranBulananRow,
   StatusAbsen,
   TipeSetoran,
 } from "@/types/database";
+import { formatHalamanToJuzStatus } from "@/types/database";
 
 const SANTRI_COLUMNS =
   "id, no_urut, kode, nama_lengkap, no_wa, blok, asrama, kode_kamar, kamar, halaqoh_kelas, halaqoh_bagian, halaqoh, created_at, updated_at";
@@ -523,20 +525,25 @@ export async function fetchSetoranBulananMerged(
   filter: Omit<SantriFilterParams, "page" | "pageSize">
 ): Promise<SetoranBulananRow[]> {
   const supabase = createClient();
-  const santriList = await fetchAllSantriFiltered(filter);
+  const [santriList, rekapResult, setoranHalamanResult] = await Promise.all([
+    fetchAllSantriFiltered(filter),
+    supabase
+      .from("v_setoran_bulanan")
+      .select(
+        "santri_id, jan, feb, mar, apr, mei, jun, jul, agu, sep, okt, nov, des, total_setoran"
+      )
+      .eq("tahun", tahun)
+      .eq("tipe", tipe),
+    supabase
+      .from("setoran")
+      .select("santri_id, jumlah_halaman, jumlah_juz_tambahan")
+      .eq("tipe", tipe),
+  ]);
 
-  const { data: rekapRows, error } = await supabase
-    .from("v_setoran_bulanan")
-    .select(
-      "santri_id, jan, feb, mar, apr, mei, jun, jul, agu, sep, okt, nov, des, total_setoran"
-    )
-    .eq("tahun", tahun)
-    .eq("tipe", tipe);
-
-  if (error) throw new Error(error.message);
+  if (rekapResult.error) throw new Error(rekapResult.error.message);
 
   const rekapMap = new Map<string, Record<string, number>>();
-  (rekapRows ?? []).forEach((r) => {
+  (rekapResult.data ?? []).forEach((r) => {
     rekapMap.set(r.santri_id, {
       jan: Number(r.jan ?? 0),
       feb: Number(r.feb ?? 0),
@@ -554,8 +561,26 @@ export async function fetchSetoranBulananMerged(
     });
   });
 
+  const totalHalamanMap = new Map<string, number>();
+  (setoranHalamanResult.data ?? []).forEach((row) => {
+    const hlm =
+      Number(row.jumlah_halaman) > 0
+        ? Number(row.jumlah_halaman)
+        : Math.round(Number(row.jumlah_juz_tambahan ?? 0) * 20);
+    totalHalamanMap.set(
+      row.santri_id,
+      (totalHalamanMap.get(row.santri_id) || 0) + hlm
+    );
+  });
+
   return santriList.map((s) => {
     const val = rekapMap.get(s.id);
+    const totalHlm = totalHalamanMap.get(s.id) || 0;
+    const calculatedTotalJuz =
+      tipe === "juz_baru"
+        ? Math.min(30, Number((totalHlm / 20).toFixed(2)))
+        : Math.min(30, val?.total_setoran ?? 0);
+
     return {
       santri_id: s.id,
       no_urut: s.no_urut,
@@ -580,9 +605,96 @@ export async function fetchSetoranBulananMerged(
       okt: val?.okt ?? 0,
       nov: val?.nov ?? 0,
       des: val?.des ?? 0,
-      total_setoran: Math.min(30, val?.total_setoran ?? 0),
+      total_setoran: calculatedTotalJuz,
+      total_halaman: totalHlm,
     };
   });
+}
+
+/**
+ * Mengambil seluruh riwayat setoran per halaman santri secara kronologis
+ * dan menghitung status kumulatif (Juz X Halaman Y) per baris secara otomatis.
+ */
+export async function fetchRiwayatSetoranHalaman(
+  santri_id: string,
+  tipe: TipeSetoran = "juz_baru"
+): Promise<RiwayatSetoranItem[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("setoran")
+    .select("id, santri_id, tanggal, tipe, jumlah_halaman, jumlah_juz_tambahan, catatan, penginput, created_at")
+    .eq("santri_id", santri_id)
+    .eq("tipe", tipe)
+    .order("tanggal", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) throw new Error(error.message);
+
+  let runningHalaman = 0;
+  return (data ?? []).map((row, idx) => {
+    const hlm =
+      Number(row.jumlah_halaman) > 0
+        ? Number(row.jumlah_halaman)
+        : Math.round(Number(row.jumlah_juz_tambahan ?? 0) * 20);
+    runningHalaman += hlm;
+
+    return {
+      id: row.id,
+      santri_id: row.santri_id,
+      tanggal: row.tanggal,
+      tipe: row.tipe as TipeSetoran,
+      jumlah_halaman: hlm,
+      jumlah_juz_tambahan: Number(row.jumlah_juz_tambahan ?? (hlm / 20)),
+      catatan: row.catatan,
+      penginput: row.penginput,
+      created_at: row.created_at,
+      no: idx + 1,
+      totalHalamanKumulatif: runningHalaman,
+      rincianStatus: formatHalamanToJuzStatus(runningHalaman),
+    };
+  });
+}
+
+/**
+ * Menyimpan setoran berbasis halaman (+N halaman).
+ * Mengisi jumlah_halaman dan jumlah_juz_tambahan (N / 20).
+ */
+export async function insertSetoranHalaman(payload: {
+  santri_id: string;
+  tanggal: string;
+  tipe?: TipeSetoran;
+  jumlah_halaman: number;
+  catatan?: string;
+}) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const tipe = payload.tipe || "juz_baru";
+  const jumlahHalaman = Math.max(1, Math.round(payload.jumlah_halaman));
+  const jumlahJuz = Number((jumlahHalaman / 20).toFixed(2));
+
+  const { error } = await supabase.from("setoran").insert({
+    santri_id: payload.santri_id,
+    tanggal: payload.tanggal,
+    tipe,
+    jumlah_halaman: jumlahHalaman,
+    jumlah_juz_tambahan: jumlahJuz,
+    catatan: payload.catatan?.trim() || null,
+    penginput: user?.id ?? null,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Menghapus 1 baris log setoran berdasarkan ID.
+ */
+export async function deleteSetoranLogById(id: string): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.from("setoran").delete().eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 /**
