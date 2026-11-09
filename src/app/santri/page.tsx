@@ -393,7 +393,10 @@ export default function SantriPage() {
   const onSubmit = async (values: SantriFormValues) => {
     try {
       // Kode unik dibuat otomatis di balik layar jika santri baru (tidak perlu diinput manual oleh user)
-      const autoKode = editingSantri?.kode || values.kode || `S-${Date.now().toString().slice(-6)}`;
+      const autoKode =
+        editingSantri?.kode ||
+        values.kode ||
+        `S-${Date.now().toString().slice(-6)}-${Math.floor(1000 + Math.random() * 9000)}`;
 
       await saveSantri(
         {

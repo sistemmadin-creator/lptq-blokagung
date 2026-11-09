@@ -174,6 +174,25 @@ export interface KhotmilNilaiRecord {
   nilai: number;
 }
 
+export interface KhotmilPesertaRecord {
+  id: string;
+  santri_id: string;
+  jenis: JenisKhotmil;
+  created_at: string;
+}
+
+export interface WaBroadcastLogRecord {
+  id: string;
+  santri_id: string;
+  nama_santri: string;
+  no_wa: string;
+  jenis: string;
+  tahap: string;
+  status: "success" | "failed" | "manual";
+  error?: string | null;
+  created_at: string;
+}
+
 export interface TahapConfig {
   tahap: number;
   label: string;

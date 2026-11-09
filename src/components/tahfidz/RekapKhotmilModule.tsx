@@ -146,16 +146,7 @@ export function RekapKhotmilModule({ jenis, judul, tahapList }: RekapKhotmilModu
         fetchPembimbingMap(),
       ]);
 
-      // Ambil daftar santri terdaftar dari localStorage jika ada
-      let localRegistered: string[] = [];
-      try {
-        const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
-        if (stored) localRegistered = JSON.parse(stored);
-      } catch (e) {
-        console.error("Gagal membaca localStorage:", e);
-      }
-
-      const registeredSet = new Set([...localRegistered, ...scoredSantriIds]);
+      const registeredSet = new Set(scoredSantriIds);
       const registeredSantri = allSantri.filter((s) => registeredSet.has(s.id));
 
       setSantriList(registeredSantri);

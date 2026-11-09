@@ -40,6 +40,7 @@ import {
   fetchSantriAbsensiDetail,
   fetchPembimbingMap,
   fetchKhotmilRegisteredSantriIds,
+  registerKhotmilSantriBatch,
   deleteKhotmilSantriRegistration,
   fetchSantriSetoranDetailTahun,
   fetchCurrentUserProfile,
@@ -182,18 +183,7 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
         fetchKhotmilRegisteredSantriIds(jenis),
       ]);
 
-      // Ambil daftar santri terdaftar dari localStorage
-      let localRegistered: string[] = [];
-      try {
-        const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
-        if (stored) {
-          localRegistered = JSON.parse(stored);
-        }
-      } catch (e) {
-        console.error("Gagal membaca local storage khotmil:", e);
-      }
-
-      const registeredSet = new Set([...localRegistered, ...scoredSantriIds]);
+      const registeredSet = new Set(scoredSantriIds);
 
       // Filter santri: HANYA yang sudah terdaftar yang tampil di tabel
       const filteredRegisteredSantri = allSantri.filter((s) => registeredSet.has(s.id));
@@ -312,30 +302,26 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
   };
 
   // Simpan pendaftaran santri ke Khotmil
-  const handleConfirmDaftar = () => {
+  const handleConfirmDaftar = async () => {
     if (selectedSantriIds.size === 0) {
       showToast("error", "Pilih minimal 1 santri untuk didaftarkan.");
       return;
     }
 
     try {
-      let currentReg: string[] = [];
-      const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
-      if (stored) currentReg = JSON.parse(stored);
+      const ids = Array.from(selectedSantriIds);
+      await registerKhotmilSantriBatch(ids, jenis);
 
-      const merged = Array.from(new Set([...currentReg, ...Array.from(selectedSantriIds)]));
-      localStorage.setItem(`lptq_registered_khotmil_${jenis}`, JSON.stringify(merged));
-
-      showToast("success", `Alhamdulillah! ${selectedSantriIds.size} santri berhasil didaftarkan ke ${judul}.`);
+      showToast("success", `Alhamdulillah! ${ids.length} santri berhasil didaftarkan ke ${judul}.`);
       setDaftarModalOpen(false);
       setSelectedSantriIds(new Set());
-      loadData();
+      await loadData();
     } catch (e: any) {
       showToast("error", "Gagal menyimpan pendaftaran santri: " + e.message);
     }
   };
 
-  // Keluarkan santri dari daftar Khotmil (Hapus nilai di Supabase & registrasi lokal)
+  // Keluarkan santri dari daftar Khotmil (Hapus nilai & registrasi di Supabase)
   const handleUnregisterSantri = async (santriId: string, namaSantri: string) => {
     if (
       !confirm(
@@ -346,18 +332,10 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
     }
 
     try {
-      // 1. Hapus catatan nilai santri dari Supabase
+      // 1. Hapus catatan registrasi & nilai santri dari Supabase
       await deleteKhotmilSantriRegistration(santriId, jenis);
 
-      // 2. Hapus ID santri dari localStorage
-      let currentReg: string[] = [];
-      const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
-      if (stored) currentReg = JSON.parse(stored);
-
-      const filtered = currentReg.filter((id) => id !== santriId);
-      localStorage.setItem(`lptq_registered_khotmil_${jenis}`, JSON.stringify(filtered));
-
-      // 3. Bersihkan nilaiMap lokal untuk santri ini
+      // 2. Bersihkan nilaiMap lokal untuk santri ini
       setNilaiMap((prev) => {
         const next = { ...prev };
         for (const j of currentTahapCfg.juzList) {
@@ -729,16 +707,12 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
         }
       }
 
-      // Daftarkan santri yang nilainya berhasil diimpor ke penyimpanan lokal
+      // Daftarkan santri yang nilainya berhasil diimpor ke database
       if (allRegisteredSantriIds.length > 0) {
         try {
-          let localRegistered: string[] = [];
-          const stored = localStorage.getItem(`lptq_registered_khotmil_${jenis}`);
-          if (stored) localRegistered = JSON.parse(stored);
-          const merged = Array.from(new Set([...localRegistered, ...allRegisteredSantriIds]));
-          localStorage.setItem(`lptq_registered_khotmil_${jenis}`, JSON.stringify(merged));
+          await registerKhotmilSantriBatch(allRegisteredSantriIds, jenis);
         } catch (e) {
-          console.error("Gagal memperbarui local storage khotmil:", e);
+          console.error("Gagal mendaftarkan peserta khotmil ke database:", e);
         }
       }
 

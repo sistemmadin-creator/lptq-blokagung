@@ -51,24 +51,56 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Data baris impor kosong." }, { status: 400 });
     }
 
+    // Ambil data santri eksisting untuk mencocokkan nama agar tidak terjadi data dobel / menumpuk
+    const { data: existingSantriData, error: fetchSantriErr } = await supabase
+      .from("santri")
+      .select("id, kode, nama_lengkap, halaqoh_kelas, halaqoh_bagian");
+
+    if (fetchSantriErr) {
+      return NextResponse.json({ error: fetchSantriErr.message }, { status: 400 });
+    }
+
+    const normalizeName = (str: string) =>
+      str.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+    const existingByName = new Map<string, { id: string; kode: string }>();
+    const existingByKode = new Map<string, { id: string; kode: string }>();
+
+    (existingSantriData || []).forEach((s) => {
+      if (s.nama_lengkap) {
+        existingByName.set(normalizeName(s.nama_lengkap), { id: s.id, kode: s.kode });
+      }
+      if (s.kode) {
+        existingByKode.set(s.kode.trim().toLowerCase(), { id: s.id, kode: s.kode });
+      }
+    });
+
     const validBagian = new Set(["A", "B", "C", "D", "E", "F"]);
     const payload = rawRows.map((row, index) => {
-      // Prioritaskan Kode Santri jika ada. Jika tidak ada (karena Kode Unik Santri telah
-      // dihapus dari template), gunakan auto-generate unik dan kolom 'Kode' diperlakukan sebagai kode_kamar.
-      let kode = String(row["Kode Santri"] ?? "").trim();
+      const nama_lengkap = String(row["Nama Lengkap"] ?? "").trim();
+      const normName = normalizeName(nama_lengkap);
+
+      // Cek apakah santri sudah ada di database berdasarkan Nama atau Kode Santri
+      let matched = existingByName.get(normName);
+
+      let explicitKode = String(row["Kode Santri"] ?? "").trim();
+      if (explicitKode && existingByKode.has(explicitKode.toLowerCase())) {
+        matched = existingByKode.get(explicitKode.toLowerCase());
+      }
+
+      let kode = matched ? matched.kode : explicitKode;
       let kode_kamar = String(row["Kode Kamar"] ?? "").trim();
 
-      if (!kode_kamar && row.Kode) {
+      if (!kode_kamar && row.Kode && !explicitKode) {
         kode_kamar = String(row.Kode).trim();
       }
 
       if (!kode) {
-        // Auto-generate kode unik santri (contoh: S-98123-1)
+        // Auto-generate kode unik santri yang aman dari tabrakan
         const randomPart = Math.floor(1000 + Math.random() * 9000);
         kode = `S-${Date.now().toString().slice(-6)}${index + 1}-${randomPart}`;
       }
 
-      const nama_lengkap = String(row["Nama Lengkap"] ?? "").trim();
       let blok = String(row.Blok ?? "").trim();
       let asrama = String(row.Asrama ?? "").trim();
 
@@ -115,7 +147,7 @@ export async function POST(request: Request) {
         );
       }
 
-      return {
+      const item: Record<string, unknown> = {
         kode,
         nama_lengkap,
         no_wa: no_wa || null,
@@ -126,6 +158,12 @@ export async function POST(request: Request) {
         halaqoh_kelas,
         halaqoh_bagian,
       };
+
+      if (matched?.id) {
+        item.id = matched.id;
+      }
+
+      return item;
     });
 
     let { error } = await supabase

@@ -335,25 +335,36 @@ export async function fetchAbsensiBulan(
   const lastDay = new Date(tahun, bulan, 0).getDate();
   const endDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
-  let query = supabase
-    .from("absensi")
-    .select("id, santri_id, tanggal, sesi, status, penginput")
-    .gte("tanggal", startDate)
-    .lte("tanggal", endDate);
+  const allRecords: AbsensiRecord[] = [];
+  const BATCH_SIZE = 1000;
 
-  if (sesi && sesi !== "semua") {
-    query = query.eq("sesi", sesi);
+  for (let from = 0; ; from += BATCH_SIZE) {
+    let query = supabase
+      .from("absensi")
+      .select("id, santri_id, tanggal, sesi, status, penginput")
+      .gte("tanggal", startDate)
+      .lte("tanggal", endDate)
+      .order("tanggal", { ascending: true })
+      .order("id", { ascending: true });
+
+    if (sesi && sesi !== "semua") {
+      query = query.eq("sesi", sesi);
+    }
+
+    const { data, error } = await query.range(from, from + BATCH_SIZE - 1);
+    if (error) throw new Error(error.message);
+
+    const batch = (data ?? []) as AbsensiRecord[];
+    allRecords.push(...batch);
+    if (batch.length < BATCH_SIZE) break;
   }
 
-  const { data, error } = await query;
-
-  if (error) throw new Error(error.message);
-  return (data ?? []) as AbsensiRecord[];
+  return allRecords;
 }
 
 /**
  * Mengambil rekap jumlah ketidakhadiran (alfa) per santri untuk bulan & tahun tertentu.
- * Menggabungkan seluruh sesi (pagi & malam) dari tabel absensi.
+ * Menggabungkan seluruh sesi (pagi & malam) dari tabel absensi dengan chunking loop.
  * Digunakan untuk menampilkan badge status kehadiran di kartu halaqoh santri:
  * - Hijau: tidak ada alfa (0)
  * - Kuning: alfa > 3x (misal 4-5)
@@ -369,26 +380,35 @@ export async function fetchSantriAlfaCounts(
   const endDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
   try {
-    const { data, error } = await supabase
-      .from("absensi")
-      .select("santri_id, status")
-      .gte("tanggal", startDate)
-      .lte("tanggal", endDate);
-
-    if (error) {
-      console.error("Gagal mengambil data alfa absensi:", error);
-      return {};
-    }
-
     const counts: Record<string, number> = {};
-    for (const row of data || []) {
-      const st = String(row.status || "").toLowerCase();
-      if (st === "alfa" || st === "a") {
-        if (row.santri_id) {
-          counts[row.santri_id] = (counts[row.santri_id] || 0) + 1;
+    const BATCH_SIZE = 1000;
+
+    for (let from = 0; ; from += BATCH_SIZE) {
+      const { data, error } = await supabase
+        .from("absensi")
+        .select("santri_id, status")
+        .gte("tanggal", startDate)
+        .lte("tanggal", endDate)
+        .order("id", { ascending: true })
+        .range(from, from + BATCH_SIZE - 1);
+
+      if (error) {
+        console.error("Gagal mengambil data alfa absensi:", error);
+        break;
+      }
+
+      for (const row of data || []) {
+        const st = String(row.status || "").toLowerCase();
+        if (st === "alfa" || st === "a") {
+          if (row.santri_id) {
+            counts[row.santri_id] = (counts[row.santri_id] || 0) + 1;
+          }
         }
       }
+
+      if (!data || data.length < BATCH_SIZE) break;
     }
+
     return counts;
   } catch (err) {
     console.error("Error fetchSantriAlfaCounts:", err);
@@ -525,7 +545,10 @@ export async function fetchSetoranBulananMerged(
   filter: Omit<SantriFilterParams, "page" | "pageSize">
 ): Promise<SetoranBulananRow[]> {
   const supabase = createClient();
-  const [santriList, rekapResult, setoranHalamanResult] = await Promise.all([
+  const startYear = `${tahun}-01-01`;
+  const endYear = `${tahun}-12-31`;
+
+  const [santriList, rekapResult] = await Promise.all([
     fetchAllSantriFiltered(filter),
     supabase
       .from("v_setoran_bulanan")
@@ -534,13 +557,27 @@ export async function fetchSetoranBulananMerged(
       )
       .eq("tahun", tahun)
       .eq("tipe", tipe),
-    supabase
-      .from("setoran")
-      .select("santri_id, jumlah_halaman, jumlah_juz_tambahan")
-      .eq("tipe", tipe),
   ]);
 
   if (rekapResult.error) throw new Error(rekapResult.error.message);
+
+  // Ambil setoran halaman santri terfilter sesuai tahun kalender secara chunked
+  const allSetoranRows: { santri_id: string; jumlah_halaman: number | null; jumlah_juz_tambahan: number | null }[] = [];
+  const BATCH_SIZE = 1000;
+  for (let from = 0; ; from += BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from("setoran")
+      .select("santri_id, jumlah_halaman, jumlah_juz_tambahan")
+      .eq("tipe", tipe)
+      .gte("tanggal", startYear)
+      .lte("tanggal", endYear)
+      .range(from, from + BATCH_SIZE - 1);
+
+    if (error) throw new Error(error.message);
+    const batch = data || [];
+    allSetoranRows.push(...batch);
+    if (batch.length < BATCH_SIZE) break;
+  }
 
   const rekapMap = new Map<string, Record<string, number>>();
   (rekapResult.data ?? []).forEach((r) => {
@@ -562,7 +599,7 @@ export async function fetchSetoranBulananMerged(
   });
 
   const totalHalamanMap = new Map<string, number>();
-  (setoranHalamanResult.data ?? []).forEach((row) => {
+  allSetoranRows.forEach((row) => {
     const hlm =
       Number(row.jumlah_halaman) > 0
         ? Number(row.jumlah_halaman)
@@ -761,6 +798,8 @@ export async function saveSetoranBulanDirect(params: {
 
   if (fetchErr) throw new Error(fetchErr.message);
 
+  const jumlahHalaman = Math.max(0, Math.round(params.jumlah_juz_tambahan * 20));
+
   if (params.jumlah_juz_tambahan <= 0) {
     // Jika diset ke 0 atau negatif, hapus record di bulan ini
     if (existing && existing.length > 0) {
@@ -772,10 +811,11 @@ export async function saveSetoranBulanDirect(params: {
   }
 
   if (existing && existing.length > 0) {
-    // Update record pertama
+    // Update record pertama dan sinkronkan jumlah_halaman
     const firstId = existing[0].id;
     const updatePayload: Record<string, unknown> = {
       jumlah_juz_tambahan: params.jumlah_juz_tambahan,
+      jumlah_halaman: jumlahHalaman,
       penginput: user?.id ?? null,
     };
     if (params.catatan !== undefined) {
@@ -786,19 +826,14 @@ export async function saveSetoranBulanDirect(params: {
       .update(updatePayload)
       .eq("id", firstId);
     if (updErr) throw new Error(updErr.message);
-
-    // Bersihkan duplikat jika ada lebih dari 1 record di bulan yang sama
-    if (existing.length > 1) {
-      const duplicateIds = existing.slice(1).map((r) => r.id);
-      await supabase.from("setoran").delete().in("id", duplicateIds);
-    }
   } else {
-    // Insert baru
+    // Insert baru lengkap dengan jumlah_halaman tersinkronisasi
     const { error: insErr } = await supabase.from("setoran").insert({
       santri_id: params.santri_id,
       tanggal: startDate,
       tipe: params.tipe,
       jumlah_juz_tambahan: params.jumlah_juz_tambahan,
+      jumlah_halaman: jumlahHalaman,
       catatan: params.catatan?.trim() || null,
       penginput: user?.id ?? null,
     });
@@ -832,14 +867,24 @@ export async function insertSetoranLog(payload: {
 
 export async function fetchKhotmilTahapNilai(jenis: JenisKhotmil, tahap: number) {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("khotmil_nilai")
-    .select("id, santri_id, jenis, tahap, juz, nilai")
-    .eq("jenis", jenis)
-    .eq("tahap", tahap);
+  const allRows: KhotmilNilaiRecord[] = [];
+  const BATCH_SIZE = 1000;
 
-  if (error) throw new Error(error.message);
-  return (data ?? []) as KhotmilNilaiRecord[];
+  for (let from = 0; ; from += BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from("khotmil_nilai")
+      .select("id, santri_id, jenis, tahap, juz, nilai")
+      .eq("jenis", jenis)
+      .eq("tahap", tahap)
+      .range(from, from + BATCH_SIZE - 1);
+
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as KhotmilNilaiRecord[];
+    allRows.push(...batch);
+    if (batch.length < BATCH_SIZE) break;
+  }
+
+  return allRows;
 }
 
 /**
@@ -847,13 +892,23 @@ export async function fetchKhotmilTahapNilai(jenis: JenisKhotmil, tahap: number)
  */
 export async function fetchKhotmilAllNilai(jenis: JenisKhotmil): Promise<KhotmilNilaiRecord[]> {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("khotmil_nilai")
-    .select("id, santri_id, jenis, tahap, juz, nilai")
-    .eq("jenis", jenis);
+  const allRows: KhotmilNilaiRecord[] = [];
+  const BATCH_SIZE = 1000;
 
-  if (error) throw new Error(error.message);
-  return (data ?? []) as KhotmilNilaiRecord[];
+  for (let from = 0; ; from += BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from("khotmil_nilai")
+      .select("id, santri_id, jenis, tahap, juz, nilai")
+      .eq("jenis", jenis)
+      .range(from, from + BATCH_SIZE - 1);
+
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as KhotmilNilaiRecord[];
+    allRows.push(...batch);
+    if (batch.length < BATCH_SIZE) break;
+  }
+
+  return allRows;
 }
 
 export async function upsertKhotmilNilaiBatch(
@@ -881,6 +936,15 @@ export async function upsertKhotmilNilaiBatch(
     .upsert(rows, { onConflict: "santri_id,jenis,tahap,juz" });
 
   if (error) throw new Error(error.message);
+
+  // Pastikan santri juga terdaftar di tabel khotmil_peserta
+  try {
+    await supabase
+      .from("khotmil_peserta")
+      .upsert({ santri_id, jenis }, { onConflict: "santri_id,jenis" });
+  } catch {
+    // Lewati jika tabel belum siap
+  }
 }
 
 /**
@@ -908,19 +972,37 @@ export async function fetchSantriAbsensiDetail(santri_id: string, tahun: number)
  */
 export async function fetchPembimbingMap(): Promise<Record<string, string>> {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("nama, role, halaqoh_kelas, halaqoh_bagian")
-    .not("halaqoh_kelas", "is", null)
-    .not("halaqoh_bagian", "is", null);
-
-  if (error) {
-    console.error("Gagal memuat pembimbing halaqoh:", error);
-    return {};
-  }
+  const [profileRes, settingRes] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("nama, role, halaqoh_kelas, halaqoh_bagian")
+      .not("halaqoh_kelas", "is", null)
+      .not("halaqoh_bagian", "is", null),
+    supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "HALAQOH_FORMASI")
+      .maybeSingle(),
+  ]);
 
   const map: Record<string, string> = {};
-  for (const p of data || []) {
+
+  // 1. Baca formasi dari app_settings
+  if (settingRes.data?.value) {
+    const list = Array.isArray(settingRes.data.value)
+      ? settingRes.data.value
+      : (settingRes.data.value as { formasi?: any[] })?.formasi;
+    if (Array.isArray(list)) {
+      list.forEach((f: any) => {
+        if (f.kelas && f.bagian && f.pembimbing) {
+          map[`${f.kelas}_${f.bagian}`] = f.pembimbing;
+        }
+      });
+    }
+  }
+
+  // 2. Padukan dengan akun riil di profiles jika sudah ditetapkan
+  for (const p of profileRes.data || []) {
     if (p.nama && p.halaqoh_kelas && p.halaqoh_bagian) {
       map[`${p.halaqoh_kelas}_${p.halaqoh_bagian}`] = p.nama;
     }
@@ -929,35 +1011,69 @@ export async function fetchPembimbingMap(): Promise<Record<string, string>> {
 }
 
 /**
- * Mengambil ID santri yang pernah memiliki catatan nilai khotmil untuk jenis tertentu.
+ * Mengambil ID santri yang terdaftar dalam ujian khotmil (dari tabel khotmil_peserta & khotmil_nilai).
  */
 export async function fetchKhotmilRegisteredSantriIds(
   jenis: JenisKhotmil
 ): Promise<string[]> {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("khotmil_nilai")
-    .select("santri_id")
-    .eq("jenis", jenis);
 
-  if (error) {
-    console.error("Gagal memuat id santri khotmil:", error);
-    return [];
-  }
+  const [pesertaRes, nilaiRes] = await Promise.all([
+    supabase.from("khotmil_peserta").select("santri_id").eq("jenis", jenis),
+    supabase.from("khotmil_nilai").select("santri_id").eq("jenis", jenis),
+  ]);
 
-  const ids = Array.from(new Set((data || []).map((row) => row.santri_id).filter(Boolean)));
-  return ids;
+  const idSet = new Set<string>();
+
+  (pesertaRes.data || []).forEach((row) => {
+    if (row.santri_id) idSet.add(row.santri_id);
+  });
+  (nilaiRes.data || []).forEach((row) => {
+    if (row.santri_id) idSet.add(row.santri_id);
+  });
+
+  return Array.from(idSet);
 }
 
 /**
- * Menghapus seluruh catatan nilai khotmil seorang santri untuk jenis tertentu
- * sehingga santri dapat dikeluarkan sepenuhnya dari daftar ujian khotmil.
+ * Mendaftarkan beberapa santri sekaligus ke ujian Khotmil (tersimpan di database khotmil_peserta).
+ */
+export async function registerKhotmilSantriBatch(
+  santriIds: string[],
+  jenis: JenisKhotmil
+): Promise<void> {
+  if (!santriIds || santriIds.length === 0) return;
+  const supabase = createClient();
+
+  const rows = santriIds.map((id) => ({
+    santri_id: id,
+    jenis,
+  }));
+
+  const { error } = await supabase
+    .from("khotmil_peserta")
+    .upsert(rows, { onConflict: "santri_id,jenis" });
+
+  if (error) {
+    console.error("Gagal mendaftarkan santri ke khotmil_peserta:", error);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Menghapus seluruh catatan pendaftaran & nilai khotmil seorang santri untuk jenis tertentu.
  */
 export async function deleteKhotmilSantriRegistration(
   santriId: string,
   jenis: JenisKhotmil
 ): Promise<void> {
   const supabase = createClient();
+  await supabase
+    .from("khotmil_peserta")
+    .delete()
+    .eq("santri_id", santriId)
+    .eq("jenis", jenis);
+
   const { error } = await supabase
     .from("khotmil_nilai")
     .delete()

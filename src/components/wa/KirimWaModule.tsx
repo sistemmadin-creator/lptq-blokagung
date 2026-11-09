@@ -48,6 +48,7 @@ import {
   generateDirectWaLink,
   formatPhoneNumber,
   getDeliveryLogs,
+  syncDeliveryLogsFromServer,
   saveDeliveryLog,
   isAlreadyDelivered,
   DEFAULT_WAHA_CONFIG,
@@ -138,6 +139,9 @@ export function KirimWaModule() {
     const loadedConfig = getWahaConfig();
     setConfig(loadedConfig);
     setDeliveryLogs(getDeliveryLogs());
+    syncDeliveryLogsFromServer().then((logs) => {
+      setDeliveryLogs(logs);
+    });
     checkGateway(loadedConfig);
   }, []);
 

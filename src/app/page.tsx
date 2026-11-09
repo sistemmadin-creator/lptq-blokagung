@@ -240,14 +240,15 @@ export default function DashboardPage() {
       if (khotmilRes.error) throw khotmilRes.error;
 
       const totalSantriCount = santriRes.count ?? 0;
-      const notHadirPagi = (absenRes.data ?? []).filter(
-        (a) => a.sesi === "pagi" && a.status !== "hadir"
-      ).length;
-      const notHadirMalam = (absenRes.data ?? []).filter(
-        (a) => a.sesi === "malam" && a.status !== "hadir"
-      ).length;
-      const hadirPagi = isFriday ? 0 : Math.max(0, totalSantriCount - notHadirPagi);
-      const hadirMalam = isFriday ? 0 : Math.max(0, totalSantriCount - notHadirMalam);
+      const pagiRecords = (absenRes.data ?? []).filter((a) => a.sesi === "pagi");
+      const malamRecords = (absenRes.data ?? []).filter((a) => a.sesi === "malam");
+
+      const hadirPagi = isFriday
+        ? 0
+        : pagiRecords.filter((a) => a.status === "hadir").length;
+      const hadirMalam = isFriday
+        ? 0
+        : malamRecords.filter((a) => a.status === "hadir").length;
 
       let totalJuzBaru = 0;
       let totalEvaluasi = 0;

@@ -1,3 +1,5 @@
+import { createClient } from "@/lib/supabase/client";
+
 /**
  * Service untuk Integrasi WhatsApp HTTP API (WAHA / Baileys)
  * Mendukung pengiriman pesan teks, gambar rapor, pengecekan sesi, dan fallback ke WhatsApp Web.
@@ -300,7 +302,57 @@ export function getDeliveryLogs(): DeliveryLog[] {
 }
 
 /**
- * Menyimpan log pengiriman
+ * Sinkronisasi log pengiriman dari server Supabase ke LocalStorage
+ */
+export async function syncDeliveryLogsFromServer(): Promise<DeliveryLog[]> {
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("wa_broadcast_logs")
+      .select("id, santri_id, nama_santri, no_wa, jenis, tahap, status, error, created_at")
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (error || !data) {
+      return getDeliveryLogs();
+    }
+
+    const serverLogs: DeliveryLog[] = data.map((d) => ({
+      id: d.id,
+      santriId: d.santri_id,
+      namaSantri: d.nama_santri,
+      noWa: d.no_wa,
+      jenis: d.jenis,
+      tahap: d.tahap,
+      status: d.status as "success" | "failed" | "manual",
+      tanggalKirim: d.created_at,
+      error: d.error || undefined,
+    }));
+
+    if (typeof window !== "undefined") {
+      const current = getDeliveryLogs();
+      const existingIds = new Set(serverLogs.map((l) => l.id));
+      const merged = [...serverLogs];
+      for (const c of current) {
+        if (!existingIds.has(c.id)) {
+          merged.push(c);
+        }
+      }
+      merged.sort((a, b) => new Date(b.tanggalKirim).getTime() - new Date(a.tanggalKirim).getTime());
+      const trimmed = merged.slice(0, 500);
+      localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(trimmed));
+      return trimmed;
+    }
+
+    return serverLogs;
+  } catch (err) {
+    console.warn("Gagal sinkron log WA dari server:", err);
+    return getDeliveryLogs();
+  }
+}
+
+/**
+ * Menyimpan log pengiriman ke LocalStorage dan Supabase Database
  */
 export function saveDeliveryLog(log: Omit<DeliveryLog, "id" | "tanggalKirim">): void {
   if (typeof window === "undefined") return;
@@ -311,9 +363,30 @@ export function saveDeliveryLog(log: Omit<DeliveryLog, "id" | "tanggalKirim">): 
     tanggalKirim: new Date().toISOString(),
   };
 
-  // Simpan maksimal 500 riwayat terbaru
+  // Simpan maksimal 500 riwayat terbaru di localStorage
   const updated = [newLog, ...current].slice(0, 500);
   localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(updated));
+
+  // Simpan juga ke tabel wa_broadcast_logs di Supabase
+  try {
+    const supabase = createClient();
+    supabase
+      .from("wa_broadcast_logs")
+      .insert({
+        santri_id: log.santriId,
+        nama_santri: log.namaSantri,
+        no_wa: log.noWa,
+        jenis: log.jenis,
+        tahap: String(log.tahap),
+        status: log.status,
+        error: log.error || null,
+      })
+      .then(({ error }) => {
+        if (error) console.warn("Gagal menyimpan wa_broadcast_logs ke DB:", error.message);
+      });
+  } catch {
+    // Abaikan jika offline
+  }
 }
 
 /**
