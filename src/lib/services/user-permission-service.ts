@@ -32,6 +32,13 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     path: "/halaqoh",
   },
   {
+    key: "rekap_keseluruhan",
+    label: "Rekap Keseluruhan",
+    description: "Rekap terpadu absensi, setoran juz baru, dan evaluasi santri per halaqoh (khusus Admin).",
+    group: "Utama",
+    path: "/rekap-keseluruhan",
+  },
+  {
     key: "kegiatan",
     label: "Kegiatan (Absensi)",
     description: "Pencatatan presensi tahfidz pagi dan malam.",
@@ -94,6 +101,7 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     dashboard: "edit",
     santri: "edit",
     halaqoh: "edit",
+    rekap_keseluruhan: "edit",
     kegiatan: "edit",
     juz_baru: "edit",
     evaluasi: "edit",
@@ -107,6 +115,7 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     dashboard: "edit",
     santri: "edit",
     halaqoh: "edit",
+    rekap_keseluruhan: "sembunyikan",
     kegiatan: "edit",
     juz_baru: "edit",
     evaluasi: "edit",
@@ -120,6 +129,7 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     dashboard: "baca",
     santri: "baca",
     halaqoh: "baca",
+    rekap_keseluruhan: "sembunyikan",
     kegiatan: "edit",
     juz_baru: "edit",
     evaluasi: "baca",
@@ -133,6 +143,7 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     dashboard: "baca",
     santri: "baca",
     halaqoh: "baca",
+    rekap_keseluruhan: "sembunyikan",
     kegiatan: "edit",
     juz_baru: "sembunyikan",
     evaluasi: "sembunyikan",
@@ -146,6 +157,7 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     dashboard: "baca",
     santri: "baca",
     halaqoh: "baca",
+    rekap_keseluruhan: "sembunyikan",
     kegiatan: "baca",
     juz_baru: "baca",
     evaluasi: "baca",
@@ -206,6 +218,7 @@ export function mapPathToModule(pathname: string): ModuleKey | null {
   if (pathname === "/") return "dashboard";
   if (pathname.startsWith("/santri")) return "santri";
   if (pathname.startsWith("/halaqoh")) return "halaqoh";
+  if (pathname.startsWith("/rekap-keseluruhan")) return "rekap_keseluruhan";
   if (pathname.startsWith("/tahfidz/umum/kegiatan")) return "kegiatan";
   if (pathname.startsWith("/tahfidz/umum/juz-baru")) return "juz_baru";
   if (pathname.startsWith("/tahfidz/umum/evaluasi")) return "evaluasi";

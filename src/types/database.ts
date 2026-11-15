@@ -9,6 +9,7 @@ export type ModuleKey =
   | "dashboard"
   | "santri"
   | "halaqoh"
+  | "rekap_keseluruhan"
   | "kegiatan"
   | "juz_baru"
   | "evaluasi"

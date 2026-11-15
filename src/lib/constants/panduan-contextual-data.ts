@@ -137,6 +137,35 @@ export const CONTEXTUAL_GUIDES: Record<string, ContextualGuide> = {
     fullGuideUrl: "/pengaturan?tab=panduan#bab-4",
   },
 
+  "/rekap-keseluruhan": {
+    routeKey: "/rekap-keseluruhan",
+    pageTitle: "Rekap Keseluruhan Santri Tahfidz",
+    chapter: "BAB 4: Rekapitulasi Terpadu LPTQ",
+    chapterId: "bab-4",
+    category: "Laporan & Evaluasi",
+    summary:
+      "Gabungan rekapitulasi absensi (H, A, I, S, Status), setoran Juz Baru (Juz & Halaman), serta capaian Evaluasi Pengurus per kelompok halaqoh dalam satu tampilan siap cetak (khusus Admin).",
+    steps: [
+      "Pilih Periode: Tentukan Bulan, Tahun, dan Sesi Absensi (Semua, Pagi, atau Malam).",
+      "Saring Data: Gunakan pencarian nama/kamar, dropdown Halaqoh, atau Filter Lanjutan untuk menyaring kelompok tertentu.",
+      "Ekspor & Cetak: Klik tombol .jpg, .pdf, Excel, atau Print sesuai kebutuhan arsip atau laporan WhatsApp.",
+    ],
+    keyFeatures: [
+      {
+        title: "Sinkronisasi 3 Modul Sekaligus",
+        desc: "Menggabungkan data Kegiatan (Absensi), Juz Baru (Pembimbing), dan Evaluasi (Pengurus) secara real-time.",
+      },
+      {
+        title: "Ekspor Lengkap (.jpg, .pdf, Excel, Print)",
+        desc: "Mendukung unduhan gambar .jpg tajam, PDF vektor multi-halaman, Excel dengan header tergabung, serta cetak printer langsung.",
+      },
+    ],
+    tips: [
+      "Untuk membagikan laporan 1 kelompok halaqoh ke WhatsApp, pilih kelompok halaqoh tertentu lalu klik tombol .jpg.",
+    ],
+    fullGuideUrl: "/pengaturan?tab=panduan#bab-4",
+  },
+
   "/tahfidz/umum/kegiatan": {
     routeKey: "/tahfidz/umum/kegiatan",
     pageTitle: "Presensi Kegiatan Halaqoh Harian",

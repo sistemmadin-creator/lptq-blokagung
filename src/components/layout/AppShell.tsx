@@ -25,6 +25,7 @@ import {
   ChevronUp,
   GraduationCap,
   FileSpreadsheet,
+  ClipboardList,
   FileImage,
   MessageSquare,
   Settings,
@@ -52,6 +53,13 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", group: "Utama", icon: LayoutDashboard, moduleKey: "dashboard" },
   { href: "/santri", label: "Data Santri Tahfidz", group: "Utama", icon: Users, moduleKey: "santri" },
   { href: "/halaqoh", label: "Halaqoh", group: "Utama", icon: GraduationCap, moduleKey: "halaqoh" },
+  {
+    href: "/rekap-keseluruhan",
+    label: "Rekap Keseluruhan",
+    group: "Utama",
+    icon: ClipboardList,
+    moduleKey: "rekap_keseluruhan",
+  },
   {
     href: "/tahfidz/umum/kegiatan",
     label: "Kegiatan (Absensi)",
@@ -272,6 +280,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!profile || isLoginPage) return;
     const currentModule = mapPathToModule(pathname);
+    if (currentModule === "rekap_keseluruhan" && profile.role !== "admin") {
+      router.replace("/");
+      return;
+    }
     if (currentModule && profile.role !== "admin") {
       const perm = profile.permissions?.[currentModule];
       if (perm === "sembunyikan") {
@@ -285,6 +297,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const allowedNavItems = NAV_ITEMS.filter((item) => {
+    if (item.moduleKey === "rekap_keseluruhan") {
+      return profile?.role === "admin";
+    }
     if (!profile) return true;
     if (profile.role === "admin") return true;
     const perm = profile.permissions?.[item.moduleKey];
