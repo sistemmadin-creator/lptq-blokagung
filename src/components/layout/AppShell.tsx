@@ -29,6 +29,7 @@ import {
   FileImage,
   MessageSquare,
   Settings,
+  Archive,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
@@ -118,6 +119,20 @@ const NAV_ITEMS: NavItem[] = [
     group: "Sistem",
     icon: Settings,
     moduleKey: "user_management",
+  },
+  {
+    href: "/database-angkatan/15",
+    label: "Angkatan 15 Juz",
+    group: "Database Angkatan",
+    icon: Archive,
+    moduleKey: "angkatan_15",
+  },
+  {
+    href: "/database-angkatan/30",
+    label: "Angkatan 30 Juz",
+    group: "Database Angkatan",
+    icon: Archive,
+    moduleKey: "angkatan_30",
   },
 ];
 
@@ -306,7 +321,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return perm !== "sembunyikan";
   });
 
-  const allGroups = ["Utama", "Tahfidz Umum", "Tahfidz Khotmil", "Alat Lanjutan", "Sistem"];
+  const allGroups = [
+    "Utama",
+    "Tahfidz Umum",
+    "Tahfidz Khotmil",
+    "Alat Lanjutan",
+    "Sistem",
+    "Database Angkatan",
+  ];
   const groups = allGroups.filter((grp) => allowedNavItems.some((i) => i.group === grp));
 
   const userInitial = (profile?.nama || profile?.email || "U")

@@ -17,7 +17,9 @@ export type ModuleKey =
   | "khotmil_30"
   | "flyer"
   | "wa"
-  | "user_management";
+  | "user_management"
+  | "angkatan_15"
+  | "angkatan_30";
 
 export type PermissionLevel = "sembunyikan" | "baca" | "edit";
 
@@ -289,3 +291,50 @@ export const KHOTMIL_30_TAHAP: TahapConfig[] = [
 ];
 
 export const KKM_DEFAULT = 85;
+
+export interface AngkatanTahapSnapshot {
+  tahap: number;
+  label: string;
+  rentangLabel: string;
+  scores: { juz: number; nilai: number }[];
+  average: number | null;
+  isComplete: boolean;
+  isLulus: boolean;
+}
+
+export interface KhotmilAngkatanRecord {
+  id: string;
+  jenis: JenisKhotmil;
+  nama_angkatan: string;
+  tanggal_khataman: string | null;
+  keterangan: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  jumlah_peserta?: number;
+}
+
+export interface KhotmilAngkatanPesertaRecord {
+  id: string;
+  angkatan_id: string;
+  santri_id: string | null;
+  jenis: JenisKhotmil;
+  kode_santri: string;
+  nama_lengkap: string;
+  asrama: string;
+  kode_kamar: string | null;
+  kamar: string;
+  halaqoh_kelas: number | null;
+  halaqoh_bagian: string | null;
+  halaqoh: string;
+  pembimbing: string;
+  nilai_tahap_json: AngkatanTahapSnapshot[];
+  rata_rata_akhir: number | null;
+  jumlah_tahap_tuntas: number;
+  total_tahap: number;
+  status_kelulusan: "lulus" | "belum_tuntas";
+  sumber: "tarik_khotmil" | "manual" | "import_excel";
+  catatan: string | null;
+  created_at: string;
+  nama_angkatan?: string;
+}

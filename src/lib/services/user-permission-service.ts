@@ -5,7 +5,7 @@ export interface ModuleDefinition {
   key: ModuleKey;
   label: string;
   description: string;
-  group: "Utama" | "Tahfidz Umum" | "Tahfidz Khotmil" | "Alat Lanjutan" | "Sistem";
+  group: "Utama" | "Tahfidz Umum" | "Tahfidz Khotmil" | "Alat Lanjutan" | "Sistem" | "Database Angkatan";
   path: string;
 }
 
@@ -94,6 +94,20 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     group: "Sistem",
     path: "/pengaturan",
   },
+  {
+    key: "angkatan_15",
+    label: "Angkatan 15 Juz",
+    description: "Database arsip angkatan dan lulusan Khotmil 15 Juz berdasarkan tahun custom.",
+    group: "Database Angkatan",
+    path: "/database-angkatan/15",
+  },
+  {
+    key: "angkatan_30",
+    label: "Angkatan 30 Juz",
+    description: "Database arsip angkatan dan lulusan Khotmil 30 Juz berdasarkan tahun custom.",
+    group: "Database Angkatan",
+    path: "/database-angkatan/30",
+  },
 ];
 
 export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
@@ -110,6 +124,8 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     flyer: "edit",
     wa: "edit",
     user_management: "edit",
+    angkatan_15: "edit",
+    angkatan_30: "edit",
   },
   pengurus: {
     dashboard: "edit",
@@ -124,6 +140,8 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     flyer: "edit",
     wa: "edit",
     user_management: "sembunyikan",
+    angkatan_15: "edit",
+    angkatan_30: "edit",
   },
   pembimbing: {
     dashboard: "baca",
@@ -138,6 +156,8 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     flyer: "baca",
     wa: "sembunyikan",
     user_management: "sembunyikan",
+    angkatan_15: "baca",
+    angkatan_30: "baca",
   },
   operator_absen: {
     dashboard: "baca",
@@ -152,6 +172,8 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     flyer: "sembunyikan",
     wa: "sembunyikan",
     user_management: "sembunyikan",
+    angkatan_15: "sembunyikan",
+    angkatan_30: "sembunyikan",
   },
   viewer: {
     dashboard: "baca",
@@ -166,6 +188,8 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<AppRole, UserPermissions> = {
     flyer: "baca",
     wa: "sembunyikan",
     user_management: "sembunyikan",
+    angkatan_15: "baca",
+    angkatan_30: "baca",
   },
 };
 
@@ -229,6 +253,8 @@ export function mapPathToModule(pathname: string): ModuleKey | null {
   if (pathname.startsWith("/alat/flyer-khataman")) return "flyer";
   if (pathname.startsWith("/alat/kirim-wa")) return "wa";
   if (pathname.startsWith("/pengaturan")) return "user_management";
+  if (pathname.startsWith("/database-angkatan/15")) return "angkatan_15";
+  if (pathname.startsWith("/database-angkatan/30")) return "angkatan_30";
   return null;
 }
 
