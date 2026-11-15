@@ -15,6 +15,7 @@ import type {
 import {
   formatHalamanToJuzStatus,
   getLatestEvaluasiJuz,
+  KHOTMIL_30_TAHAP,
   SETORAN_MONTH_KEYS,
 } from "@/types/database";
 
@@ -1256,5 +1257,283 @@ export async function deleteKhotmilSantriRegistration(
     console.error("Gagal menghapus nilai khotmil santri:", error);
     throw new Error(error.message);
   }
+}
+
+export interface SantriKhotmilTransferPreview {
+  santriId: string;
+  tahap1To4ScoresCount: number;
+  migratedTahapNumbers: number[];
+  hasTahap5Score: boolean;
+  tahap5ScoreCount: number;
+  alreadyIn30: boolean;
+  conflictTahap1To4Count: number;
+}
+
+export interface TransferKhotmilBatchParams {
+  santriIds: string[];
+  carryOverTahap1To4: boolean;
+  overwriteExisting30?: boolean;
+  catatan?: string;
+}
+
+export interface TransferKhotmilBatchResult {
+  transferredCount: number;
+  copiedScoresCount: number;
+  skippedConflictCount: number;
+}
+
+function getValidTahap1To4JuzSetFor30(): Set<string> {
+  const valid = new Set<string>();
+  KHOTMIL_30_TAHAP.filter((t) => t.tahap >= 1 && t.tahap <= 4).forEach((t) => {
+    t.juzList.forEach((j) => {
+      valid.add(`${t.tahap}_${j}`);
+    });
+  });
+  return valid;
+}
+
+/**
+ * Mengambil pratinjau nilai & status perpindahan santri dari Khotmil 15 Juz ke Khotmil 30 Juz.
+ */
+export async function fetchSantriKhotmilTransferPreview(
+  santriIds: string[]
+): Promise<Record<string, SantriKhotmilTransferPreview>> {
+  const result: Record<string, SantriKhotmilTransferPreview> = {};
+  if (!santriIds || santriIds.length === 0) return result;
+
+  const supabase = createClient();
+  const validKeys = getValidTahap1To4JuzSetFor30();
+
+  const [nilaiRes, peserta30Res] = await Promise.all([
+    supabase
+      .from("khotmil_nilai")
+      .select("santri_id, jenis, tahap, juz, nilai")
+      .in("santri_id", santriIds)
+      .in("jenis", ["khotmil15", "khotmil30"]),
+    supabase
+      .from("khotmil_peserta")
+      .select("santri_id")
+      .in("santri_id", santriIds)
+      .eq("jenis", "khotmil30"),
+  ]);
+
+  if (nilaiRes.error) throw new Error(nilaiRes.error.message);
+  if (peserta30Res.error) throw new Error(peserta30Res.error.message);
+
+  const peserta30Set = new Set((peserta30Res.data || []).map((r) => String(r.santri_id)));
+  const existing30KeysBySantri = new Map<string, Set<string>>();
+  const nilai15BySantri = new Map<string, { tahap: number; juz: number; nilai: number }[]>();
+
+  (nilaiRes.data || []).forEach((row) => {
+    const sid = String(row.santri_id);
+    if (row.jenis === "khotmil30") {
+      if (!existing30KeysBySantri.has(sid)) existing30KeysBySantri.set(sid, new Set());
+      existing30KeysBySantri.get(sid)!.add(`${row.tahap}_${row.juz}`);
+    } else if (row.jenis === "khotmil15") {
+      if (!nilai15BySantri.has(sid)) nilai15BySantri.set(sid, []);
+      nilai15BySantri.get(sid)!.push({
+        tahap: Number(row.tahap),
+        juz: Number(row.juz),
+        nilai: Number(row.nilai),
+      });
+    }
+  });
+
+  santriIds.forEach((sid) => {
+    const rows15 = nilai15BySantri.get(sid) || [];
+    const existing30 = existing30KeysBySantri.get(sid) || new Set<string>();
+    const tahapSet = new Set<number>();
+    let tahap1To4ScoresCount = 0;
+    let tahap5ScoreCount = 0;
+    let conflictTahap1To4Count = 0;
+
+    rows15.forEach((r) => {
+      const key = `${r.tahap}_${r.juz}`;
+      if (r.tahap >= 1 && r.tahap <= 4 && validKeys.has(key)) {
+        tahap1To4ScoresCount++;
+        tahapSet.add(r.tahap);
+        if (existing30.has(key)) {
+          conflictTahap1To4Count++;
+        }
+      } else if (r.tahap === 5) {
+        tahap5ScoreCount++;
+      }
+    });
+
+    result[sid] = {
+      santriId: sid,
+      tahap1To4ScoresCount,
+      migratedTahapNumbers: Array.from(tahapSet).sort((a, b) => a - b),
+      hasTahap5Score: tahap5ScoreCount > 0,
+      tahap5ScoreCount,
+      alreadyIn30: peserta30Set.has(sid) || existing30.size > 0,
+      conflictTahap1To4Count,
+    };
+  });
+
+  return result;
+}
+
+/**
+ * Memindahkan satu atau banyak santri sekaligus dari Khotmil 15 Juz ke Khotmil 30 Juz.
+ * Menggunakan pola aman Write-Before-Delete: daftarkan & salin nilai ke khotmil30 dahulu,
+ * baru hapus kepesertaan & nilai lama di khotmil15 agar tidak terjadi data hilang.
+ */
+export async function transferKhotmil15To30Batch(
+  params: TransferKhotmilBatchParams
+): Promise<TransferKhotmilBatchResult> {
+  const { santriIds, carryOverTahap1To4, overwriteExisting30 = false, catatan } = params;
+  const uniqueIds = Array.from(new Set(santriIds.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return { transferredCount: 0, copiedScoresCount: 0, skippedConflictCount: 0 };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // 1. Pastikan semua santri terdaftar di khotmil_peserta sebagai khotmil30
+  const pesertaRows = uniqueIds.map((id) => ({
+    santri_id: id,
+    jenis: "khotmil30" as JenisKhotmil,
+  }));
+  const { error: pesertaErr } = await supabase
+    .from("khotmil_peserta")
+    .upsert(pesertaRows, { onConflict: "santri_id,jenis" });
+
+  if (pesertaErr) {
+    throw new Error("Gagal mendaftarkan santri ke Khotmil 30 Juz: " + pesertaErr.message);
+  }
+
+  let copiedScoresCount = 0;
+  let skippedConflictCount = 0;
+
+  // 2. Jika diminta, salin nilai Tahap 1-4 dari khotmil15 ke khotmil30
+  if (carryOverTahap1To4) {
+    const validKeys = getValidTahap1To4JuzSetFor30();
+    const [nilai15Res, existing30Res] = await Promise.all([
+      supabase
+        .from("khotmil_nilai")
+        .select("santri_id, tahap, juz, nilai")
+        .in("santri_id", uniqueIds)
+        .eq("jenis", "khotmil15")
+        .in("tahap", [1, 2, 3, 4]),
+      supabase
+        .from("khotmil_nilai")
+        .select("santri_id, tahap, juz")
+        .in("santri_id", uniqueIds)
+        .eq("jenis", "khotmil30")
+        .in("tahap", [1, 2, 3, 4]),
+    ]);
+
+    if (nilai15Res.error) {
+      throw new Error("Gagal membaca nilai Khotmil 15 Juz: " + nilai15Res.error.message);
+    }
+    if (existing30Res.error) {
+      throw new Error("Gagal memeriksa nilai Khotmil 30 Juz yang ada: " + existing30Res.error.message);
+    }
+
+    const existing30PairSet = new Set(
+      (existing30Res.data || []).map((r) => `${r.santri_id}_${r.tahap}_${r.juz}`)
+    );
+
+    const rowsToUpsert: {
+      santri_id: string;
+      jenis: JenisKhotmil;
+      tahap: number;
+      juz: number;
+      nilai: number;
+      penginput: string | null;
+    }[] = [];
+
+    (nilai15Res.data || []).forEach((row) => {
+      const tahap = Number(row.tahap);
+      const juz = Number(row.juz);
+      if (!validKeys.has(`${tahap}_${juz}`)) return;
+
+      const pairKey = `${row.santri_id}_${tahap}_${juz}`;
+      if (!overwriteExisting30 && existing30PairSet.has(pairKey)) {
+        skippedConflictCount++;
+        return;
+      }
+
+      rowsToUpsert.push({
+        santri_id: String(row.santri_id),
+        jenis: "khotmil30",
+        tahap,
+        juz,
+        nilai: Number(row.nilai),
+        penginput: user?.id ?? null,
+      });
+    });
+
+    const CHUNK_SIZE = 200;
+    for (let i = 0; i < rowsToUpsert.length; i += CHUNK_SIZE) {
+      const chunk = rowsToUpsert.slice(i, i + CHUNK_SIZE);
+      const { error: upsertErr } = await supabase
+        .from("khotmil_nilai")
+        .upsert(chunk, { onConflict: "santri_id,jenis,tahap,juz" });
+
+      if (upsertErr) {
+        throw new Error("Gagal menyalin nilai Tahap 1-4 ke Khotmil 30 Juz: " + upsertErr.message);
+      }
+    }
+
+    copiedScoresCount = rowsToUpsert.length;
+  }
+
+  // 3. Hapus kepesertaan dan nilai lama di Khotmil 15 Juz agar tidak ganda
+  const { error: delPesertaErr } = await supabase
+    .from("khotmil_peserta")
+    .delete()
+    .in("santri_id", uniqueIds)
+    .eq("jenis", "khotmil15");
+
+  if (delPesertaErr) {
+    throw new Error("Gagal menghapus kepesertaan lama Khotmil 15 Juz: " + delPesertaErr.message);
+  }
+
+  const { error: delNilaiErr } = await supabase
+    .from("khotmil_nilai")
+    .delete()
+    .in("santri_id", uniqueIds)
+    .eq("jenis", "khotmil15");
+
+  if (delNilaiErr) {
+    throw new Error("Gagal menghapus nilai lama Khotmil 15 Juz: " + delNilaiErr.message);
+  }
+
+  // 4. Catat riwayat aktivitas secara non-blocking (hanya berlaku bagi admin/pengurus)
+  if (typeof window !== "undefined") {
+    try {
+      const descParts = [
+        `Memindahkan ${uniqueIds.length} santri dari Khotmil 15 Juz ke Khotmil 30 Juz`,
+        carryOverTahap1To4
+          ? `(${copiedScoresCount} nilai Tahap 1-4 disalin${skippedConflictCount > 0 ? `, ${skippedConflictCount} bentrok dilewati` : ""})`
+          : "(ujian ulang dari nol / tanpa salin nilai)",
+      ];
+      if (catatan?.trim()) {
+        descParts.push(`Catatan: ${catatan.trim()}`);
+      }
+      await fetch("/api/admin/logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          logAction: "TRANSFER_KHOTMIL_15_TO_30",
+          kategori: "Penilaian Tahfidz",
+          deskripsi: descParts.join(" "),
+        }),
+      });
+    } catch {
+      // Non-blocking audit log
+    }
+  }
+
+  return {
+    transferredCount: uniqueIds.length,
+    copiedScoresCount,
+    skippedConflictCount,
+  };
 }
 

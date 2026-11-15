@@ -29,9 +29,15 @@ import {
   Award,
   Camera,
   FileText,
+  ArrowUpRight,
+  ChevronDown,
+  ChevronUp,
+  Users,
 } from "lucide-react";
 import { KhotmilLjkPrintModal } from "@/components/tahfidz/KhotmilLjkPrintModal";
 import { KhotmilCameraScannerModal } from "@/components/tahfidz/KhotmilCameraScannerModal";
+import { KhotmilTransferModal } from "@/components/tahfidz/KhotmilTransferModal";
+import { loadHalaqohFormasi, type FormasiHalaqohItem } from "@/lib/services/halaqoh-service";
 import { useReactToPrint } from "react-to-print";
 import {
   fetchAllSantriFiltered,
@@ -144,11 +150,26 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
 
   const currentModuleKey: ModuleKey = jenis === "khotmil15" ? "khotmil_15" : "khotmil_30";
   const canEdit = profile ? (profile.role === "admin" || canUserEdit(profile.permissions, currentModuleKey)) : true;
+  const canTransferTo30 =
+    jenis === "khotmil15" &&
+    canEdit &&
+    (profile ? (profile.role === "admin" || canUserEdit(profile.permissions, "khotmil_30")) : true);
+
+  // State Modal Perpindahan Khotmil 15 Juz -> 30 Juz
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferInitialIds, setTransferInitialIds] = useState<string[]>([]);
+  const [transferSantriPool, setTransferSantriPool] = useState<Santri[]>([]);
+  const [transferPembimbingMap, setTransferPembimbingMap] = useState<Record<string, string>>({});
 
   // State Modal Pendaftaran Khotmil
   const [daftarModalOpen, setDaftarModalOpen] = useState(false);
+  const [inputPerHalaqoh, setInputPerHalaqoh] = useState(false);
+  const [expandedHalaqohKeys, setExpandedHalaqohKeys] = useState<Set<string>>(new Set());
   const [allSantriData, setAllSantriData] = useState<Santri[]>([]);
   const [pembimbingMap, setPembimbingMap] = useState<Record<string, string>>({});
+  const [formasiMap, setFormasiMap] = useState<Record<string, FormasiHalaqohItem>>({});
+  const [registeredCurrentSet, setRegisteredCurrentSet] = useState<Set<string>>(new Set());
+  const [registeredOtherSet, setRegisteredOtherSet] = useState<Set<string>>(new Set());
   const [loadingDaftarList, setLoadingDaftarList] = useState(false);
   const [daftarSearch, setDaftarSearch] = useState("");
   const [selectedSantriIds, setSelectedSantriIds] = useState<Set<string>>(new Set());
@@ -211,13 +232,26 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
     setDaftarModalOpen(true);
     setLoadingDaftarList(true);
     setDaftarSearch("");
+    setInputPerHalaqoh(false);
+    setExpandedHalaqohKeys(new Set());
+    const otherJenis: JenisKhotmil = jenis === "khotmil15" ? "khotmil30" : "khotmil15";
     try {
-      const [santriData, pMap] = await Promise.all([
+      const [santriData, pMap, formasiList, currentRegIds, otherRegIds] = await Promise.all([
         fetchAllSantriFiltered({}),
         fetchPembimbingMap(),
+        loadHalaqohFormasi(),
+        fetchKhotmilRegisteredSantriIds(jenis),
+        fetchKhotmilRegisteredSantriIds(otherJenis),
       ]);
+      const fMap: Record<string, FormasiHalaqohItem> = {};
+      formasiList.forEach((f) => {
+        fMap[`${f.kelas}_${String(f.bagian || "").trim().toUpperCase()}`] = f;
+      });
       setAllSantriData(santriData);
       setPembimbingMap(pMap);
+      setFormasiMap(fMap);
+      setRegisteredCurrentSet(new Set(currentRegIds));
+      setRegisteredOtherSet(new Set(otherRegIds));
       setSelectedSantriIds(new Set());
       if (santriData.length > 0) {
         setPreviewSantri(santriData[0]);
@@ -226,6 +260,33 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
       showToast("error", "Gagal memuat daftar santri untuk pendaftaran.");
     } finally {
       setLoadingDaftarList(false);
+    }
+  };
+
+  // Buka modal pindah Khotmil 15 Juz -> 30 Juz (tunggal dari baris tabel, atau massal dari toolbar)
+  const handleOpenTransferModal = async (initialIds: string[] = []) => {
+    setTransferInitialIds(initialIds);
+    if (!search && !asramaFilter && Object.keys(pembimbingMap).length > 0) {
+      setTransferSantriPool(santriList);
+      setTransferPembimbingMap(pembimbingMap);
+      setTransferModalOpen(true);
+      return;
+    }
+
+    try {
+      const [allSantri, reg15Ids, pMap] = await Promise.all([
+        fetchAllSantriFiltered({}),
+        fetchKhotmilRegisteredSantriIds("khotmil15"),
+        fetchPembimbingMap(),
+      ]);
+      const reg15Set = new Set(reg15Ids);
+      setTransferSantriPool(allSantri.filter((s) => reg15Set.has(s.id)));
+      setTransferPembimbingMap(pMap);
+      setTransferModalOpen(true);
+    } catch {
+      setTransferSantriPool(santriList);
+      setTransferPembimbingMap(pembimbingMap);
+      setTransferModalOpen(true);
     }
   };
 
@@ -279,8 +340,121 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
     });
   }, [allSantriData, daftarSearch, pembimbingMap]);
 
+  // Kelompok Halaqoh untuk switch Input Per Halaqoh
+  const halaqohGroupsForDaftar = useMemo(() => {
+    const groupsMap = new Map<
+      string,
+      {
+        key: string;
+        kelas: number;
+        bagian: string;
+        label: string;
+        pembimbing: string;
+        targetJuz: string;
+        members: Santri[];
+      }
+    >();
+
+    allSantriData.forEach((s) => {
+      const kelas = Number(s.halaqoh_kelas || 0);
+      const bagian = String(s.halaqoh_bagian || "").trim().toUpperCase();
+      const key = `${kelas}_${bagian}`;
+      if (!groupsMap.has(key)) {
+        const label =
+          s.halaqoh?.trim() ||
+          (kelas > 0 ? `${kelas}${bagian}` : "Tanpa Halaqoh");
+        const formasi = formasiMap[key];
+        const pembimbing =
+          pembimbingMap[key] || formasi?.pembimbing || "Ust. Pembimbing";
+        groupsMap.set(key, {
+          key,
+          kelas,
+          bagian,
+          label,
+          pembimbing,
+          targetJuz: formasi?.target_juz || "",
+          members: [],
+        });
+      }
+      groupsMap.get(key)!.members.push(s);
+    });
+
+    const sorted = Array.from(groupsMap.values()).sort((a, b) => {
+      if (a.kelas !== b.kelas) return a.kelas - b.kelas;
+      return a.bagian.localeCompare(b.bagian);
+    });
+
+    const q = daftarSearch.trim().toLowerCase();
+
+    return sorted
+      .map((grp) => {
+        const groupHeaderMatch =
+          !q ||
+          grp.label.toLowerCase().includes(q) ||
+          `kelas ${grp.kelas} bagian ${grp.bagian}`.toLowerCase().includes(q) ||
+          grp.pembimbing.toLowerCase().includes(q) ||
+          grp.targetJuz.toLowerCase().includes(q);
+
+        const matchingMembers = groupHeaderMatch
+          ? grp.members
+          : grp.members.filter((m) => {
+              const kDisplay = formatKamarDisplay(m.kode_kamar, m.kamar).toLowerCase();
+              return (
+                m.nama_lengkap.toLowerCase().includes(q) ||
+                (m.kode && m.kode.toLowerCase().includes(q)) ||
+                kDisplay.includes(q)
+              );
+            });
+
+        // Otomatis lewati santri yang sudah terdaftar di program ini maupun di program sebelah
+        const autoSelectableIds = grp.members
+          .filter((m) => !registeredCurrentSet.has(m.id) && !registeredOtherSet.has(m.id))
+          .map((m) => m.id);
+        const alreadyCurrentCount = grp.members.filter((m) =>
+          registeredCurrentSet.has(m.id)
+        ).length;
+        const alreadyOtherCount = grp.members.filter(
+          (m) => !registeredCurrentSet.has(m.id) && registeredOtherSet.has(m.id)
+        ).length;
+
+        return {
+          ...grp,
+          matchingMembers,
+          autoSelectableIds,
+          alreadyCurrentCount,
+          alreadyOtherCount,
+        };
+      })
+      .filter((grp) => grp.matchingMembers.length > 0);
+  }, [allSantriData, daftarSearch, formasiMap, pembimbingMap, registeredCurrentSet, registeredOtherSet]);
+
+  const flatAutoSelectableIds = useMemo(
+    () =>
+      filteredSantriForDaftar
+        .filter((s) => !registeredCurrentSet.has(s.id) && !registeredOtherSet.has(s.id))
+        .map((s) => s.id),
+    [filteredSantriForDaftar, registeredCurrentSet, registeredOtherSet]
+  );
+
+  const halaqohAutoSelectableIds = useMemo(() => {
+    const ids: string[] = [];
+    halaqohGroupsForDaftar.forEach((grp) => {
+      ids.push(...grp.autoSelectableIds);
+    });
+    return ids;
+  }, [halaqohGroupsForDaftar]);
+
+  const activeAutoSelectableIds = inputPerHalaqoh
+    ? halaqohAutoSelectableIds
+    : flatAutoSelectableIds;
+
+  const isAllAutoSelected =
+    activeAutoSelectableIds.length > 0 &&
+    activeAutoSelectableIds.every((id) => selectedSantriIds.has(id));
+
   // Toggle pilihan 1 santri
   const toggleSantriSelection = (id: string) => {
+    if (registeredCurrentSet.has(id)) return;
     setSelectedSantriIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -292,13 +466,45 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
     });
   };
 
-  // Toggle pilih semua santri yang tampil
+  // Toggle seluruh santri eligible dalam 1 grup halaqoh (otomatis melewati yg sudah di program lain)
+  const toggleHalaqohGroupSelection = (
+    autoIds: string[],
+    allGroupMemberIds: string[]
+  ) => {
+    if (autoIds.length === 0) return;
+    setSelectedSantriIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = autoIds.every((id) => next.has(id));
+      if (allSelected) {
+        allGroupMemberIds.forEach((id) => next.delete(id));
+      } else {
+        autoIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const toggleExpandHalaqoh = (key: string) => {
+    setExpandedHalaqohKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  // Toggle pilih semua santri / semua halaqoh yang tampil (melewati santri yg sudah terdaftar)
   const toggleSelectAllDaftar = () => {
-    if (selectedSantriIds.size === filteredSantriForDaftar.length && filteredSantriForDaftar.length > 0) {
-      setSelectedSantriIds(new Set());
-    } else {
-      setSelectedSantriIds(new Set(filteredSantriForDaftar.map((s) => s.id)));
-    }
+    if (activeAutoSelectableIds.length === 0) return;
+    setSelectedSantriIds((prev) => {
+      const next = new Set(prev);
+      if (isAllAutoSelected) {
+        activeAutoSelectableIds.forEach((id) => next.delete(id));
+      } else {
+        activeAutoSelectableIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
   };
 
   // Simpan pendaftaran santri ke Khotmil
@@ -729,6 +935,84 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
     }
   };
 
+  const otherProgramLabel = jenis === "khotmil15" ? "30 Juz" : "15 Juz";
+
+  // Helper tampilan 1 baris santri di modal pendaftaran (dipakai bersama oleh mode satuan & per-halaqoh)
+  const renderDaftarSantriRow = (s: Santri, indented = false) => {
+    const isAlreadyCurrent = registeredCurrentSet.has(s.id);
+    const isInOtherProgram = !isAlreadyCurrent && registeredOtherSet.has(s.id);
+    const isSelected = selectedSantriIds.has(s.id);
+    const isPreviewActive = previewSantri?.id === s.id;
+    const pembimbingNama =
+      pembimbingMap[`${s.halaqoh_kelas}_${s.halaqoh_bagian}`] || "Ust. Pembimbing";
+    const kamarStr = formatKamarDisplay(s.kode_kamar, s.kamar);
+
+    return (
+      <div
+        key={s.id}
+        onClick={() => setPreviewSantri(s)}
+        className={`flex items-center gap-3 ${indented ? "pl-9 pr-4 py-2" : "px-4 py-2.5"} cursor-pointer transition ${
+          isPreviewActive
+            ? "bg-emerald-50/70 dark:bg-emerald-950/40 border-l-4 border-l-emerald-600"
+            : isAlreadyCurrent
+            ? "bg-slate-50/60 dark:bg-slate-900/40 opacity-75 hover:bg-slate-50 dark:hover:bg-slate-800/30"
+            : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+        }`}
+      >
+        <input
+          type="checkbox"
+          checked={isAlreadyCurrent ? true : isSelected}
+          disabled={isAlreadyCurrent}
+          onChange={(e) => {
+            e.stopPropagation();
+            toggleSantriSelection(s.id);
+          }}
+          aria-label={`Pilih santri ${s.nama_lengkap}`}
+          className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-50 shrink-0"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold text-xs text-slate-800 dark:text-slate-100 truncate">
+              {s.nama_lengkap}
+            </span>
+            <span className="text-[10px] font-mono text-slate-400 shrink-0">
+              ({s.kode})
+            </span>
+            {isAlreadyCurrent && (
+              <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                Sudah Terdaftar
+              </span>
+            )}
+            {isInOtherProgram && (
+              <span
+                className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                title={`Santri ini sudah terdaftar di Khotmil ${otherProgramLabel} (dilewati otomatis saat pilih halaqoh, tetap bisa dicentang manual)`}
+              >
+                Aktif di {otherProgramLabel}
+              </span>
+            )}
+          </div>
+          {!indented && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+              <span className="font-medium text-slate-600 dark:text-slate-300">
+                {s.halaqoh || `Kelas ${s.halaqoh_kelas || 1}`}
+              </span>
+              <span>•</span>
+              <span className="text-emerald-700 dark:text-emerald-400">
+                {pembimbingNama}
+              </span>
+            </div>
+          )}
+        </div>
+        <div className="text-right shrink-0">
+          <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            {kamarStr}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-5">
       {/* Input File Tersembunyi untuk Impor Nilai Excel */}
@@ -808,6 +1092,21 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
             <UserPlus className="h-4 w-4" />
             <span className="hidden sm:inline">Daftar Khotmil</span>
             <span className="sm:hidden">Daftar</span>
+          </button>
+        )}
+
+        {/* Tombol Pindah Banyak Santri ke Khotmil 30 Juz (Khusus halaman Khotmil 15 Juz) */}
+        {canTransferTo30 && (
+          <button
+            type="button"
+            onClick={() => handleOpenTransferModal([])}
+            title="Pindahkan satu atau banyak santri dari Khotmil 15 Juz ke Khotmil 30 Juz"
+            aria-label="Pindah ke Khotmil 30 Juz"
+            className="flex h-11 items-center gap-1.5 rounded-xl border border-emerald-700/30 bg-emerald-50 px-3.5 text-xs font-bold text-emerald-900 shadow-sm transition hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shrink-0 dark:border-emerald-700/60 dark:bg-emerald-950/60 dark:text-emerald-200 dark:hover:bg-emerald-900/60"
+          >
+            <ArrowUpRight className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
+            <span className="hidden sm:inline">Pindah 30 Juz</span>
+            <span className="sm:hidden">Pindah</span>
           </button>
         )}
 
@@ -1075,6 +1374,17 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                               <Pencil className="h-3.5 w-3.5" />
                               <span>Edit</span>
                             </button>
+                            {canTransferTo30 && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenTransferModal([s.id])}
+                                className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50/80 px-2 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition dark:border-emerald-800/70 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                                title={`Pindahkan ${s.nama_lengkap} ke Khotmil 30 Juz`}
+                              >
+                                <ArrowUpRight className="h-3.5 w-3.5" />
+                                <span>30 Juz</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleUnregisterSantri(s.id, s.nama_lengkap)}
@@ -1469,47 +1779,83 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
               </button>
             </div>
 
-            {/* Pencarian Santri (Nama, Halaqoh+Pembimbing, Kamar) */}
-            <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 shrink-0">
-              <div className="relative">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  value={daftarSearch}
-                  onChange={(e) => setDaftarSearch(e.target.value)}
-                  placeholder="Cari berdasarkan Nama, Halaqoh, Pembimbing, atau Kamar (misal: E03)..."
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-xs text-slate-800 placeholder-slate-400 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                />
-                {daftarSearch && (
-                  <button
-                    type="button"
-                    onClick={() => setDaftarSearch("")}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            {/* Pencarian Santri & Switch Input Per Halaqoh */}
+            <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 shrink-0 space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={daftarSearch}
+                    onChange={(e) => setDaftarSearch(e.target.value)}
+                    placeholder="Cari berdasarkan Nama, Halaqoh, Pembimbing, atau Kamar (misal: E03)..."
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-xs text-slate-800 placeholder-slate-400 shadow-xs focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                  {daftarSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setDaftarSearch("")}
+                      aria-label="Bersihkan pencarian pendaftaran"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Switch Input Per Halaqoh */}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={inputPerHalaqoh}
+                  onClick={() => setInputPerHalaqoh((prev) => !prev)}
+                  className={`inline-flex h-10 items-center gap-2.5 rounded-xl border px-3.5 text-xs font-semibold transition shrink-0 ${
+                    inputPerHalaqoh
+                      ? "border-emerald-600 bg-emerald-50 text-emerald-900 dark:border-emerald-500 dark:bg-emerald-950/60 dark:text-emerald-200"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  }`}
+                >
+                  <Users className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
+                  <span>Input Per Halaqoh</span>
+                  <span
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                      inputPerHalaqoh ? "bg-emerald-700 dark:bg-emerald-600" : "bg-slate-300 dark:bg-slate-700"
+                    }`}
                   >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
+                    <span
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                        inputPerHalaqoh ? "translate-x-[18px]" : "translate-x-[3px]"
+                      }`}
+                    />
+                  </span>
+                </button>
               </div>
+
+              {inputPerHalaqoh && (
+                <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                  Mode Per Halaqoh aktif: centang 1 halaqoh untuk memilih seluruh anggotanya sekaligus. Santri yang sudah aktif di Khotmil {otherProgramLabel} otomatis dilewati, dan tetap dapat dicentang manual di rincian anggota.
+                </p>
+              )}
             </div>
 
             {/* Konten 2 Sisi: Tabel Santri (Kiri) & Riwayat Kegiatan + Juz Baru (Kanan) */}
             <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-0">
-              {/* Kolom Kiri: Tabel Santri */}
+              {/* Kolom Kiri: Daftar Santri atau Grup Halaqoh */}
               <div className="lg:col-span-7 flex flex-col border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 min-h-0 overflow-y-auto">
-                <div className="p-3 bg-slate-100/60 dark:bg-slate-800/50 flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
+                <div className="p-3 bg-slate-100/60 dark:bg-slate-800/50 flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 backdrop-blur-xs">
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
                       id="select-all-santri"
-                      checked={
-                        filteredSantriForDaftar.length > 0 &&
-                        selectedSantriIds.size === filteredSantriForDaftar.length
-                      }
+                      disabled={activeAutoSelectableIds.length === 0}
+                      checked={isAllAutoSelected}
                       onChange={toggleSelectAllDaftar}
-                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-40"
                     />
                     <label htmlFor="select-all-santri" className="cursor-pointer select-none">
-                      Pilih Semua ({filteredSantriForDaftar.length})
+                      {inputPerHalaqoh
+                        ? `Pilih Semua Halaqoh (${halaqohGroupsForDaftar.length})`
+                        : `Pilih Semua (${filteredSantriForDaftar.length})`}
                     </label>
                   </div>
                   <span className="text-emerald-700 dark:text-emerald-400 font-bold">
@@ -1522,65 +1868,115 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
                     <Loader2 className="h-5 w-5 animate-spin text-emerald-700" />
                     <span className="text-xs text-slate-500">Memuat data santri...</span>
                   </div>
+                ) : inputPerHalaqoh ? (
+                  halaqohGroupsForDaftar.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-slate-500">
+                      Tidak ada halaqoh yang cocok dengan pencarian &quot;{daftarSearch}&quot;.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {halaqohGroupsForDaftar.map((grp) => {
+                        const isExpanded =
+                          expandedHalaqohKeys.has(grp.key) || Boolean(daftarSearch.trim());
+                        const allMemberIds = grp.members.map((m) => m.id);
+                        const selectedAutoCount = grp.autoSelectableIds.filter((id) =>
+                          selectedSantriIds.has(id)
+                        ).length;
+                        const selectedManualCount = grp.members.filter(
+                          (m) => !registeredCurrentSet.has(m.id) && selectedSantriIds.has(m.id)
+                        ).length;
+                        const isGroupChecked =
+                          grp.autoSelectableIds.length > 0 &&
+                          selectedAutoCount === grp.autoSelectableIds.length;
+                        const isGroupIndeterminate =
+                          selectedAutoCount > 0 && selectedAutoCount < grp.autoSelectableIds.length;
+
+                        return (
+                          <div key={grp.key} className="bg-white dark:bg-slate-900">
+                            <div className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                              <input
+                                type="checkbox"
+                                disabled={grp.autoSelectableIds.length === 0}
+                                checked={isGroupChecked}
+                                ref={(el) => {
+                                  if (el) el.indeterminate = isGroupIndeterminate;
+                                }}
+                                onChange={() =>
+                                  toggleHalaqohGroupSelection(grp.autoSelectableIds, allMemberIds)
+                                }
+                                aria-label={`Pilih Halaqoh ${grp.label}`}
+                                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-40 shrink-0"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandHalaqoh(grp.key)}
+                                className="flex-1 min-w-0 text-left flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <HalaqohBadge kelas={grp.kelas} bagian={grp.bagian} />
+                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
+                                      {grp.pembimbing}
+                                    </span>
+                                    {grp.targetJuz && (
+                                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                        {grp.targetJuz}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                                    <span>{grp.members.length} santri</span>
+                                    {grp.autoSelectableIds.length > 0 ? (
+                                      <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
+                                        • {grp.autoSelectableIds.length} siap dipilih
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400">
+                                        • 0 siap otomatis
+                                      </span>
+                                    )}
+                                    {grp.alreadyCurrentCount > 0 && (
+                                      <span>• {grp.alreadyCurrentCount} sudah terdaftar</span>
+                                    )}
+                                    {grp.alreadyOtherCount > 0 && (
+                                      <span className="text-amber-700 dark:text-amber-400 font-medium">
+                                        • {grp.alreadyOtherCount} aktif di {otherProgramLabel} (dilewati)
+                                      </span>
+                                    )}
+                                    {selectedManualCount > 0 && (
+                                      <span className="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                        {selectedManualCount} dipilih
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0">
+                                  {isExpanded ? (
+                                    <ChevronUp className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4" />
+                                  )}
+                                </span>
+                              </button>
+                            </div>
+
+                            {isExpanded && (
+                              <div className="divide-y divide-slate-100 dark:divide-slate-800 border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30">
+                                {grp.matchingMembers.map((m) => renderDaftarSantriRow(m, true))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
                 ) : filteredSantriForDaftar.length === 0 ? (
                   <div className="py-12 text-center text-xs text-slate-500">
                     Tidak ada santri yang cocok dengan pencarian &quot;{daftarSearch}&quot;.
                   </div>
                 ) : (
                   <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {filteredSantriForDaftar.map((s) => {
-                      const isSelected = selectedSantriIds.has(s.id);
-                      const isPreviewActive = previewSantri?.id === s.id;
-                      const pembimbingNama =
-                        pembimbingMap[`${s.halaqoh_kelas}_${s.halaqoh_bagian}`] || "Ust. Pembimbing";
-                      const kamarStr = formatKamarDisplay(s.kode_kamar, s.kamar);
-
-                      return (
-                        <div
-                          key={s.id}
-                          onClick={() => setPreviewSantri(s)}
-                          className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition ${
-                            isPreviewActive
-                              ? "bg-emerald-50/70 dark:bg-emerald-950/40 border-l-4 border-l-emerald-600"
-                              : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              toggleSantriSelection(s.id);
-                            }}
-                            className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 shrink-0"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-xs text-slate-800 dark:text-slate-100 truncate">
-                                {s.nama_lengkap}
-                              </span>
-                              <span className="text-[10px] font-mono text-slate-400 shrink-0">
-                                ({s.kode})
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                              <span className="font-medium text-slate-600 dark:text-slate-300">
-                                {s.halaqoh || `Kelas ${s.halaqoh_kelas || 1}`}
-                              </span>
-                              <span>•</span>
-                              <span className="text-emerald-700 dark:text-emerald-400">
-                                {pembimbingNama}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-mono font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                              {kamarStr}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {filteredSantriForDaftar.map((s) => renderDaftarSantriRow(s, false))}
                   </div>
                 )}
               </div>
@@ -1826,6 +2222,18 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
         currentTahapCfg={currentTahapCfg}
         onSuccessSave={loadData}
       />
+
+      {/* POP-UP 7: MODAL PERPINDAHAN SANTRI KHOTMIL 15 -> 30 JUZ */}
+      {canTransferTo30 && (
+        <KhotmilTransferModal
+          isOpen={transferModalOpen}
+          onClose={() => setTransferModalOpen(false)}
+          santriList={transferSantriPool}
+          pembimbingMap={transferPembimbingMap}
+          initialSelectedIds={transferInitialIds}
+          onSuccessTransfer={loadData}
+        />
+      )}
     </div>
   );
 }
