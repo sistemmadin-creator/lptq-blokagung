@@ -12,7 +12,11 @@ import type {
   StatusAbsen,
   TipeSetoran,
 } from "@/types/database";
-import { formatHalamanToJuzStatus } from "@/types/database";
+import {
+  formatHalamanToJuzStatus,
+  getLatestEvaluasiJuz,
+  SETORAN_MONTH_KEYS,
+} from "@/types/database";
 
 const SANTRI_COLUMNS =
   "id, no_urut, kode, nama_lengkap, no_wa, blok, asrama, kode_kamar, kamar, halaqoh_kelas, halaqoh_bagian, halaqoh, created_at, updated_at";
@@ -581,20 +585,30 @@ export async function fetchSetoranBulananMerged(
 
   const rekapMap = new Map<string, Record<string, number>>();
   (rekapResult.data ?? []).forEach((r) => {
+    const normalizeMonthVal = (raw: unknown) => {
+      const n = Number(raw ?? 0);
+      return tipe === "evaluasi" ? Math.min(30, Math.max(0, Math.round(n))) : n;
+    };
+    const monthRecord = {
+      jan: normalizeMonthVal(r.jan),
+      feb: normalizeMonthVal(r.feb),
+      mar: normalizeMonthVal(r.mar),
+      apr: normalizeMonthVal(r.apr),
+      mei: normalizeMonthVal(r.mei),
+      jun: normalizeMonthVal(r.jun),
+      jul: normalizeMonthVal(r.jul),
+      agu: normalizeMonthVal(r.agu),
+      sep: normalizeMonthVal(r.sep),
+      okt: normalizeMonthVal(r.okt),
+      nov: normalizeMonthVal(r.nov),
+      des: normalizeMonthVal(r.des),
+    };
     rekapMap.set(r.santri_id, {
-      jan: Number(r.jan ?? 0),
-      feb: Number(r.feb ?? 0),
-      mar: Number(r.mar ?? 0),
-      apr: Number(r.apr ?? 0),
-      mei: Number(r.mei ?? 0),
-      jun: Number(r.jun ?? 0),
-      jul: Number(r.jul ?? 0),
-      agu: Number(r.agu ?? 0),
-      sep: Number(r.sep ?? 0),
-      okt: Number(r.okt ?? 0),
-      nov: Number(r.nov ?? 0),
-      des: Number(r.des ?? 0),
-      total_setoran: Math.min(30, Number(r.total_setoran ?? 0)),
+      ...monthRecord,
+      total_setoran:
+        tipe === "evaluasi"
+          ? getLatestEvaluasiJuz(monthRecord)
+          : Math.min(30, Number(r.total_setoran ?? 0)),
     });
   });
 
@@ -616,7 +630,9 @@ export async function fetchSetoranBulananMerged(
     const calculatedTotalJuz =
       tipe === "juz_baru"
         ? Math.min(30, Number((totalHlm / 20).toFixed(2)))
-        : Math.min(30, val?.total_setoran ?? 0);
+        : val
+          ? getLatestEvaluasiJuz(val as Record<(typeof SETORAN_MONTH_KEYS)[number], number>)
+          : 0;
 
     return {
       santri_id: s.id,
@@ -906,8 +922,19 @@ export async function saveSetoranBulanDirect(params: {
   bulan: number; // 1 - 12
   tipe: TipeSetoran;
   jumlah_juz_tambahan: number;
+  tanggal?: string;
   catatan?: string;
 }) {
+  if (params.tipe === "evaluasi") {
+    if (
+      !Number.isInteger(params.jumlah_juz_tambahan) ||
+      params.jumlah_juz_tambahan < 0 ||
+      params.jumlah_juz_tambahan > 30
+    ) {
+      throw new Error("Nilai evaluasi harus berupa bilangan bulat 1 sampai 30 Juz.");
+    }
+  }
+
   const supabase = createClient();
   const {
     data: { user },
@@ -917,20 +944,26 @@ export async function saveSetoranBulanDirect(params: {
   const lastDay = new Date(params.tahun, params.bulan, 0).getDate();
   const endDate = `${params.tahun}-${String(params.bulan).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
-  // Ambil record yang sudah ada di bulan tersebut
+  // Ambil record yang sudah ada di bulan tersebut (urut terbaru lebih dulu untuk evaluasi)
   const { data: existing, error: fetchErr } = await supabase
     .from("setoran")
     .select("id, jumlah_juz_tambahan, catatan")
     .eq("santri_id", params.santri_id)
     .eq("tipe", params.tipe)
     .gte("tanggal", startDate)
-    .lte("tanggal", endDate);
+    .lte("tanggal", endDate)
+    .order("tanggal", { ascending: false })
+    .order("created_at", { ascending: false });
 
   if (fetchErr) throw new Error(fetchErr.message);
 
-  const jumlahHalaman = Math.max(0, Math.round(params.jumlah_juz_tambahan * 20));
+  const nilaiJuz =
+    params.tipe === "evaluasi"
+      ? Math.round(params.jumlah_juz_tambahan)
+      : params.jumlah_juz_tambahan;
+  const jumlahHalaman = Math.max(0, Math.round(nilaiJuz * 20));
 
-  if (params.jumlah_juz_tambahan <= 0) {
+  if (nilaiJuz <= 0) {
     // Jika diset ke 0 atau negatif, hapus record di bulan ini
     if (existing && existing.length > 0) {
       const ids = existing.map((r) => r.id);
@@ -941,13 +974,16 @@ export async function saveSetoranBulanDirect(params: {
   }
 
   if (existing && existing.length > 0) {
-    // Update record pertama dan sinkronkan jumlah_halaman
+    // Update record utama dan sinkronkan jumlah_halaman
     const firstId = existing[0].id;
     const updatePayload: Record<string, unknown> = {
-      jumlah_juz_tambahan: params.jumlah_juz_tambahan,
+      jumlah_juz_tambahan: nilaiJuz,
       jumlah_halaman: jumlahHalaman,
       penginput: user?.id ?? null,
     };
+    if (params.tanggal) {
+      updatePayload.tanggal = params.tanggal;
+    }
     if (params.catatan !== undefined) {
       updatePayload.catatan = params.catatan.trim() || null;
     }
@@ -956,13 +992,19 @@ export async function saveSetoranBulanDirect(params: {
       .update(updatePayload)
       .eq("id", firstId);
     if (updErr) throw new Error(updErr.message);
+
+    // Pada mode evaluasi, bersihkan record duplikat di bulan yang sama agar 1 bulan = 1 snapshot
+    if (params.tipe === "evaluasi" && existing.length > 1) {
+      const duplicateIds = existing.slice(1).map((r) => r.id);
+      await supabase.from("setoran").delete().in("id", duplicateIds);
+    }
   } else {
     // Insert baru lengkap dengan jumlah_halaman tersinkronisasi
     const { error: insErr } = await supabase.from("setoran").insert({
       santri_id: params.santri_id,
-      tanggal: startDate,
+      tanggal: params.tanggal || startDate,
       tipe: params.tipe,
-      jumlah_juz_tambahan: params.jumlah_juz_tambahan,
+      jumlah_juz_tambahan: nilaiJuz,
       jumlah_halaman: jumlahHalaman,
       catatan: params.catatan?.trim() || null,
       penginput: user?.id ?? null,

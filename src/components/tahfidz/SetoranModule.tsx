@@ -52,9 +52,12 @@ import {
   HALAQOH_KELAS_LIST,
   PEMETAAN_HALAQOH_KELAS,
   formatHalamanToJuzStatus,
+  getLatestEvaluasiJuz,
+  getTargetJuzMaxByKelas,
   type HalaqohBagian,
   type Santri,
   type SetoranBulananRow,
+  type SetoranMonthKey,
   type TipeSetoran,
   type RiwayatSetoranItem,
 } from "@/types/database";
@@ -71,17 +74,135 @@ function toLocalIsoDate(date: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
-const setoranSchema = z.object({
-  santri_id: z.string().uuid("Pilih santri terlebih dahulu"),
-  tanggal: z.string().min(10, "Tanggal wajib diisi"),
-  jumlah_juz_tambahan: z.coerce
-    .number()
-    .min(0.05, "Jumlah setoran minimal 0.05 juz")
-    .max(30, "Jumlah setoran maksimal 30 juz"),
-  catatan: z.string().optional(),
-});
+const MONTH_LIST: { key: SetoranMonthKey; label: string }[] = [
+  { key: "jan", label: "Jan" },
+  { key: "feb", label: "Feb" },
+  { key: "mar", label: "Mar" },
+  { key: "apr", label: "Apr" },
+  { key: "mei", label: "Mei" },
+  { key: "jun", label: "Jun" },
+  { key: "jul", label: "Jul" },
+  { key: "agu", label: "Agu" },
+  { key: "sep", label: "Sep" },
+  { key: "okt", label: "Okt" },
+  { key: "nov", label: "Nov" },
+  { key: "des", label: "Des" },
+];
 
-type SetoranFormValues = z.infer<typeof setoranSchema>;
+function validateEvaluasiMonthValue(
+  row: SetoranBulananRow,
+  monthNum: number,
+  newVal: number
+): string | null {
+  if (!Number.isInteger(newVal) || newVal < 0 || newVal > 30) {
+    return "Nilai evaluasi harus berupa bilangan bulat 1 sampai 30 (tanpa koma).";
+  }
+  if (newVal === 0) return null;
+
+  const targetIdx = monthNum - 1;
+  const currLabel = MONTH_LIST[targetIdx]?.label ?? `Bulan ${monthNum}`;
+
+  // Tolak otomatis jika lebih kecil dari bulan terisi sebelumnya
+  for (let i = targetIdx - 1; i >= 0; i -= 1) {
+    const prevVal = Math.round(Number(row[MONTH_LIST[i].key] ?? 0));
+    if (prevVal > 0) {
+      if (newVal < prevVal) {
+        return `Ditolak: Capaian bulan ${currLabel} (${newVal} Juz) tidak boleh lebih kecil dari bulan ${MONTH_LIST[i].label} (${prevVal} Juz).`;
+      }
+      break;
+    }
+  }
+
+  // Tolak otomatis jika melebihi bulan terisi sesudahnya
+  for (let i = targetIdx + 1; i < MONTH_LIST.length; i += 1) {
+    const nextVal = Math.round(Number(row[MONTH_LIST[i].key] ?? 0));
+    if (nextVal > 0) {
+      if (newVal > nextVal) {
+        return `Ditolak: Capaian bulan ${currLabel} (${newVal} Juz) tidak boleh melebihi bulan ${MONTH_LIST[i].label} (${nextVal} Juz).`;
+      }
+      break;
+    }
+  }
+
+  return null;
+}
+
+interface EvaluasiMonthInputProps {
+  val: number;
+  className: string;
+  title: string;
+  disabled?: boolean;
+  onCommit: (num: number) => Promise<boolean>;
+}
+
+function EvaluasiMonthInput({
+  val,
+  className,
+  title,
+  disabled,
+  onCommit,
+}: EvaluasiMonthInputProps) {
+  const displayVal = val > 0 ? String(Math.round(val)) : "";
+  return (
+    <input
+      type="number"
+      step="1"
+      min="0"
+      max="30"
+      inputMode="numeric"
+      disabled={disabled}
+      defaultValue={displayVal}
+      placeholder="-"
+      onKeyDown={(e) => {
+        if ([".", ",", "e", "E", "+", "-"].includes(e.key)) {
+          e.preventDefault();
+          return;
+        }
+        if (e.key === "Enter") {
+          e.currentTarget.blur();
+        }
+      }}
+      onInput={(e) => {
+        const cleaned = e.currentTarget.value.replace(/\D/g, "");
+        if (cleaned !== e.currentTarget.value) {
+          e.currentTarget.value = cleaned;
+        }
+      }}
+      onBlur={async (e) => {
+        const inputEl = e.currentTarget;
+        const text = inputEl.value.trim();
+        const num = text === "" ? 0 : Number(text);
+        if (num === val) return;
+        const ok = await onCommit(num);
+        if (!ok) {
+          inputEl.value = displayVal;
+        }
+      }}
+      className={className}
+      title={title}
+    />
+  );
+}
+
+function createSetoranSchema(tipe: TipeSetoran) {
+  return z.object({
+    santri_id: z.string().uuid("Pilih santri terlebih dahulu"),
+    tanggal: z.string().min(10, "Tanggal wajib diisi"),
+    jumlah_juz_tambahan: z.coerce
+      .number()
+      .refine((v) => !Number.isNaN(v), "Jumlah juz wajib diisi")
+      .refine(
+        (v) => (tipe === "evaluasi" ? Number.isInteger(v) && v >= 1 && v <= 30 : v >= 0.05 && v <= 30),
+        tipe === "evaluasi"
+          ? "Kondisi juz evaluasi harus bilangan bulat 1 sampai 30 (tanpa koma)"
+          : "Jumlah setoran harus antara 0.05 sampai 30 juz"
+      ),
+    catatan: z.string().optional(),
+  });
+}
+
+const baseSetoranSchema = createSetoranSchema("juz_baru");
+type SetoranFormValues = z.infer<typeof baseSetoranSchema>;
 
 interface SetoranModuleProps {
   tipe: TipeSetoran;
@@ -236,11 +357,11 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     reset,
     formState: { errors, isSubmitting },
   } = useForm<SetoranFormValues>({
-    resolver: zodResolver(setoranSchema),
+    resolver: zodResolver(createSetoranSchema(tipe)),
     defaultValues: {
       santri_id: "",
       tanggal: toLocalIsoDate(now),
-      jumlah_juz_tambahan: 0.5,
+      jumlah_juz_tambahan: tipe === "evaluasi" ? 1 : 0.5,
       catatan: "",
     },
   });
@@ -395,7 +516,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     const currentK = Number(selectedNaikHalaqohSantri.halaqoh_kelas) || 1;
     const targetK = targetHalaqohChoice.kelas;
     const tingkatDiff = targetK - currentK;
-    const targetMin = 3;
+    const targetMin = tipe === "evaluasi" ? getTargetJuzMaxByKelas(currentK) : 3;
     const isTargetMet = selectedNaikHalaqohSantri.total_setoran >= targetMin;
 
     // Cek apakah ada kondisi yang memerlukan konfirmasi peringatan ulang:
@@ -455,8 +576,54 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   };
 
   const onSubmit = async (values: SetoranFormValues) => {
-    // Validasi batas akumulasi maksimal 30 Juz
     const currentSantri = rows.find((r) => r.santri_id === values.santri_id);
+
+    if (tipe === "evaluasi") {
+      const [yStr, mStr] = values.tanggal.split("-");
+      const targetYear = Number(yStr);
+      const monthNum = Number(mStr);
+
+      if (!targetYear || !monthNum || monthNum < 1 || monthNum > 12) {
+        showToast("error", "Format tanggal tidak valid.");
+        return;
+      }
+
+      if (targetYear === tahun && currentSantri) {
+        const errMsg = validateEvaluasiMonthValue(
+          currentSantri,
+          monthNum,
+          values.jumlah_juz_tambahan
+        );
+        if (errMsg) {
+          showToast("error", errMsg);
+          return;
+        }
+      }
+
+      try {
+        await saveSetoranBulanDirect({
+          santri_id: values.santri_id,
+          tahun: targetYear,
+          bulan: monthNum,
+          tipe: "evaluasi",
+          jumlah_juz_tambahan: values.jumlah_juz_tambahan,
+          tanggal: values.tanggal,
+          catatan: values.catatan,
+        });
+        const monthLabel = MONTH_LIST[monthNum - 1]?.label ?? String(monthNum);
+        showToast(
+          "success",
+          `Capaian evaluasi bulan ${monthLabel} ${targetYear} (Juz ${values.jumlah_juz_tambahan}) berhasil disimpan.`
+        );
+        setModalOpen(false);
+        loadData();
+      } catch (err) {
+        showToast("error", err instanceof Error ? err.message : "Gagal menyimpan evaluasi.");
+      }
+      return;
+    }
+
+    // Validasi batas akumulasi maksimal 30 Juz (khusus mode juz_baru)
     const currentTotal = currentSantri?.total_setoran || 0;
     if (currentTotal + values.jumlah_juz_tambahan > 30) {
       const sisa = Math.max(0, Math.round((30 - currentTotal) * 100) / 100);
@@ -524,30 +691,14 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         Okt: r.okt,
         Nov: r.nov,
         Des: r.des,
-        "Total Setoran": r.total_setoran,
+        "Capaian Juz Saat Ini": r.total_setoran,
       };
     });
     exportJsonToExcel(formatted, `Rekap_${tipe}_${tahun}`, "RekapSetoran");
     showToast("success", "Rekap setoran berhasil diekspor ke Excel.");
   };
 
-  const monthKeys: { key: keyof SetoranBulananRow; label: string }[] = useMemo(
-    () => [
-      { key: "jan", label: "Jan" },
-      { key: "feb", label: "Feb" },
-      { key: "mar", label: "Mar" },
-      { key: "apr", label: "Apr" },
-      { key: "mei", label: "Mei" },
-      { key: "jun", label: "Jun" },
-      { key: "jul", label: "Jul" },
-      { key: "agu", label: "Agu" },
-      { key: "sep", label: "Sep" },
-      { key: "okt", label: "Okt" },
-      { key: "nov", label: "Nov" },
-      { key: "des", label: "Des" },
-    ],
-    []
-  );
+  const monthKeys = MONTH_LIST;
 
   // 3 bulan terakhir untuk Mode Kartu agar ringkas dan muat dalam grid 2 kolom
   const cardMonthKeys = useMemo(() => {
@@ -563,44 +714,52 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     monthNum: number,
     newVal: number,
     santriName: string
-  ) => {
+  ): Promise<boolean> => {
     if (!canEdit) {
       showToast("error", "Anda hanya memiliki hak akses baca. Tidak diizinkan mengubah nilai setoran.");
-      return;
+      return false;
     }
     const monthKey = monthKeys[monthNum - 1]?.key;
-    if (!monthKey) return;
+    if (!monthKey) return false;
 
-    if (newVal < 0) {
-      showToast("error", "Jumlah setoran tidak boleh bernilai negatif.");
-      loadData();
-      return;
-    }
-
-    // Cari santri saat ini di state rows atau selectedEvaluasiSantri
     const currentSantri = rows.find((r) => r.santri_id === santriId);
-    if (!currentSantri) return;
+    if (!currentSantri) return false;
 
-    // Hitung total 11 bulan lainnya (selain bulan yang sedang diubah)
-    const otherMonthsTotal = monthKeys.reduce((sum, m) => {
-      if (m.key === monthKey) return sum;
-      return sum + (Number(currentSantri[m.key]) || 0);
-    }, 0);
+    let safeTotal = 0;
 
-    const projectedTotal = Math.round((otherMonthsTotal + newVal) * 100) / 100;
+    if (tipe === "evaluasi") {
+      const errMsg = validateEvaluasiMonthValue(currentSantri, monthNum, newVal);
+      if (errMsg) {
+        showToast("error", errMsg);
+        return false;
+      }
+      safeTotal = getLatestEvaluasiJuz({ ...currentSantri, [monthKey]: newVal });
+    } else {
+      if (newVal < 0) {
+        showToast("error", "Jumlah setoran tidak boleh bernilai negatif.");
+        loadData();
+        return false;
+      }
 
-    // KUNCI: Akumulasi setoran dalam setahun tidak boleh melebihi 30 Juz
-    if (projectedTotal > 30) {
-      const maxAllowed = Math.max(0, Math.round((30 - otherMonthsTotal) * 100) / 100);
-      showToast(
-        "error",
-        `Gagal: Akumulasi setoran maksimal adalah 30 Juz (100%). Bulan ${monthKeys[monthNum - 1].label} maksimal hanya dapat diisi ${maxAllowed} Juz.`
-      );
-      loadData();
-      return;
+      const otherMonthsTotal = monthKeys.reduce((sum, m) => {
+        if (m.key === monthKey) return sum;
+        return sum + (Number(currentSantri[m.key]) || 0);
+      }, 0);
+
+      const projectedTotal = Math.round((otherMonthsTotal + newVal) * 100) / 100;
+
+      if (projectedTotal > 30) {
+        const maxAllowed = Math.max(0, Math.round((30 - otherMonthsTotal) * 100) / 100);
+        showToast(
+          "error",
+          `Gagal: Akumulasi setoran maksimal adalah 30 Juz (100%). Bulan ${monthKeys[monthNum - 1].label} maksimal hanya dapat diisi ${maxAllowed} Juz.`
+        );
+        loadData();
+        return false;
+      }
+
+      safeTotal = Math.min(30, projectedTotal);
     }
-
-    const safeTotal = Math.min(30, projectedTotal);
 
     // Optimistic update di list rows utama
     setRows((prev) =>
@@ -626,14 +785,25 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         tipe,
         jumlah_juz_tambahan: newVal,
       });
-      showToast(
-        "success",
-        `Setoran ${santriName} bulan ${monthKeys[monthNum - 1].label} (${newVal} Juz) tersimpan.`
-      );
+      if (tipe === "evaluasi") {
+        showToast(
+          "success",
+          newVal === 0
+            ? `Capaian ${santriName} bulan ${monthKeys[monthNum - 1].label} dihapus.`
+            : `Capaian ${santriName} bulan ${monthKeys[monthNum - 1].label} (Juz ${newVal}) tersimpan.`
+        );
+      } else {
+        showToast(
+          "success",
+          `Setoran ${santriName} bulan ${monthKeys[monthNum - 1].label} (${newVal} Juz) tersimpan.`
+        );
+      }
+      return true;
     } catch (err) {
       console.error(err);
       showToast("error", "Gagal menyimpan setoran langsung.");
       loadData();
+      return false;
     }
   };
 
@@ -783,33 +953,20 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
               const val = Number(row.original[m.key] ?? 0);
               return (
                 <div className="flex items-center justify-center p-0">
-                  <input
-                    type="number"
-                    step="0.05"
-                    min="0"
-                    max="30"
+                  <EvaluasiMonthInput
                     key={`${row.original.santri_id}_${String(m.key)}_${val}`}
-                    defaultValue={val > 0 ? val : ""}
-                    placeholder="-"
-                    onBlur={(e) => {
-                      const text = e.target.value.trim();
-                      const num = text === "" ? 0 : Number(text);
-                      if (num !== val) {
-                        handleDirectMonthChange(
-                          row.original.santri_id,
-                          mIdx + 1,
-                          num,
-                          row.original.nama_lengkap
-                        );
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        (e.target as HTMLInputElement).blur();
-                      }
-                    }}
+                    val={val}
+                    disabled={!canEdit}
+                    onCommit={(num) =>
+                      handleDirectMonthChange(
+                        row.original.santri_id,
+                        mIdx + 1,
+                        num,
+                        row.original.nama_lengkap
+                      )
+                    }
                     className="h-7 w-11 text-center font-mono text-xs font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
-                    title={`Isi/ubah setoran ${row.original.nama_lengkap} bulan ${m.label}`}
+                    title={`Isi/ubah kondisi juz ${row.original.nama_lengkap} bulan ${m.label} (bilangan bulat 1-30)`}
                   />
                 </div>
               );
@@ -817,7 +974,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
           })),
           {
             accessorKey: "total_setoran",
-            header: "TOTAL SETORAN",
+            header: "CAPAIAN",
             cell: ({ row }: { row: { original: SetoranBulananRow } }) => (
               <span className="font-mono font-bold text-emerald-900 dark:text-emerald-300">
                 {row.original.total_setoran} Juz
@@ -828,7 +985,8 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
             id: "status_evaluasi",
             header: "STATUS TARGET",
             cell: ({ row }: { row: { original: SetoranBulananRow } }) => {
-              const isTargetMet = row.original.total_setoran >= 3;
+              const targetMin = getTargetJuzMaxByKelas(row.original.halaqoh_kelas);
+              const isTargetMet = row.original.total_setoran >= targetMin;
               return (
                 <div className="flex items-center gap-1.5 whitespace-nowrap">
                   {isTargetMet ? (
@@ -1038,7 +1196,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
               reset({
                 santri_id: santriOptions[0]?.id ?? "",
                 tanggal: toLocalIsoDate(now),
-                jumlah_juz_tambahan: 0.5,
+                jumlah_juz_tambahan: tipe === "evaluasi" ? 1 : 0.5,
                 catatan: "",
               });
               setModalOpen(true);
@@ -1168,7 +1326,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                                     {m.label}
                                   </th>
                                 ))}
-                                <th className="px-1 py-1.5 font-semibold text-center w-11 text-[11px]">Total</th>
+                                <th className="px-1 py-1.5 font-semibold text-center w-11 text-[11px]">Capaian</th>
                                 <th className="no-print px-1.5 py-1.5 font-semibold text-center w-24 text-[11px]">Aksi</th>
                               </>
                             )}
@@ -1180,7 +1338,9 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                               r.total_halaman !== undefined
                                 ? r.total_halaman
                                 : Math.round(r.total_setoran * 20);
-                            const isTargetMet = tipe === "juz_baru" ? totalHlm >= 60 : r.total_setoran >= 3;
+                            const targetKelas = getTargetJuzMaxByKelas(r.halaqoh_kelas);
+                            const isTargetMet =
+                              tipe === "juz_baru" ? totalHlm >= 60 : r.total_setoran >= targetKelas;
                             const progressPct = Math.min(100, Math.round((totalHlm / 60) * 100));
 
                             if (tipe === "juz_baru") {
@@ -1259,33 +1419,20 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                                   const mIdx = monthKeys.findIndex((mk) => mk.key === m.key);
                                   return (
                                     <td key={String(m.key)} className="px-0.5 py-1 text-center font-mono p-0">
-                                      <input
-                                        type="number"
-                                        step="0.05"
-                                        min="0"
-                                        max="30"
+                                      <EvaluasiMonthInput
                                         key={`${r.santri_id}_${String(m.key)}_${val}`}
-                                        defaultValue={val > 0 ? val : ""}
-                                        placeholder="-"
-                                        onBlur={(e) => {
-                                          const text = e.target.value.trim();
-                                          const num = text === "" ? 0 : Number(text);
-                                          if (num !== val) {
-                                            handleDirectMonthChange(
-                                              r.santri_id,
-                                              mIdx + 1,
-                                              num,
-                                              r.nama_lengkap
-                                            );
-                                          }
-                                        }}
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Enter") {
-                                            (e.target as HTMLInputElement).blur();
-                                          }
-                                        }}
+                                        val={val}
+                                        disabled={!canEdit}
+                                        onCommit={(num) =>
+                                          handleDirectMonthChange(
+                                            r.santri_id,
+                                            mIdx + 1,
+                                            num,
+                                            r.nama_lengkap
+                                          )
+                                        }
                                         className="h-6 w-9 text-center font-mono text-[11px] font-bold bg-transparent hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded border border-transparent hover:border-slate-300 focus:border-emerald-500 dark:hover:bg-slate-800 dark:focus:bg-slate-900 transition"
-                                        title={`Isi/ubah setoran ${r.nama_lengkap} bulan ${m.label}`}
+                                        title={`Isi/ubah kondisi juz ${r.nama_lengkap} bulan ${m.label} (bilangan bulat 1-30)`}
                                       />
                                     </td>
                                   );
@@ -1601,13 +1748,24 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Jumlah Juz (Desimal)
+                    {tipe === "evaluasi" ? "Kondisi Juz Saat Ini (1 - 30)" : "Jumlah Juz (Desimal)"}
                   </label>
                   <input
                     type="number"
-                    step="0.05"
-                    min="0"
-                    placeholder="Contoh: 0.5"
+                    step={tipe === "evaluasi" ? "1" : "0.05"}
+                    min={tipe === "evaluasi" ? "1" : "0"}
+                    max="30"
+                    inputMode={tipe === "evaluasi" ? "numeric" : "decimal"}
+                    placeholder={tipe === "evaluasi" ? "Contoh: 6" : "Contoh: 0.5"}
+                    onKeyDown={
+                      tipe === "evaluasi"
+                        ? (e) => {
+                            if ([".", ",", "e", "E", "+", "-"].includes(e.key)) {
+                              e.preventDefault();
+                            }
+                          }
+                        : undefined
+                    }
                     {...register("jumlah_juz_tambahan")}
                     className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-mono text-slate-800 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
@@ -1710,7 +1868,10 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                 <div className="mt-3 flex items-center justify-between border-t border-slate-200/80 pt-2.5 text-xs dark:border-slate-700/60">
                   <span className="text-slate-500">Target Halaqoh Ini:</span>
                   <span className="font-bold text-slate-800 dark:text-slate-200">
-                    {PEMETAAN_HALAQOH_KELAS[selectedEvaluasiSantri.halaqoh_kelas] || "-"} (Minimal 3 Juz / 60 Halaman)
+                    {PEMETAAN_HALAQOH_KELAS[selectedEvaluasiSantri.halaqoh_kelas] || "-"}{" "}
+                    {tipe === "evaluasi"
+                      ? `(Target Tuntas: Juz ${getTargetJuzMaxByKelas(selectedEvaluasiSantri.halaqoh_kelas)})`
+                      : "(Minimal 3 Juz / 60 Halaman)"}
                   </span>
                 </div>
               </div>
@@ -1726,18 +1887,23 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                           : Math.round(selectedEvaluasiSantri.total_setoran * 20))
                     : Math.round(selectedEvaluasiSantri.total_setoran * 20);
 
-                const targetMin = 3;
+                const targetMin =
+                  tipe === "evaluasi"
+                    ? getTargetJuzMaxByKelas(selectedEvaluasiSantri.halaqoh_kelas)
+                    : 3;
                 const targetHlm = 60;
-                const safeTotalJuz = Math.min(30, Number((totalHlm / 20).toFixed(2)));
                 const isCompleted = tipe === "juz_baru" ? totalHlm >= targetHlm : selectedEvaluasiSantri.total_setoran >= targetMin;
-                const progressPct = Math.min(100, Math.round((totalHlm / targetHlm) * 100));
+                const progressPct =
+                  tipe === "juz_baru"
+                    ? Math.min(100, Math.round((totalHlm / targetHlm) * 100))
+                    : Math.min(100, Math.round((selectedEvaluasiSantri.total_setoran / targetMin) * 100));
                 const statusStr = formatHalamanToJuzStatus(totalHlm);
 
                 return (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-slate-700 dark:text-slate-300">
-                        {tipe === "evaluasi" ? "Capaian Setoran Evaluasi:" : "Capaian Setoran Juz Baru:"}
+                        {tipe === "evaluasi" ? "Capaian Juz Saat Ini:" : "Capaian Setoran Juz Baru:"}
                       </span>
                       <span className="font-mono font-bold text-emerald-800 dark:text-emerald-300">
                         {tipe === "juz_baru"
@@ -1792,7 +1958,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                           <p className="text-[11px] text-amber-700 dark:text-amber-400">
                             {tipe === "juz_baru"
                               ? `Kurang ${formatHalamanToJuzStatus(Math.max(0, targetHlm - totalHlm))} (${Math.max(0, targetHlm - totalHlm)} Hlm) untuk target 3 Juz halaqoh ini.`
-                              : `Kurang ${(targetMin - safeTotalJuz).toFixed(2)} Juz untuk menyelesaikan target halaqoh ini.`}
+                              : `Kurang ${Math.max(0, targetMin - selectedEvaluasiSantri.total_setoran)} Juz untuk menyelesaikan target halaqoh ini.`}
                           </p>
                         </div>
 
@@ -1974,10 +2140,10 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                      Rincian Setoran Bulanan ({tahun}):
+                      Rincian Kondisi Juz Bulanan ({tahun}):
                     </p>
                     <span className="text-[11px] text-slate-400">
-                      Dapat diisi langsung & otomatis simpan
+                      Isi bilangan bulat 1-30 (otomatis simpan)
                     </span>
                   </div>
                   <div className="grid grid-cols-6 gap-2 text-center text-xs">
@@ -1993,33 +2159,20 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
                           }`}
                         >
                           <div className="text-[10px] font-bold uppercase text-slate-500 mb-1">{m.label}</div>
-                          <input
-                            type="number"
-                            step="0.05"
-                            min="0"
-                            max="30"
+                          <EvaluasiMonthInput
                             key={`${selectedEvaluasiSantri.santri_id}_${String(m.key)}_${val}`}
-                            defaultValue={val > 0 ? val : ""}
-                            placeholder="-"
-                            onBlur={(e) => {
-                              const text = e.target.value.trim();
-                              const num = text === "" ? 0 : Number(text);
-                              if (num !== val) {
-                                handleDirectMonthChange(
-                                  selectedEvaluasiSantri.santri_id,
-                                  mIdx + 1,
-                                  num,
-                                  selectedEvaluasiSantri.nama_lengkap
-                                );
-                              }
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                (e.target as HTMLInputElement).blur();
-                              }
-                            }}
+                            val={val}
+                            disabled={!canEdit}
+                            onCommit={(num) =>
+                              handleDirectMonthChange(
+                                selectedEvaluasiSantri.santri_id,
+                                mIdx + 1,
+                                num,
+                                selectedEvaluasiSantri.nama_lengkap
+                              )
+                            }
                             className="w-full h-8 text-center font-mono text-sm font-bold bg-white/70 dark:bg-slate-900/70 rounded-lg border border-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 dark:border-slate-700"
-                            title={`Ubah setoran bulan ${m.label}`}
+                            title={`Ubah kondisi juz bulan ${m.label} (bilangan bulat 1-30)`}
                           />
                         </div>
                       );
@@ -2084,7 +2237,10 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
             {/* Keterangan & Kriteria Rekomendasi */}
             <div className="py-3 border-b border-slate-100 dark:border-slate-800 text-xs shrink-0 space-y-2">
               {(() => {
-                const targetMin = 3;
+                const targetMin =
+                  tipe === "evaluasi"
+                    ? getTargetJuzMaxByKelas(selectedNaikHalaqohSantri.halaqoh_kelas)
+                    : 3;
                 const safeTotal = Math.min(30, selectedNaikHalaqohSantri.total_setoran);
                 const isTargetMet = safeTotal >= targetMin;
 

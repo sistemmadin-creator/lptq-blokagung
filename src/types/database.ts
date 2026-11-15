@@ -216,6 +216,54 @@ export const PEMETAAN_HALAQOH_KELAS: Record<number, string> = {
   10: "Juz 28 - 30",
 };
 
+/**
+ * Mengembalikan batas atas Juz target tuntas untuk kelas halaqoh tertentu (Kelas k -> k * 3).
+ */
+export function getTargetJuzMaxByKelas(kelas?: number | null): number {
+  const safeKelas = Math.min(10, Math.max(1, Math.round(Number(kelas) || 1)));
+  return safeKelas * 3;
+}
+
+/**
+ * Mengembalikan batas bawah Juz awal untuk kelas halaqoh tertentu (Kelas k -> (k - 1) * 3 + 1).
+ */
+export function getTargetJuzMinByKelas(kelas?: number | null): number {
+  const safeKelas = Math.min(10, Math.max(1, Math.round(Number(kelas) || 1)));
+  return (safeKelas - 1) * 3 + 1;
+}
+
+export const SETORAN_MONTH_KEYS = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "mei",
+  "jun",
+  "jul",
+  "agu",
+  "sep",
+  "okt",
+  "nov",
+  "des",
+] as const;
+
+export type SetoranMonthKey = (typeof SETORAN_MONTH_KEYS)[number];
+
+/**
+ * Mengambil kondisi Juz terbaru pada mode Evaluasi dari bulan paling akhir yang terisi (> 0).
+ */
+export function getLatestEvaluasiJuz(
+  row: Partial<Record<SetoranMonthKey, number>>
+): number {
+  for (let i = SETORAN_MONTH_KEYS.length - 1; i >= 0; i -= 1) {
+    const val = Math.round(Number(row[SETORAN_MONTH_KEYS[i]] ?? 0));
+    if (val > 0) {
+      return Math.min(30, val);
+    }
+  }
+  return 0;
+}
+
 const rangeJuz = (start: number, end: number): number[] =>
   Array.from({ length: end - start + 1 }, (_, idx) => start + idx);
 

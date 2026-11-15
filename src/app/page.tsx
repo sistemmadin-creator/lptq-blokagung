@@ -43,6 +43,61 @@ function toLocalIsoDate(date: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * Menghitung kenaikan Juz (delta) untuk setiap log evaluasi berdasarkan capaian evaluasi sebelumnya.
+ */
+async function fetchEvaluasiDeltaMap(
+  supabase: ReturnType<typeof createClient>,
+  santriIds: string[],
+  maxDate?: string
+): Promise<Map<string, number>> {
+  const deltaMap = new Map<string, number>();
+  const uniqueIds = Array.from(new Set(santriIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return deltaMap;
+
+  const allRows: {
+    id: string;
+    santri_id: string;
+    tanggal: string;
+    created_at: string;
+    jumlah_juz_tambahan: number;
+  }[] = [];
+
+  const CHUNK_SIZE = 150;
+  for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+    let query = supabase
+      .from("setoran")
+      .select("id, santri_id, tanggal, created_at, jumlah_juz_tambahan")
+      .eq("tipe", "evaluasi")
+      .in("santri_id", chunk)
+      .order("tanggal", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (maxDate) {
+      query = query.lte("tanggal", maxDate);
+    }
+
+    const { data } = await query;
+    if (data) allRows.push(...data);
+  }
+
+  allRows.sort((a, b) => {
+    if (a.tanggal !== b.tanggal) return a.tanggal.localeCompare(b.tanggal);
+    return String(a.created_at).localeCompare(String(b.created_at));
+  });
+
+  const lastValBySantri = new Map<string, number>();
+  allRows.forEach((row) => {
+    const currVal = Math.round(Number(row.jumlah_juz_tambahan ?? 0));
+    const prevVal = lastValBySantri.get(row.santri_id) ?? 0;
+    deltaMap.set(row.id, Math.max(0, currVal - prevVal));
+    lastValBySantri.set(row.santri_id, currVal);
+  });
+
+  return deltaMap;
+}
+
 interface RecentSetoranItem {
   id: string;
   tanggal: string;
@@ -127,6 +182,14 @@ export default function DashboardPage() {
         const { data, error: qErr } = await query;
         if (qErr) throw qErr;
 
+        const evalSantriIds = (data ?? [])
+          .filter((r) => r.tipe === "evaluasi" && r.santri_id)
+          .map((r) => String(r.santri_id));
+        const evalDeltaMap =
+          fType === "juz_baru"
+            ? new Map<string, number>()
+            : await fetchEvaluasiDeltaMap(supabase, evalSantriIds, endDate);
+
         // Grouping data per tanggal
         const groupedByDate: Record<
           string,
@@ -147,7 +210,11 @@ export default function DashboardPage() {
             if (row.santri_id) {
               groupedByDate[dStr].santriSet.add(row.santri_id);
             }
-            groupedByDate[dStr].totalJuz += Number(row.jumlah_juz_tambahan ?? 0);
+            const juzVal =
+              row.tipe === "evaluasi"
+                ? (evalDeltaMap.get(String(row.id)) ?? 0)
+                : Number(row.jumlah_juz_tambahan ?? 0);
+            groupedByDate[dStr].totalJuz += juzVal;
             const rawSantri = Array.isArray(row.santri) ? row.santri[0] : row.santri;
             if (rawSantri?.nama_lengkap) {
               groupedByDate[dStr].santriNames.add(rawSantri.nama_lengkap);
@@ -219,7 +286,7 @@ export default function DashboardPage() {
         supabase.from("absensi").select("sesi, status").eq("tanggal", todayIso),
         supabase
           .from("setoran")
-          .select("tipe, jumlah_juz_tambahan")
+          .select("id, santri_id, tipe, jumlah_juz_tambahan")
           .gte("tanggal", startMonth),
         supabase
           .from("v_khotmil_rekap")
@@ -250,11 +317,16 @@ export default function DashboardPage() {
         ? 0
         : malamRecords.filter((a) => a.status === "hadir").length;
 
+      const evalMonthSantriIds = (setoranRes.data ?? [])
+        .filter((s) => s.tipe === "evaluasi" && s.santri_id)
+        .map((s) => String(s.santri_id));
+      const evalMonthDeltaMap = await fetchEvaluasiDeltaMap(supabase, evalMonthSantriIds);
+
       let totalJuzBaru = 0;
       let totalEvaluasi = 0;
       (setoranRes.data ?? []).forEach((s) => {
         if (s.tipe === "juz_baru") totalJuzBaru += Number(s.jumlah_juz_tambahan ?? 0);
-        if (s.tipe === "evaluasi") totalEvaluasi += Number(s.jumlah_juz_tambahan ?? 0);
+        if (s.tipe === "evaluasi") totalEvaluasi += evalMonthDeltaMap.get(String(s.id)) ?? 0;
       });
 
       const k15: Record<number, { lulus: number; belum: number }> = {};
@@ -844,7 +916,9 @@ export default function DashboardPage() {
                             </span>
                           </td>
                           <td className="py-3 text-right font-mono font-bold text-slate-900 dark:text-white">
-                            +{item.jumlah_juz_tambahan} Juz
+                            {item.tipe === "evaluasi"
+                              ? `Juz ${Math.round(item.jumlah_juz_tambahan)}`
+                              : `+${item.jumlah_juz_tambahan} Juz`}
                           </td>
                         </tr>
                       );
