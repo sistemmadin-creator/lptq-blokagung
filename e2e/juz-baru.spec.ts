@@ -57,4 +57,69 @@ test.describe('Modul Setoran Juz Baru (Pembimbing Halaqoh)', () => {
     await page.getByRole('button', { name: 'Tutup', exact: true }).click();
     await expect(modalTitle).not.toBeVisible();
   });
+
+  test('tombol ++ membuka modal atur capaian Juz & Halaman massal per halaqoh tanpa console error', async ({ page }) => {
+    const consoleErrors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text());
+    });
+
+    await page.goto('/tahfidz/umum/juz-baru');
+
+    const bulkBtn = page.getByRole('button', { name: 'Atur Capaian Juz dan Halaman Santri' });
+    const addBtn = page.getByRole('button', { name: 'Input Log Setoran' });
+    await expect(bulkBtn).toBeVisible();
+    await expect(addBtn).toBeVisible();
+
+    // Pastikan tombol ++ berada di sebelah kiri tombol +
+    const bulkBox = await bulkBtn.boundingBox();
+    const addBox = await addBtn.boundingBox();
+    expect(bulkBox).not.toBeNull();
+    expect(addBox).not.toBeNull();
+    if (bulkBox && addBox) {
+      expect(bulkBox.x).toBeLessThan(addBox.x);
+    }
+
+    // Buka modal ++
+    await bulkBtn.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /Atur Capaian Juz & Halaman Santri/i })).toBeVisible();
+
+    // Tunggu daftar santri termuat di dalam modal
+    const firstJuzInput = dialog.locator('input[aria-label^="Juz untuk "]').first();
+    const firstHalamanInput = dialog.locator('input[aria-label^="Halaman untuk "]').first();
+    await expect(firstJuzInput).toBeVisible();
+    await expect(firstHalamanInput).toBeVisible();
+
+    // Uji validasi halaman > 19
+    await firstHalamanInput.fill('20');
+    await expect(dialog.getByText(/Halaman harus 0 sampai 19/i)).toBeVisible();
+    const saveBtn = dialog.getByRole('button', { name: /Simpan Perubahan/i });
+    await expect(saveBtn).toBeDisabled();
+
+    // Uji perubahan valid & penghitung perubahan
+    await firstJuzInput.fill('2');
+    await firstHalamanInput.fill('5');
+    await expect(dialog.getByText(/1 santri siap disimpan perubahannya/i)).toBeVisible();
+    await expect(saveBtn).toBeEnabled();
+
+    // Uji konfirmasi buang perubahan saat klik Batal lalu lanjut edit & reset
+    await dialog.getByRole('button', { name: 'Batal', exact: true }).click();
+    await expect(dialog.getByText(/Ada 1 perubahan yang belum disimpan/i)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Lanjut Edit' }).click();
+
+    await dialog.getByRole('button', { name: 'Reset', exact: true }).click();
+    await expect(dialog.getByText(/Belum ada perubahan nilai Juz atau Halaman/i)).toBeVisible();
+
+    // Uji tutup dengan Escape ketika tidak ada perubahan
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+
+    // Pastikan tombol ++ tidak muncul di halaman Evaluasi
+    await page.goto('/tahfidz/umum/evaluasi');
+    await expect(page.getByRole('heading', { name: /Evaluasi Hafalan/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Atur Capaian Juz dan Halaman Santri' })).not.toBeVisible();
+
+    expect(consoleErrors).toEqual([]);
+  });
 });

@@ -654,14 +654,21 @@ export async function fetchSetoranBulananMerged(
  */
 export async function fetchRiwayatSetoranHalaman(
   santri_id: string,
-  tipe: TipeSetoran = "juz_baru"
+  tipe: TipeSetoran = "juz_baru",
+  tahun?: number
 ): Promise<RiwayatSetoranItem[]> {
   const supabase = createClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("setoran")
     .select("id, santri_id, tanggal, tipe, jumlah_halaman, jumlah_juz_tambahan, catatan, penginput, created_at")
     .eq("santri_id", santri_id)
-    .eq("tipe", tipe)
+    .eq("tipe", tipe);
+
+  if (tahun) {
+    query = query.gte("tanggal", `${tahun}-01-01`).lte("tanggal", `${tahun}-12-31`);
+  }
+
+  const { data, error } = await query
     .order("tanggal", { ascending: true })
     .order("created_at", { ascending: true });
 
@@ -732,6 +739,129 @@ export async function deleteSetoranLogById(id: string): Promise<void> {
   const supabase = createClient();
   const { error } = await supabase.from("setoran").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+export interface BulkCapaianJuzBaruItem {
+  santri_id: string;
+  targetTotalHalaman: number;
+}
+
+/**
+ * Mengatur capaian total Juz & Halaman santri pada tahun aktif secara massal (tombol ++).
+ * Mengganti seluruh catatan setoran juz_baru santri pada tahun terkait menjadi 1 data capaian awal baru.
+ */
+export async function batchSetCapaianJuzBaru(params: {
+  tahun: number;
+  tanggal: string;
+  items: BulkCapaianJuzBaruItem[];
+}): Promise<{
+  succeededIds: string[];
+  failedItems: { santri_id: string; error: string }[];
+}> {
+  if (!params.items || params.items.length === 0) {
+    return { succeededIds: [], failedItems: [] };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const startYear = `${params.tahun}-01-01`;
+  const endYear = `${params.tahun}-12-31`;
+  const penginput = user?.id ?? null;
+
+  const processItem = async (item: BulkCapaianJuzBaruItem): Promise<string> => {
+    const safeHalaman = Math.max(0, Math.min(600, Math.round(item.targetTotalHalaman)));
+    const jumlahJuz = Number((safeHalaman / 20).toFixed(2));
+    const statusLabel = formatHalamanToJuzStatus(safeHalaman);
+    const catatan = `[Atur Langsung ++] Capaian diatur menjadi ${statusLabel}`;
+
+    const { data: existingRows, error: fetchErr } = await supabase
+      .from("setoran")
+      .select("id")
+      .eq("santri_id", item.santri_id)
+      .eq("tipe", "juz_baru")
+      .gte("tanggal", startYear)
+      .lte("tanggal", endYear);
+
+    if (fetchErr) throw new Error(fetchErr.message);
+    const existingIds = (existingRows ?? []).map((r) => r.id);
+
+    if (safeHalaman === 0) {
+      if (existingIds.length > 0) {
+        const { error: delErr } = await supabase.from("setoran").delete().in("id", existingIds);
+        if (delErr) throw new Error(delErr.message);
+      }
+      return item.santri_id;
+    }
+
+    if (existingIds.length === 1) {
+      const { error: updErr } = await supabase
+        .from("setoran")
+        .update({
+          tanggal: params.tanggal,
+          jumlah_halaman: safeHalaman,
+          jumlah_juz_tambahan: jumlahJuz,
+          catatan,
+          penginput,
+        })
+        .eq("id", existingIds[0]);
+
+      if (updErr) throw new Error(updErr.message);
+      return item.santri_id;
+    }
+
+    const { data: insertedRow, error: insErr } = await supabase
+      .from("setoran")
+      .insert({
+        santri_id: item.santri_id,
+        tanggal: params.tanggal,
+        tipe: "juz_baru",
+        jumlah_halaman: safeHalaman,
+        jumlah_juz_tambahan: jumlahJuz,
+        catatan,
+        penginput,
+      })
+      .select("id")
+      .single();
+
+    if (insErr) throw new Error(insErr.message);
+
+    if (existingIds.length > 0) {
+      const { error: delErr } = await supabase.from("setoran").delete().in("id", existingIds);
+      if (delErr) {
+        // Rollback baris baru agar total halaman tidak menjadi ganda
+        if (insertedRow?.id) {
+          await supabase.from("setoran").delete().eq("id", insertedRow.id);
+        }
+        throw new Error(delErr.message);
+      }
+    }
+
+    return item.santri_id;
+  };
+
+  const succeededIds: string[] = [];
+  const failedItems: { santri_id: string; error: string }[] = [];
+  const CHUNK_SIZE = 10;
+
+  for (let i = 0; i < params.items.length; i += CHUNK_SIZE) {
+    const chunk = params.items.slice(i, i + CHUNK_SIZE);
+    const results = await Promise.allSettled(chunk.map((item) => processItem(item)));
+
+    results.forEach((res, idx) => {
+      const santriId = chunk[idx].santri_id;
+      if (res.status === "fulfilled") {
+        succeededIds.push(santriId);
+      } else {
+        const message = res.reason instanceof Error ? res.reason.message : String(res.reason);
+        failedItems.push({ santri_id: santriId, error: message });
+      }
+    });
+  }
+
+  return { succeededIds, failedItems };
 }
 
 /**

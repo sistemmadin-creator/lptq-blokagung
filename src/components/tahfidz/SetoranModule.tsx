@@ -60,6 +60,7 @@ import {
 } from "@/types/database";
 import { DataTable } from "@/components/ui/DataTable";
 import { HalaqohBadge } from "@/components/ui/Badges";
+import { BulkSetCapaianModal } from "@/components/tahfidz/BulkSetCapaianModal";
 import { exportJsonToExcel } from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
 
@@ -101,6 +102,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
 
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   // Mode Tampilan: Kartu vs Tabel (Default Kartu)
   const [viewMode, setViewMode] = useState<"kartu" | "tabel">("kartu");
@@ -135,7 +137,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     async (santriId: string) => {
       setLoadingRiwayat(true);
       try {
-        const data = await fetchRiwayatSetoranHalaman(santriId, tipe);
+        const data = await fetchRiwayatSetoranHalaman(santriId, tipe, tahun);
         setRiwayatList(data);
       } catch (err: any) {
         console.error("Gagal memuat riwayat setor:", err);
@@ -143,7 +145,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         setLoadingRiwayat(false);
       }
     },
-    [tipe]
+    [tipe, tahun]
   );
 
   useEffect(() => {
@@ -273,6 +275,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (bulkModalOpen) return;
         if (confirmWarningModalOpen) setConfirmWarningModalOpen(false);
         else if (naikHalaqohModalOpen) setNaikHalaqohModalOpen(false);
         else if (evaluasiModalOpen) setEvaluasiModalOpen(false);
@@ -282,7 +285,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, filterModalOpen, evaluasiModalOpen, naikHalaqohModalOpen, confirmWarningModalOpen]);
+  }, [bulkModalOpen, modalOpen, filterModalOpen, evaluasiModalOpen, naikHalaqohModalOpen, confirmWarningModalOpen]);
 
   // Kelompokkan data santri dan setoran per halaqoh untuk mode Kartu
   const halaqohGroups = useMemo(() => {
@@ -1013,6 +1016,19 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
         >
           <Printer className="h-5 w-5" />
         </button>
+
+        {/* Tombol Atur Capaian Juz & Halaman Massal (++) */}
+        {canEdit && tipe === "juz_baru" && (
+          <button
+            type="button"
+            onClick={() => setBulkModalOpen(true)}
+            title="Atur Capaian Juz & Halaman Santri (Massal)"
+            aria-label="Atur Capaian Juz dan Halaman Santri"
+            className="flex h-11 min-w-[44px] px-2.5 shrink-0 items-center justify-center rounded-xl border border-emerald-600 bg-emerald-50 font-mono text-sm font-extrabold tracking-tight text-emerald-800 shadow-sm transition hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-900/60"
+          >
+            ++
+          </button>
+        )}
 
         {/* Tombol Input Log Setoran (Hanya Logo) */}
         {canEdit && (
@@ -2259,6 +2275,15 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
             </div>
           </div>
         </div>
+      )}
+      {/* POP-UP 6: MODAL ATUR CAPAIAN JUZ & HALAMAN MASSAL (++) */}
+      {tipe === "juz_baru" && (
+        <BulkSetCapaianModal
+          isOpen={bulkModalOpen}
+          onClose={() => setBulkModalOpen(false)}
+          tahun={tahun}
+          onSaved={loadData}
+        />
       )}
     </div>
   );
