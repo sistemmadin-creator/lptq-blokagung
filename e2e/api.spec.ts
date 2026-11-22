@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createClient } from '@supabase/supabase-js';
-import { getTestSupabaseEnv } from './helpers/auth';
+import { getTestSupabaseEnv, loginAsAdmin } from './helpers/auth';
 
 test.describe('API Endpoint Contract & Security Testing', () => {
   test('POST /api/auth/login menolak permintaan tanpa nama pengguna atau kata sandi (400)', async ({ request }) => {
@@ -133,5 +133,21 @@ test.describe('API Endpoint Contract & Security Testing', () => {
       .from('app_settings')
       .upsert({ key: 'USER_PERMISSIONS', value: { hacked: true } });
     expect(writeErr).not.toBeNull();
+  });
+
+  test('Pelindung Sandi Pasaran/Bocor (HaveIBeenPwned) menolak pembuatan pengguna dengan password bocor seperti password123 (400)', async ({ page }) => {
+    await loginAsAdmin(page);
+    const res = await page.request.post('/api/admin/users', {
+      data: {
+        username: `test_leak_${Date.now()}`,
+        nama: 'Pengguna Sandi Bocor',
+        password: 'password123',
+        role: 'viewer',
+      },
+    });
+
+    expect(res.status()).toBe(400);
+    const body = await res.json();
+    expect(body.message).toContain('pernah bocor');
   });
 });

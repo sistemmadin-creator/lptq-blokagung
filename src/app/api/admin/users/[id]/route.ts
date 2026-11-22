@@ -3,6 +3,7 @@ import {
   createServiceRoleClient,
   verifyCsrfOrigin,
 } from "@/lib/supabase/server";
+import { checkLeakedPassword } from "@/lib/security/pwned-password";
 import { normalizePermissions } from "@/lib/services/user-permission-service";
 import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 import type { AppRole, UserAccountItem } from "@/types/database";
@@ -132,8 +133,24 @@ export async function PUT(
       ban_duration: status === "suspended" ? "876000h" : "none",
     };
 
-    if (body.password && typeof body.password === "string" && body.password.trim().length >= 6) {
-      authUpdatePayload.password = body.password.trim();
+    if (body.password && typeof body.password === "string" && body.password.trim().length > 0) {
+      const candidatePassword = body.password.trim();
+      if (candidatePassword.length < 6) {
+        return NextResponse.json(
+          { message: "Kata sandi baru minimal 6 karakter." },
+          { status: 400 }
+        );
+      }
+
+      const leakCheck = await checkLeakedPassword(candidatePassword);
+      if (leakCheck.leaked) {
+        return NextResponse.json(
+          { message: leakCheck.message },
+          { status: 400 }
+        );
+      }
+
+      authUpdatePayload.password = candidatePassword;
     }
 
     await adminClient.auth.admin.updateUserById(targetUserId, authUpdatePayload);

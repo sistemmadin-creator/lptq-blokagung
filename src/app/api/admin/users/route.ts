@@ -3,6 +3,7 @@ import {
   createServiceRoleClient,
   verifyCsrfOrigin,
 } from "@/lib/supabase/server";
+import { checkLeakedPassword } from "@/lib/security/pwned-password";
 import { normalizePermissions } from "@/lib/services/user-permission-service";
 import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 import type { AppRole, UserAccountItem } from "@/types/database";
@@ -181,6 +182,14 @@ export async function POST(request: NextRequest) {
     if (!password || typeof password !== "string" || password.length < 6) {
       return NextResponse.json(
         { message: "Kata sandi minimal 6 karakter." },
+        { status: 400 }
+      );
+    }
+
+    const leakCheck = await checkLeakedPassword(password);
+    if (leakCheck.leaked) {
+      return NextResponse.json(
+        { message: leakCheck.message },
         { status: 400 }
       );
     }
