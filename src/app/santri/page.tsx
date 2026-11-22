@@ -162,7 +162,7 @@ export default function SantriPage() {
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<SantriFormValues>({
-    resolver: zodResolver(santriSchema),
+    resolver: zodResolver(santriSchema) as any,
     defaultValues: {
       kode: "",
       nama_lengkap: "",

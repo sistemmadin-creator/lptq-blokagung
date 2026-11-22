@@ -1,8 +1,20 @@
-import { createServerSupabase, createServiceRoleClient } from "@/lib/supabase/server";
-import { normalizePermissions, DEFAULT_PERMISSIONS_BY_ROLE } from "@/lib/services/user-permission-service";
+import {
+  createServerSupabase,
+  createServiceRoleClient,
+  verifyCsrfOrigin,
+} from "@/lib/supabase/server";
+import { normalizePermissions } from "@/lib/services/user-permission-service";
 import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 import type { AppRole, UserAccountItem } from "@/types/database";
 import { NextResponse, type NextRequest } from "next/server";
+
+const VALID_ROLES = new Set<AppRole>([
+  "admin",
+  "pengurus",
+  "pembimbing",
+  "operator_absen",
+  "viewer",
+]);
 
 async function verifyAdminAuth() {
   const supabase = createServerSupabase();
@@ -11,7 +23,7 @@ async function verifyAdminAuth() {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return { authorized: false, error: "Sesi telah berakhir. Silakan masuk kembali.", status: 401 };
+    return { authorized: false as const, error: "Sesi telah berakhir. Silakan masuk kembali.", status: 401 };
   }
 
   const adminClient = createServiceRoleClient();
@@ -21,28 +33,33 @@ async function verifyAdminAuth() {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  // Cek juga perizinan khusus dari app_settings
   const { data: permSetting } = await adminClient
     .from("app_settings")
     .select("value")
     .eq("key", "USER_PERMISSIONS")
     .maybeSingle();
 
+  const callerRole = (profile?.role ?? "viewer") as AppRole;
   const userPerms = permSetting?.value?.[user.id]?.permissions;
-  const isSuperAdmin = profile?.role === "admin";
-  const hasUserMgmtEdit = userPerms?.user_management === "edit";
+  const isSuperAdmin = callerRole === "admin";
+  const isPengurusWithEdit =
+    callerRole === "pengurus" && userPerms?.user_management === "edit";
 
-  if (!isSuperAdmin && !hasUserMgmtEdit) {
-    return { authorized: false, error: "Anda tidak memiliki wewenang untuk mengelola pengguna.", status: 403 };
+  if (!isSuperAdmin && !isPengurusWithEdit) {
+    return {
+      authorized: false as const,
+      error: "Anda tidak memiliki wewenang untuk mengelola pengguna.",
+      status: 403,
+    };
   }
 
-  return { authorized: true, user, adminClient };
+  return { authorized: true as const, user, callerRole, adminClient };
 }
 
 export async function GET() {
   try {
     const authCheck = await verifyAdminAuth();
-    if (!authCheck.authorized || !authCheck.adminClient) {
+    if (!authCheck.authorized) {
       return NextResponse.json({ message: authCheck.error }, { status: authCheck.status });
     }
 
@@ -77,7 +94,11 @@ export async function GET() {
         prof?.nama ||
         u.user_metadata?.nama ||
         username;
-      const status = permItem?.status || u.user_metadata?.status || "active";
+      const status =
+        permItem?.status ||
+        u.app_metadata?.status ||
+        u.user_metadata?.status ||
+        "active";
       const permissions = normalizePermissions(permItem?.permissions, rawRole);
 
       return {
@@ -105,9 +126,14 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const csrf = verifyCsrfOrigin(request);
+  if (!csrf.valid) {
+    return NextResponse.json({ message: csrf.error }, { status: 403 });
+  }
+
   try {
     const authCheck = await verifyAdminAuth();
-    if (!authCheck.authorized || !authCheck.adminClient) {
+    if (!authCheck.authorized) {
       return NextResponse.json({ message: authCheck.error }, { status: authCheck.status });
     }
 
@@ -117,10 +143,17 @@ export async function POST(request: NextRequest) {
     const usernameRaw = body.username;
     const namaRaw = body.nama;
     const password = body.password;
-    const role: AppRole = body.role || "viewer";
+    const role: AppRole = VALID_ROLES.has(body.role) ? body.role : "viewer";
     const halaqoh_kelas = body.halaqoh_kelas ? Number(body.halaqoh_kelas) : null;
     const halaqoh_bagian = body.halaqoh_bagian || null;
     const permissions = normalizePermissions(body.permissions, role);
+
+    if (role === "admin" && authCheck.callerRole !== "admin") {
+      return NextResponse.json(
+        { message: "Hanya Admin utama yang diizinkan membuat akun dengan peran Admin." },
+        { status: 403 }
+      );
+    }
 
     if (!usernameRaw || typeof usernameRaw !== "string" || usernameRaw.trim().length < 3) {
       return NextResponse.json(
@@ -190,11 +223,15 @@ export async function POST(request: NextRequest) {
 
     const internalEmail = `${username}@lptq.local`;
 
-    // Buat akun di Supabase Auth
+    // Buat akun di Supabase Auth dengan app_metadata sebagai sumber otorisasi tepercaya
     const { data: createdAuth, error: createError } = await adminClient.auth.admin.createUser({
       email: internalEmail,
       password,
       email_confirm: true,
+      app_metadata: {
+        role,
+        status: "active",
+      },
       user_metadata: {
         username,
         nama,
@@ -265,7 +302,7 @@ export async function POST(request: NextRequest) {
         user_id: authCheck.user.id,
         username: authCheck.user.user_metadata?.username || authCheck.user.email?.split("@")[0] || "admin",
         nama: authCheck.user.user_metadata?.nama || "Administrator",
-        role: "admin",
+        role: authCheck.callerRole,
         kategori: "user",
         aksi: "Tambah Pengguna Baru",
         deskripsi: `Menambahkan pengguna baru "${nama}" (@${username}) dengan peran ${role.toUpperCase()}.`,

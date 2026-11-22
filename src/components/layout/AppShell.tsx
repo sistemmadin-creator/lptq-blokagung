@@ -36,6 +36,7 @@ import { fetchCurrentUserProfile } from "@/lib/services/tahfidz-service";
 import { mapPathToModule } from "@/lib/services/user-permission-service";
 import {
   fetchAppBranding,
+  getSafeImageUrl,
   DEFAULT_BRANDING,
   type AppBrandingConfig,
 } from "@/lib/services/branding-service";
@@ -186,14 +187,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       if (branding.app_name) {
         document.title = `${branding.app_name} - ${branding.app_subtitle}`;
       }
-      if (branding.favicon_url) {
+      const safeFavicon = getSafeImageUrl(branding.favicon_url);
+      if (safeFavicon) {
         let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
         if (!link) {
           link = document.createElement("link");
           link.rel = "shortcut icon";
           document.head.appendChild(link);
         }
-        link.href = branding.favicon_url;
+        link.href = safeFavicon;
       }
     }
   }, [branding]);
@@ -338,6 +340,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     .slice(0, 2)
     .toUpperCase();
 
+  const safeLogoUrl = getSafeImageUrl(branding.logo_url);
   const sidebarOpen = isPinned || isExpanded;
 
   return (
@@ -369,8 +372,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 aria-label={sidebarOpen ? "Ciutkan sidebar" : "Lebarkan sidebar"}
                 className="w-11 h-11 rounded-xl bg-white text-brand-dark flex items-center justify-center font-extrabold text-xs shadow-sm shrink-0 overflow-hidden p-1.5"
               >
-                {branding.logo_url ? (
-                  <img src={branding.logo_url} alt="Logo" className="w-full h-full object-contain" />
+                {safeLogoUrl ? (
+                  <img src={safeLogoUrl} alt="Logo" className="w-full h-full object-contain" />
                 ) : (
                   <svg
                     className="w-7 h-7 text-brand-dark"
@@ -745,8 +748,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <div className="flex items-center justify-between pb-4 border-b border-white/15">
                 <div className="flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-white text-brand-dark flex items-center justify-center overflow-hidden p-1 shrink-0">
-                    {branding.logo_url ? (
-                      <img src={branding.logo_url} alt="Logo" className="w-full h-full object-contain" />
+                    {safeLogoUrl ? (
+                      <img src={safeLogoUrl} alt="Logo" className="w-full h-full object-contain" />
                     ) : (
                       <span className="text-xs font-black">LPTQ</span>
                     )}

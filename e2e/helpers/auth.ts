@@ -6,6 +6,36 @@ import path from 'path';
 
 const CACHE_FILE = path.join(__dirname, '.auth-cache.json');
 
+function loadLocalEnv() {
+  const envPath = path.resolve(__dirname, '../../.env.local');
+  if (!fs.existsSync(envPath)) return;
+  const content = fs.readFileSync(envPath, 'utf8');
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eqIdx = line.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = line.slice(0, eqIdx).trim();
+    const val = line.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+    if (key && !process.env[key]) {
+      process.env[key] = val;
+    }
+  }
+}
+
+export function getTestSupabaseEnv() {
+  loadLocalEnv();
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
+    throw new Error(
+      'Environment Supabase untuk E2E (NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY) belum tersedia.'
+    );
+  }
+  return { supabaseUrl, supabaseAnonKey, serviceRoleKey };
+}
+
 export async function loginAsAdmin(page: Page) {
   for (let attempt = 0; attempt < 3; attempt++) {
     // 1. Gunakan cache file antar-worker jika masih valid (< 20 menit)
@@ -45,14 +75,7 @@ export async function loginAsAdmin(page: Page) {
 
     // 2. Generate sesi baru jika cache belum tersedia
     try {
-      const supabaseUrl =
-        process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://yiwqgdqizdzsgikjlwoq.supabase.co';
-      const supabaseAnonKey =
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlpd3FnZHFpemR6c2dpa2psd29xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0MTA4MjEsImV4cCI6MjEwNzk4NjgyMX0.Hnhpp6eSlsqz24E1wKgu2DdHPnXtI8NZZP3ORY7YK6U';
-      const serviceRoleKey =
-        process.env.SUPABASE_SERVICE_ROLE_KEY ||
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlpd3FnZHFpemR6c2dpa2psd29xIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjQxMDgyMSwiZXhwIjoyMTA3OTg2ODIxfQ.aF_tNdSjyF-Dg92HXYblZ9PmO2U0qtWgBmRTYkJnvpA';
+      const { supabaseUrl, supabaseAnonKey, serviceRoleKey } = getTestSupabaseEnv();
 
       const admin = createClient(supabaseUrl, serviceRoleKey);
       const client = createClient(supabaseUrl, supabaseAnonKey);
@@ -78,11 +101,19 @@ export async function loginAsAdmin(page: Page) {
       const cookieJar: { name: string; value: string }[] = [];
       const ssr = createServerClient(supabaseUrl, supabaseAnonKey, {
         cookies: {
-          get: () => '',
-          set: (name: string, value: string) => {
-            cookieJar.push({ name, value });
+          getAll() {
+            return [];
           },
-          remove: () => {},
+          setAll(cookiesToSet) {
+            for (const { name, value } of cookiesToSet) {
+              const existingIdx = cookieJar.findIndex((c) => c.name === name);
+              if (existingIdx >= 0) {
+                cookieJar[existingIdx].value = value;
+              } else {
+                cookieJar.push({ name, value });
+              }
+            }
+          },
         },
       });
 

@@ -36,6 +36,25 @@ export const DEFAULT_BRANDING: AppBrandingConfig = {
 
 const BRANDING_STORAGE_KEY = "lptq_app_branding_cache";
 
+const SAFE_RELATIVE_IMAGE_REGEX = /^\/images\/[a-zA-Z0-9._-]+(\?t=\d+)?$/;
+const SAFE_DATA_IMAGE_REGEX =
+  /^data:image\/(png|jpeg|jpg|webp|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$/;
+
+export function isSafeImageUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  return SAFE_RELATIVE_IMAGE_REGEX.test(trimmed) || SAFE_DATA_IMAGE_REGEX.test(trimmed);
+}
+
+export function getSafeImageUrl(
+  url?: string | null,
+  fallback: string | null = null
+): string | null {
+  if (!url) return fallback;
+  const trimmed = url.trim();
+  return isSafeImageUrl(trimmed) ? trimmed : fallback;
+}
+
 /**
  * Mengambil konfigurasi branding dan pengaturan sistem dari app_settings Supabase
  */

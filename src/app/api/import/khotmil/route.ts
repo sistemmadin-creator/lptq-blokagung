@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabase, getUserRole } from "@/lib/supabase/server";
+import { createServerSupabase, getUserRole, verifyCsrfOrigin } from "@/lib/supabase/server";
 import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 import {
   KHOTMIL_15_TAHAP,
@@ -34,6 +34,11 @@ interface RawKhotmilImportRow {
 }
 
 export async function POST(request: Request) {
+  const csrf = verifyCsrfOrigin(request);
+  if (!csrf.valid) {
+    return NextResponse.json({ error: csrf.error }, { status: 403 });
+  }
+
   try {
     const supabase = createServerSupabase();
     const {

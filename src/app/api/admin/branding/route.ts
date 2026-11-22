@@ -1,8 +1,92 @@
-import { createServerSupabase, createServiceRoleClient } from "@/lib/supabase/server";
+import {
+  createServerSupabase,
+  createServiceRoleClient,
+  verifyCsrfOrigin,
+} from "@/lib/supabase/server";
 import { DEFAULT_BRANDING, type AppBrandingConfig } from "@/lib/services/branding-service";
 import { NextResponse, type NextRequest } from "next/server";
 import fs from "fs";
 import path from "path";
+
+const SAFE_RELATIVE_IMAGE_REGEX = /^\/images\/[a-zA-Z0-9._-]+(\?t=\d+)?$/;
+const ALLOWED_DATA_IMAGE_REGEX =
+  /^data:image\/(png|jpeg|jpg|webp|x-icon|vnd\.microsoft\.icon);base64,([A-Za-z0-9+/=]+)$/;
+
+class BrandingValidationError extends Error {}
+
+function hasValidImageMagicBytes(mimeSubtype: string, buf: Buffer): boolean {
+  if (mimeSubtype === "png") {
+    return buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+  }
+  if (mimeSubtype === "jpeg" || mimeSubtype === "jpg") {
+    return buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  }
+  if (mimeSubtype === "webp") {
+    return (
+      buf.length >= 12 &&
+      buf.subarray(0, 4).toString("ascii") === "RIFF" &&
+      buf.subarray(8, 12).toString("ascii") === "WEBP"
+    );
+  }
+  if (mimeSubtype === "x-icon" || mimeSubtype === "vnd.microsoft.icon") {
+    return buf.length >= 4 && buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x01 && buf[3] === 0x00;
+  }
+  return false;
+}
+
+function resolveExtension(mimeSubtype: string): string {
+  if (mimeSubtype === "jpeg") return "jpg";
+  if (mimeSubtype === "x-icon" || mimeSubtype === "vnd.microsoft.icon") return "ico";
+  return mimeSubtype;
+}
+
+function processBrandingImageInput(
+  rawUrl: string | null | undefined,
+  baseFileName: string,
+  publicImagesDir: string
+): string | null {
+  if (!rawUrl || !rawUrl.trim()) {
+    return null;
+  }
+
+  const trimmed = rawUrl.trim();
+
+  if (trimmed.startsWith("data:")) {
+    const matches = trimmed.match(ALLOWED_DATA_IMAGE_REGEX);
+    if (!matches || !matches[1] || !matches[2]) {
+      throw new BrandingValidationError(
+        "Format gambar tidak diizinkan. Hanya file raster PNG, JPG, WEBP, atau ICO yang diperbolehkan."
+      );
+    }
+
+    const mimeSubtype = matches[1].toLowerCase();
+    const buf = Buffer.from(matches[2], "base64");
+    if (!hasValidImageMagicBytes(mimeSubtype, buf)) {
+      throw new BrandingValidationError("Isi berkas gambar tidak valid atau rusak.");
+    }
+
+    const ext = resolveExtension(mimeSubtype);
+    const fileName = `${baseFileName}.${ext}`;
+    const filePath = path.join(publicImagesDir, fileName);
+
+    try {
+      if (!fs.existsSync(publicImagesDir)) {
+        fs.mkdirSync(publicImagesDir, { recursive: true });
+      }
+      fs.writeFileSync(filePath, buf);
+      return `/images/${fileName}?t=${Date.now()}`;
+    } catch {
+      // Fallback aman untuk filesystem read-only (serverless) menggunakan data URL raster yang tervalidasi
+      return trimmed;
+    }
+  }
+
+  if (!SAFE_RELATIVE_IMAGE_REGEX.test(trimmed)) {
+    throw new BrandingValidationError("URL gambar harus berupa path lokal /images/ yang aman.");
+  }
+
+  return trimmed;
+}
 
 export async function GET() {
   try {
@@ -23,6 +107,11 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const csrf = verifyCsrfOrigin(request);
+  if (!csrf.valid) {
+    return NextResponse.json({ message: csrf.error }, { status: 403 });
+  }
+
   try {
     const supabaseUser = createServerSupabase();
     const {
@@ -51,9 +140,10 @@ export async function POST(request: NextRequest) {
 
     const userPerms = permSetting?.value?.[user.id]?.permissions;
     const isSuperAdmin = profile?.role === "admin";
-    const hasAdminEdit = userPerms?.user_management === "edit";
+    const isPengurusWithEdit =
+      profile?.role === "pengurus" && userPerms?.user_management === "edit";
 
-    if (!isSuperAdmin && !hasAdminEdit) {
+    if (!isSuperAdmin && !isPengurusWithEdit) {
       return NextResponse.json(
         { message: "Anda tidak memiliki wewenang untuk mengubah pengaturan aplikasi." },
         { status: 403 }
@@ -61,64 +151,19 @@ export async function POST(request: NextRequest) {
     }
 
     const body: AppBrandingConfig = await request.json();
-
-    // Simpan file gambar jika ada dataURL base64 besar untuk menghemat ukuran JSON database
-    let savedLogoUrl = body.logo_url;
-    let savedFaviconUrl = body.favicon_url;
-    let savedLoginBgUrl = body.login_bg_url;
-
     const publicImagesDir = path.join(process.cwd(), "public", "images");
-    if (!fs.existsSync(publicImagesDir)) {
-      fs.mkdirSync(publicImagesDir, { recursive: true });
-    }
 
-    // 1. Simpan Logo jika format Base64
-    if (body.logo_url && body.logo_url.startsWith("data:image/")) {
-      try {
-        const matches = body.logo_url.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
-        if (matches && matches[2]) {
-          const ext = matches[1] === "svg+xml" ? "svg" : matches[1];
-          const fileName = `custom-logo.${ext}`;
-          const filePath = path.join(publicImagesDir, fileName);
-          fs.writeFileSync(filePath, Buffer.from(matches[2], "base64"));
-          savedLogoUrl = `/images/${fileName}?t=${Date.now()}`;
-        }
-      } catch (e) {
-        console.error("Gagal menyimpan file logo fisik:", e);
-      }
-    }
-
-    // 2. Simpan Favicon jika format Base64
-    if (body.favicon_url && body.favicon_url.startsWith("data:image/")) {
-      try {
-        const matches = body.favicon_url.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
-        if (matches && matches[2]) {
-          const ext = matches[1] === "x-icon" ? "ico" : matches[1];
-          const fileName = `custom-favicon.${ext}`;
-          const filePath = path.join(publicImagesDir, fileName);
-          fs.writeFileSync(filePath, Buffer.from(matches[2], "base64"));
-          savedFaviconUrl = `/images/${fileName}?t=${Date.now()}`;
-        }
-      } catch (e) {
-        console.error("Gagal menyimpan file favicon fisik:", e);
-      }
-    }
-
-    // 3. Simpan Background Login jika format Base64
-    if (body.login_bg_url && body.login_bg_url.startsWith("data:image/")) {
-      try {
-        const matches = body.login_bg_url.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
-        if (matches && matches[2]) {
-          const ext = matches[1] === "jpeg" ? "jpg" : matches[1];
-          const fileName = `custom-login-bg.${ext}`;
-          const filePath = path.join(publicImagesDir, fileName);
-          fs.writeFileSync(filePath, Buffer.from(matches[2], "base64"));
-          savedLoginBgUrl = `/images/${fileName}?t=${Date.now()}`;
-        }
-      } catch (e) {
-        console.error("Gagal menyimpan file background fisik:", e);
-      }
-    }
+    const savedLogoUrl = processBrandingImageInput(body.logo_url, "custom-logo", publicImagesDir);
+    const savedFaviconUrl = processBrandingImageInput(
+      body.favicon_url,
+      "custom-favicon",
+      publicImagesDir
+    );
+    const savedLoginBgUrl = processBrandingImageInput(
+      body.login_bg_url,
+      "custom-login-bg",
+      publicImagesDir
+    );
 
     const finalConfig: AppBrandingConfig = {
       app_name: body.app_name?.trim() || DEFAULT_BRANDING.app_name,
@@ -168,6 +213,9 @@ export async function POST(request: NextRequest) {
       config: finalConfig,
     });
   } catch (err: any) {
+    if (err instanceof BrandingValidationError) {
+      return NextResponse.json({ message: err.message }, { status: 400 });
+    }
     return NextResponse.json(
       { message: err?.message || "Terjadi kesalahan saat menyimpan pengaturan." },
       { status: 500 }

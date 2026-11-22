@@ -357,7 +357,7 @@ export function SetoranModule({ tipe, judul, deskripsi }: SetoranModuleProps) {
     reset,
     formState: { errors, isSubmitting },
   } = useForm<SetoranFormValues>({
-    resolver: zodResolver(createSetoranSchema(tipe)),
+    resolver: zodResolver(createSetoranSchema(tipe)) as any,
     defaultValues: {
       santri_id: "",
       tanggal: toLocalIsoDate(now),

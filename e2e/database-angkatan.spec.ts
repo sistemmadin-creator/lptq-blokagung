@@ -1,12 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
-import { loginAsAdmin } from "./helpers/auth";
+import { loginAsAdmin, getTestSupabaseEnv } from "./helpers/auth";
 
-const SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://yiwqgdqizdzsgikjlwoq.supabase.co";
-const SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlpd3FnZHFpemR6c2dpa2psd29xIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjQxMDgyMSwiZXhwIjoyMTA3OTg2ODIxfQ.aF_tNdSjyF-Dg92HXYblZ9PmO2U0qtWgBmRTYkJnvpA";
+const { supabaseUrl: SUPABASE_URL, serviceRoleKey: SERVICE_ROLE_KEY } = getTestSupabaseEnv();
 
 test.describe("Menu Database Angkatan (15 Juz & 30 Juz)", () => {
   test.use({ navigationTimeout: 30_000 });

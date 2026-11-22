@@ -101,7 +101,7 @@ export async function fetchCurrentUserProfile(): Promise<Profile | null> {
 // Dibuang dari input agar pencarian tidak error atau melebar ke semua baris.
 function sanitizeSearchTerm(raw: string): string {
   return raw
-    .replace(/[,()"'\\%*_]/g, " ")
+    .replace(/[,()"'\\%*_.]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

@@ -16,17 +16,75 @@ const {
 const app = express();
 const PORT = process.env.PORT || 3008;
 const AUTH_DIR = path.join(__dirname, "auth_info_baileys");
+const WAHA_API_KEY = process.env.WAHA_API_KEY || "";
 
-// Enable CORS for all domains & preflight
+const ALLOWED_ORIGINS = new Set([
+  "http://localhost:3000",
+  "http://localhost:3005",
+  "http://localhost:3008",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3005",
+  ...(process.env.ALLOWED_ORIGIN
+    ? process.env.ALLOWED_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean)
+    : []),
+]);
+
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function isAllowedImageUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "169.254.169.254" ||
+      host === "metadata.google.internal" ||
+      host === "0.0.0.0" ||
+      host.startsWith("169.254.")
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Batasi CORS hanya untuk origin lokal / yang diizinkan
 app.use(
   cors({
-    origin: "*",
+    origin(origin, callback) {
+      if (!origin || ALLOWED_ORIGINS.has(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Origin tidak diizinkan oleh CORS policy."));
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Api-Key", "Accept"],
   })
 );
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Validasi API Key pada seluruh endpoint /api/* jika WAHA_API_KEY dikonfigurasi
+app.use("/api", (req, res, next) => {
+  if (WAHA_API_KEY) {
+    const provided = req.get("x-api-key") || "";
+    if (provided !== WAHA_API_KEY) {
+      return res.status(401).json({ error: "API Key WhatsApp Gateway tidak valid." });
+    }
+  }
+  return next();
+});
 
 // State
 let sock = null;
@@ -195,6 +253,9 @@ app.post("/api/sendImage", async (req, res) => {
       const base64Data = file.url.replace(/^data:image\/\w+;base64,/, "");
       imageBuffer = Buffer.from(base64Data, "base64");
     } else {
+      if (!isAllowedImageUrl(file.url)) {
+        return res.status(400).json({ error: "URL gambar tidak valid atau tidak diizinkan." });
+      }
       const resp = await axios.get(file.url, { responseType: "arraybuffer", timeout: 20000 });
       imageBuffer = Buffer.from(resp.data);
     }
@@ -328,8 +389,8 @@ app.get("/", (req, res) => {
 
       <div class="connected-info">
         <p style="font-size: 12px; color: #166534; font-weight: 600;">Nomor WhatsApp Terhubung:</p>
-        <div class="phone-number">+${connectedUser?.phone || ""}</div>
-        <p style="font-size: 12px; color: #15803d; margin-top: 4px;">Akun: <strong>${connectedUser?.name || "LPTQ Bot"}</strong></p>
+        <div class="phone-number">+${escapeHtml(connectedUser?.phone || "")}</div>
+        <p style="font-size: 12px; color: #15803d; margin-top: 4px;">Akun: <strong>${escapeHtml(connectedUser?.name || "LPTQ Bot")}</strong></p>
       </div>
 
       <button class="btn-logout" onclick="fetch('/api/sessions/default/logout', {method:'POST'}).then(() => location.reload())">

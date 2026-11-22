@@ -6,6 +6,7 @@ import { User, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import {
   fetchAppBranding,
+  getSafeImageUrl,
   DEFAULT_BRANDING,
   type AppBrandingConfig,
 } from "@/lib/services/branding-service";
@@ -29,14 +30,15 @@ export default function LoginPage() {
       if (branding.app_name) {
         document.title = `Masuk - ${branding.app_name}`;
       }
-      if (branding.favicon_url) {
+      const safeFavicon = getSafeImageUrl(branding.favicon_url);
+      if (safeFavicon) {
         let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
         if (!link) {
           link = document.createElement("link");
           link.rel = "shortcut icon";
           document.head.appendChild(link);
         }
-        link.href = branding.favicon_url;
+        link.href = safeFavicon;
       }
     }
   }, [branding]);
@@ -81,10 +83,13 @@ export default function LoginPage() {
     }
   };
 
+  const safeBgUrl = getSafeImageUrl(branding.login_bg_url, "/images/login-bg.jpg") || "/images/login-bg.jpg";
+  const safeLogoUrl = getSafeImageUrl(branding.logo_url);
+
   return (
     <div
       className="relative min-h-screen w-full flex items-center justify-center p-4 bg-cover bg-center bg-no-repeat transition-all duration-500"
-      style={{ backgroundImage: `url('${branding.login_bg_url || "/images/login-bg.jpg"}')` }}
+      style={{ backgroundImage: `url('${safeBgUrl}')` }}
     >
       {/* Overlay atmosferik hijau emerald & gelap untuk keterbacaan kontras tinggi */}
       <div
@@ -103,9 +108,9 @@ export default function LoginPage() {
         {/* Baris 1 & 2: LOGO dan LPTQ Blokagung */}
         <div className="flex flex-col items-center justify-center text-center mb-6">
           <div className="flex items-center justify-center mb-2">
-            {branding.logo_url ? (
+            {safeLogoUrl ? (
               <img
-                src={branding.logo_url}
+                src={safeLogoUrl}
                 alt="Logo LPTQ"
                 className="w-40 h-40 object-contain drop-shadow-md select-none transition-transform duration-300 hover:scale-105"
               />

@@ -513,14 +513,14 @@ function PengaturanContent() {
           <input
             type="file"
             ref={logoInputRef}
-            accept="image/png,image/svg+xml,image/webp,image/jpeg"
+            accept="image/png,image/webp,image/jpeg"
             onChange={handleLogoUpload}
             className="hidden"
           />
           <input
             type="file"
             ref={faviconInputRef}
-            accept="image/x-icon,image/png,image/svg+xml"
+            accept="image/x-icon,image/png"
             onChange={handleFaviconUpload}
             className="hidden"
           />

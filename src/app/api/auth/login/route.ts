@@ -1,10 +1,11 @@
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
 import { recordServerActivityLog } from "@/lib/services/activity-log-server";
+import { verifyCsrfOrigin } from "@/lib/supabase/server";
 
-// In-memory rate limiter untuk proteksi brute force
+// In-memory rate limiter untuk proteksi brute force (lacak IP+username dan username)
 interface AttemptRecord {
   count: number;
   lockedUntil: number | null;
@@ -26,6 +27,11 @@ function cleanOldAttempts() {
 }
 
 export async function POST(request: NextRequest) {
+  const csrf = verifyCsrfOrigin(request);
+  if (!csrf.valid) {
+    return NextResponse.json({ message: csrf.error }, { status: 403 });
+  }
+
   cleanOldAttempts();
 
   try {
@@ -45,13 +51,19 @@ export async function POST(request: NextRequest) {
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
       request.headers.get("x-real-ip") ||
       "unknown-ip";
-    const rateLimitKey = `${ip}:${username}`;
+    const ipRateLimitKey = `ip:${ip}:${username}`;
+    const userRateLimitKey = `user:${username}`;
 
-    // Periksa apakah IP/Username sedang dikunci (Lockout)
+    // Periksa apakah IP+Username atau Username sedang dikunci (Lockout)
     const now = Date.now();
-    const existingAttempt = loginAttempts.get(rateLimitKey);
-    if (existingAttempt?.lockedUntil && now < existingAttempt.lockedUntil) {
-      const remainingMinutes = Math.ceil((existingAttempt.lockedUntil - now) / 60000);
+    const existingIpAttempt = loginAttempts.get(ipRateLimitKey);
+    const existingUserAttempt = loginAttempts.get(userRateLimitKey);
+    const lockedUntil = Math.max(
+      existingIpAttempt?.lockedUntil ?? 0,
+      existingUserAttempt?.lockedUntil ?? 0
+    );
+    if (lockedUntil && now < lockedUntil) {
+      const remainingMinutes = Math.ceil((lockedUntil - now) / 60000);
       return NextResponse.json(
         {
           message: `Terlalu banyak percobaan gagal. Akses akun dikunci sementara selama ${remainingMinutes} menit demi keamanan.`,
@@ -106,7 +118,10 @@ export async function POST(request: NextRequest) {
             u.email?.split("@")[0]?.toLowerCase() === username
           ) {
             resolvedEmail = u.email || null;
-            if (u.user_metadata?.status === "suspended") {
+            if (
+              u.app_metadata?.status === "suspended" ||
+              u.user_metadata?.status === "suspended"
+            ) {
               isSuspended = true;
             }
             break;
@@ -123,26 +138,28 @@ export async function POST(request: NextRequest) {
     }
 
     if (!resolvedEmail) {
-      // Catat percobaan gagal
-      recordFailedAttempt(rateLimitKey);
+      // Catat percobaan gagal pada kedua kunci
+      recordFailedAttempt(ipRateLimitKey);
+      recordFailedAttempt(userRateLimitKey);
       return NextResponse.json(
         { message: "Nama pengguna atau kata sandi tidak valid." },
         { status: 401 }
       );
     }
 
-    // Lakukan login dengan email dan password menggunakan Supabase SSR Client agar Cookie terpasang
-    const cookieStore = cookies();
+    // Lakukan login dengan email dan password menggunakan Supabase SSR Client (getAll/setAll)
+    const cookieStore = await cookies();
     const ssrClient = createServerClient(supabaseUrl, supabaseAnonKey, {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll();
         },
-        set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options: CookieOptions) {
-          cookieStore.set({ name, value: "", ...options });
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch {}
         },
       },
     });
@@ -153,7 +170,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (authError || !authData.session) {
-      const remainingAttempts = recordFailedAttempt(rateLimitKey);
+      const remainingIp = recordFailedAttempt(ipRateLimitKey);
+      const remainingUser = recordFailedAttempt(userRateLimitKey);
+      const remainingAttempts = Math.min(remainingIp, remainingUser);
       const warnMsg =
         remainingAttempts > 0
           ? `Nama pengguna atau kata sandi tidak valid. Sisa percobaan: ${remainingAttempts} kali.`
@@ -162,7 +181,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Berhasil login: reset rekor percobaan gagal
-    loginAttempts.delete(rateLimitKey);
+    loginAttempts.delete(ipRateLimitKey);
+    loginAttempts.delete(userRateLimitKey);
 
     // Catat log aktivitas login
     try {
@@ -170,7 +190,10 @@ export async function POST(request: NextRequest) {
         user_id: authData.user?.id || "unknown",
         username,
         nama: authData.user?.user_metadata?.nama || username,
-        role: (authData.user?.user_metadata?.role as any) || "asatidz",
+        role:
+          (authData.user?.app_metadata?.role as any) ||
+          (authData.user?.user_metadata?.role as any) ||
+          "viewer",
         kategori: "auth",
         aksi: "Login ke Aplikasi",
         deskripsi: `Pengguna '${username}' berhasil login ke sistem LPTQ Blokagung.`,

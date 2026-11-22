@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
-import { createServerSupabase, getUserRole } from "@/lib/supabase/server";
+import { createServerSupabase, getUserRole, verifyCsrfOrigin } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/database";
 
 const IMPORT_ALLOWED_ROLES: AppRole[] = ["admin", "pengurus"];
+
+function stripDangerousFormulaPrefix(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === "-") return trimmed;
+  if (/^[=@\t\r]/.test(trimmed) || /^[+-][a-zA-Z=@(]/.test(trimmed)) {
+    return trimmed.replace(/^[=+@\t\r-]+/, "").trim();
+  }
+  return trimmed;
+}
 
 interface RawSantriImportRow {
   Kode?: string | number;
@@ -26,6 +35,11 @@ interface RawSantriImportRow {
 }
 
 export async function POST(request: Request) {
+  const csrf = verifyCsrfOrigin(request);
+  if (!csrf.valid) {
+    return NextResponse.json({ error: csrf.error }, { status: 403 });
+  }
+
   try {
     const supabase = createServerSupabase();
     const {
@@ -77,22 +91,22 @@ export async function POST(request: Request) {
 
     const validBagian = new Set(["A", "B", "C", "D", "E", "F"]);
     const payload = rawRows.map((row, index) => {
-      const nama_lengkap = String(row["Nama Lengkap"] ?? "").trim();
+      const nama_lengkap = stripDangerousFormulaPrefix(String(row["Nama Lengkap"] ?? ""));
       const normName = normalizeName(nama_lengkap);
 
       // Cek apakah santri sudah ada di database berdasarkan Nama atau Kode Santri
       let matched = existingByName.get(normName);
 
-      let explicitKode = String(row["Kode Santri"] ?? "").trim();
+      let explicitKode = stripDangerousFormulaPrefix(String(row["Kode Santri"] ?? ""));
       if (explicitKode && existingByKode.has(explicitKode.toLowerCase())) {
         matched = existingByKode.get(explicitKode.toLowerCase());
       }
 
       let kode = matched ? matched.kode : explicitKode;
-      let kode_kamar = String(row["Kode Kamar"] ?? "").trim();
+      let kode_kamar = stripDangerousFormulaPrefix(String(row["Kode Kamar"] ?? ""));
 
       if (!kode_kamar && row.Kode && !explicitKode) {
-        kode_kamar = String(row.Kode).trim();
+        kode_kamar = stripDangerousFormulaPrefix(String(row.Kode));
       }
 
       if (!kode) {
@@ -101,20 +115,22 @@ export async function POST(request: Request) {
         kode = `S-${Date.now().toString().slice(-6)}${index + 1}-${randomPart}`;
       }
 
-      let blok = String(row.Blok ?? "").trim();
-      let asrama = String(row.Asrama ?? "").trim();
+      let blok = stripDangerousFormulaPrefix(String(row.Blok ?? ""));
+      let asrama = stripDangerousFormulaPrefix(String(row.Asrama ?? ""));
 
       // Dukung pengisian melalui kolom Penempatan Kamar (Hierarki)
-      const hierarki = String(
-        row["Penempatan Kamar (Hierarki)"] ??
-        row["Penempatan Kamar"] ??
-        row.Hierarki ??
-        row.Rute ??
-        ""
-      ).trim();
+      const hierarki = stripDangerousFormulaPrefix(
+        String(
+          row["Penempatan Kamar (Hierarki)"] ??
+            row["Penempatan Kamar"] ??
+            row.Hierarki ??
+            row.Rute ??
+            ""
+        )
+      );
 
       if (hierarki && hierarki.includes(">")) {
-        const parts = hierarki.split(">").map((s) => s.trim());
+        const parts = hierarki.split(">").map((s) => stripDangerousFormulaPrefix(s));
         if ((!blok || blok === "-") && parts[0]) blok = parts[0];
         if ((!asrama || asrama === "-") && parts[1]) asrama = parts[1];
         if ((!kode_kamar || kode_kamar === "-") && parts[2]) kode_kamar = parts[2];
@@ -126,10 +142,10 @@ export async function POST(request: Request) {
       if (!kode_kamar) kode_kamar = "-";
 
       // Kamar ditulis apa adanya (2 atau 02 sama-sama diterima); angka dari Excel dinormalkan.
-      const kamar = String(row.Kamar ?? "").trim() || "-";
-      const no_wa = String(
-        row["Nomor WhatsApp"] ?? row["No WhatsApp"] ?? row.WhatsApp ?? row.Telepon ?? ""
-      ).trim();
+      const kamar = stripDangerousFormulaPrefix(String(row.Kamar ?? "")) || "-";
+      const no_wa = stripDangerousFormulaPrefix(
+        String(row["Nomor WhatsApp"] ?? row["No WhatsApp"] ?? row.WhatsApp ?? row.Telepon ?? "")
+      );
       const halaqoh_kelas = Number(row["Halaqoh Kelas"]);
       const halaqoh_bagian = String(row["Halaqoh Bagian"] ?? "")
         .trim()

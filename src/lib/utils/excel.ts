@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import {
   loadHierarchyRules,
@@ -12,15 +11,69 @@ import {
 } from "@/lib/services/halaqoh-service";
 import { PEMETAAN_HALAQOH_KELAS } from "@/types/database";
 
-export function exportJsonToExcel<T extends Record<string, unknown>>(
+export function sanitizeSpreadsheetCell(val: unknown): string | number | boolean {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "number" || typeof val === "boolean") return val;
+  const str = String(val);
+  const trimmed = str.trimStart();
+  if (trimmed === "-") return str;
+  if (/^[=+@\t\r]/.test(trimmed) || /^-[a-zA-Z=@(]/.test(trimmed)) {
+    return `'${str}`;
+  }
+  return str;
+}
+
+function triggerExcelDownload(buffer: ArrayBuffer | Uint8Array, fullFileName: string) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const blob = new Blob([copy.buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const downloadLink = document.createElement("a");
+  downloadLink.href = url;
+  downloadLink.download = fullFileName;
+  document.body.appendChild(downloadLink);
+  downloadLink.click();
+  document.body.removeChild(downloadLink);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function exportJsonToExcel<T extends Record<string, unknown>>(
   rows: T[],
   fileName: string,
   sheetName = "Data"
-) {
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-  XLSX.writeFile(workbook, `${fileName}.xlsx`);
+): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "LPTQ Pondok Pesantren Darussalam Blokagung";
+  wb.created = new Date();
+
+  const safeSheetName = sheetName.replace(/[\\/*?:[\]]/g, "_").slice(0, 31) || "Data";
+  const ws = wb.addWorksheet(safeSheetName);
+
+  if (rows.length > 0) {
+    const headers = Object.keys(rows[0]);
+    ws.addRow(headers);
+    const headerRow = ws.getRow(1);
+    headerRow.font = { bold: true };
+
+    for (const row of rows) {
+      ws.addRow(headers.map((h) => sanitizeSpreadsheetCell(row[h])));
+    }
+
+    headers.forEach((h, idx) => {
+      let maxLen = h.length;
+      for (const row of rows) {
+        const len = String(row[h] ?? "").length;
+        if (len > maxLen) maxLen = len;
+      }
+      ws.getColumn(idx + 1).width = Math.min(45, Math.max(10, maxLen + 3));
+    });
+  }
+
+  const buffer = await wb.xlsx.writeBuffer();
+  triggerExcelDownload(buffer as ArrayBuffer, `${fileName}.xlsx`);
 }
 
 /**
@@ -376,7 +429,7 @@ export interface KhotmilTemplateOptions {
   }>;
 }
 
-export function downloadKhotmilTemplateExcel(options?: KhotmilTemplateOptions) {
+export async function downloadKhotmilTemplateExcel(options?: KhotmilTemplateOptions): Promise<void> {
   const jenis = options?.jenis ?? "khotmil15";
   const tahap = options?.tahap ?? 1;
   const juzList = options?.juzList && options.juzList.length > 0 ? options.juzList : [1, 2, 3, 4, 5];
@@ -423,24 +476,169 @@ export function downloadKhotmilTemplateExcel(options?: KhotmilTemplateOptions) {
     });
   }
 
-  // Buat lembar kerja XLSX dan atur lebar kolom agar rapi dan tidak terpotong di Excel
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  worksheet["!cols"] = [
-    { wch: 6 },  // No
-    { wch: 32 }, // Nama Santri
-    { wch: 22 }, // Asrama
-    { wch: 14 }, // Halaqoh
-    ...juzList.map(() => ({ wch: 10 })), // Kolom tiap Juz
-  ];
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "LPTQ Pondok Pesantren Darussalam Blokagung";
+  wb.created = new Date();
 
-  const workbook = XLSX.utils.book_new();
   const sheetName = `Tahap_${tahap}`;
-  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  const ws = wb.addWorksheet(sheetName);
+
+  const headers = ["No", "Nama Santri", "Asrama", "Halaqoh", ...juzList.map((j) => `Juz ${j}`)];
+  ws.addRow(headers);
+  ws.getRow(1).font = { bold: true };
+
+  rows.forEach((r) => {
+    ws.addRow(headers.map((h) => sanitizeSpreadsheetCell(r[h])));
+  });
+
+  const colWidths = [6, 32, 22, 14, ...juzList.map(() => 10)];
+  colWidths.forEach((w, idx) => {
+    ws.getColumn(idx + 1).width = w;
+  });
 
   const fileName = `Template_Import_${
     jenis === "khotmil30" ? "Khotmil_30_Juz" : "Khotmil_15_Juz"
   }_Tahap_${tahap}_LPTQ_Blokagung`;
-  XLSX.writeFile(workbook, `${fileName}.xlsx`);
+
+  const buffer = await wb.xlsx.writeBuffer();
+  triggerExcelDownload(buffer as ArrayBuffer, `${fileName}.xlsx`);
+}
+
+function extractExcelJsCellValue(val: ExcelJS.CellValue): unknown {
+  if (val === null || val === undefined) return "";
+  if (val instanceof Date) return toLocalIsoDate(val);
+  if (typeof val === "object") {
+    if ("result" in val && val.result !== undefined) {
+      return extractExcelJsCellValue(val.result as ExcelJS.CellValue);
+    }
+    if ("richText" in val && Array.isArray(val.richText)) {
+      return val.richText.map((part) => part.text ?? "").join("");
+    }
+    if ("text" in val && typeof val.text === "string") {
+      return val.text;
+    }
+    if ("error" in val) {
+      return "";
+    }
+    return String(val);
+  }
+  return val;
+}
+
+function parseCsvTextToRows(csvText: string): Record<string, unknown>[] {
+  const cleanText = csvText.replace(/^\uFEFF/, "");
+  const matrix: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < cleanText.length; i++) {
+    const ch = cleanText[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (cleanText[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\r") {
+      if (cleanText[i + 1] === "\n") i++;
+      row.push(field);
+      matrix.push(row);
+      row = [];
+      field = "";
+    } else if (ch === "\n") {
+      row.push(field);
+      matrix.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += ch;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    matrix.push(row);
+  }
+
+  const nonEmptyRows = matrix.filter((r) => r.some((cell) => cell.trim() !== ""));
+  if (nonEmptyRows.length <= 1) return [];
+
+  const headers = nonEmptyRows[0].map((h) => h.trim());
+  const out: Record<string, unknown>[] = [];
+  for (let i = 1; i < nonEmptyRows.length; i++) {
+    const record: Record<string, unknown> = {};
+    headers.forEach((h, colIdx) => {
+      if (h) {
+        record[h] = nonEmptyRows[i][colIdx] ?? "";
+      }
+    });
+    out.push(record);
+  }
+  return out;
+}
+
+export async function parseExcelBufferToJson(
+  buffer: ArrayBuffer,
+  fileName?: string
+): Promise<Record<string, unknown>[]> {
+  if (fileName && fileName.toLowerCase().endsWith(".csv")) {
+    const text = new TextDecoder("utf-8").decode(buffer);
+    return parseCsvTextToRows(text);
+  }
+
+  const wb = new ExcelJS.Workbook();
+  try {
+    await wb.xlsx.load(buffer);
+  } catch {
+    throw new Error(
+      "Format berkas tidak dapat dibaca. Gunakan berkas Excel modern (.xlsx) atau CSV (.csv)."
+    );
+  }
+
+  const worksheet = wb.worksheets[0];
+  if (!worksheet) {
+    throw new Error("Berkas Excel tidak memiliki lembar kerja (sheet).");
+  }
+
+  const headerRow = worksheet.getRow(1);
+  const headers: string[] = [];
+  headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    const val = extractExcelJsCellValue(cell.value);
+    headers[colNumber] = String(val ?? "").trim();
+  });
+
+  const rows: Record<string, unknown>[] = [];
+  worksheet.eachRow({ includeEmpty: false }, (excelRow, rowNumber) => {
+    if (rowNumber === 1) return;
+    const obj: Record<string, unknown> = {};
+    let hasValue = false;
+
+    for (let colIdx = 1; colIdx < headers.length; colIdx++) {
+      const headerName = headers[colIdx];
+      if (!headerName) continue;
+      const cellVal = extractExcelJsCellValue(excelRow.getCell(colIdx).value);
+      if (cellVal !== "" && cellVal !== null && cellVal !== undefined) {
+        hasValue = true;
+      }
+      obj[headerName] = cellVal ?? "";
+    }
+
+    if (hasValue) {
+      rows.push(obj);
+    }
+  });
+
+  return rows;
 }
 
 export async function parseExcelFileWithValidation(
@@ -448,16 +646,7 @@ export async function parseExcelFileWithValidation(
   requiredHeaders: string[]
 ): Promise<Record<string, unknown>[]> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array" });
-  const firstSheetName = workbook.SheetNames[0];
-  if (!firstSheetName) {
-    throw new Error("Berkas Excel tidak memiliki lembar kerja (sheet).");
-  }
-
-  const worksheet = workbook.Sheets[firstSheetName];
-  const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
-    defval: "",
-  });
+  const jsonRows = await parseExcelBufferToJson(buffer, file.name);
 
   if (jsonRows.length === 0) {
     throw new Error("Berkas Excel kosong atau tidak memiliki baris data.");

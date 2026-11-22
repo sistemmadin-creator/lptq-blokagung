@@ -1093,7 +1093,7 @@ Wassalamu'alaikum Wr. Wb.
       });
 
       const waLink = generateDirectWaLink(cleanPhone, waCustomMessage);
-      window.open(waLink, "_blank");
+      window.open(waLink, "_blank", "noopener,noreferrer");
 
       setIsSendingWa(false);
       setIsWaModalOpen(false);

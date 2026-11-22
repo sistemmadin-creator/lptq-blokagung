@@ -363,7 +363,7 @@ export function PanduanTabContent() {
   });
 
   const handleDownloadMarkdown = () => {
-    window.open("/BUKU_PANDUAN_APLIKASI_LPTQ_BLOKAGUNG.md", "_blank");
+    window.open("/BUKU_PANDUAN_APLIKASI_LPTQ_BLOKAGUNG.md", "_blank", "noopener,noreferrer");
   };
 
   const filteredTours = FEATURE_TOURS.filter((tour) => {

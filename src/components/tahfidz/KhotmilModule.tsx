@@ -60,10 +60,10 @@ import {
   type TahapConfig,
 } from "@/types/database";
 import { HalaqohBadge } from "@/components/ui/Badges";
-import * as XLSX from "xlsx";
 import {
   downloadKhotmilTemplateExcel,
   exportJsonToExcel,
+  parseExcelBufferToJson,
   parseExcelFileWithValidation,
 } from "@/lib/utils/excel";
 import { useToast } from "@/components/ui/Toast";
@@ -777,16 +777,7 @@ export function KhotmilModule({ jenis, judul, tahapList }: KhotmilModuleProps) {
 
     try {
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) {
-        throw new Error("Berkas Excel tidak memiliki lembar kerja (sheet).");
-      }
-
-      const worksheet = workbook.Sheets[firstSheetName];
-      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
-        defval: "",
-      });
+      const rawRows = await parseExcelBufferToJson(buffer, file.name);
 
       if (rawRows.length === 0) {
         throw new Error("Berkas Excel kosong atau tidak memiliki baris data.");

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabase, getUserRole } from "@/lib/supabase/server";
+import { createServerSupabase, getUserRole, verifyCsrfOrigin } from "@/lib/supabase/server";
 import {
   getAndPruneServerActivityLogs,
   recordServerActivityLog,
@@ -40,6 +40,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const csrf = verifyCsrfOrigin(request);
+  if (!csrf.valid) {
+    return NextResponse.json({ error: csrf.error }, { status: 403 });
+  }
+
   try {
     const supabase = createServerSupabase();
     const {

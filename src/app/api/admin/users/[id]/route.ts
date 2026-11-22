@@ -1,8 +1,20 @@
-import { createServerSupabase, createServiceRoleClient } from "@/lib/supabase/server";
+import {
+  createServerSupabase,
+  createServiceRoleClient,
+  verifyCsrfOrigin,
+} from "@/lib/supabase/server";
 import { normalizePermissions } from "@/lib/services/user-permission-service";
 import { recordServerActivityLog } from "@/lib/services/activity-log-server";
 import type { AppRole, UserAccountItem } from "@/types/database";
 import { NextResponse, type NextRequest } from "next/server";
+
+const VALID_ROLES = new Set<AppRole>([
+  "admin",
+  "pengurus",
+  "pembimbing",
+  "operator_absen",
+  "viewer",
+]);
 
 async function verifyAdminAuth() {
   const supabase = createServerSupabase();
@@ -11,7 +23,7 @@ async function verifyAdminAuth() {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return { authorized: false, error: "Sesi telah berakhir. Silakan masuk kembali.", status: 401 };
+    return { authorized: false as const, error: "Sesi telah berakhir. Silakan masuk kembali.", status: 401 };
   }
 
   const adminClient = createServiceRoleClient();
@@ -27,28 +39,39 @@ async function verifyAdminAuth() {
     .eq("key", "USER_PERMISSIONS")
     .maybeSingle();
 
+  const callerRole = (profile?.role ?? "viewer") as AppRole;
   const userPerms = permSetting?.value?.[user.id]?.permissions;
-  const isSuperAdmin = profile?.role === "admin";
-  const hasUserMgmtEdit = userPerms?.user_management === "edit";
+  const isSuperAdmin = callerRole === "admin";
+  const isPengurusWithEdit =
+    callerRole === "pengurus" && userPerms?.user_management === "edit";
 
-  if (!isSuperAdmin && !hasUserMgmtEdit) {
-    return { authorized: false, error: "Anda tidak memiliki wewenang untuk mengelola pengguna.", status: 403 };
+  if (!isSuperAdmin && !isPengurusWithEdit) {
+    return {
+      authorized: false as const,
+      error: "Anda tidak memiliki wewenang untuk mengelola pengguna.",
+      status: 403,
+    };
   }
 
-  return { authorized: true, callerUser: user, adminClient };
+  return { authorized: true as const, callerUser: user, callerRole, adminClient };
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const csrf = verifyCsrfOrigin(request);
+  if (!csrf.valid) {
+    return NextResponse.json({ message: csrf.error }, { status: 403 });
+  }
+
   try {
     const authCheck = await verifyAdminAuth();
-    if (!authCheck.authorized || !authCheck.adminClient) {
+    if (!authCheck.authorized) {
       return NextResponse.json({ message: authCheck.error }, { status: authCheck.status });
     }
 
-    const targetUserId = params.id;
+    const { id: targetUserId } = await params;
     const adminClient = authCheck.adminClient;
     const body = await request.json();
 
@@ -56,6 +79,12 @@ export async function PUT(
     if (!existingUser?.user) {
       return NextResponse.json({ message: "Pengguna tidak ditemukan." }, { status: 404 });
     }
+
+    const { data: targetProfile } = await adminClient
+      .from("profiles")
+      .select("role")
+      .eq("user_id", targetUserId)
+      .maybeSingle();
 
     // Ambil data USER_PERMISSIONS saat ini
     const { data: permSetting } = await adminClient
@@ -71,19 +100,36 @@ export async function PUT(
     const username = usernameRaw.trim().toLowerCase().replace(/[^a-z0-9_.-]/g, "");
 
     const nama = (body.nama || currentItem.nama || username).trim();
-    const role: AppRole = body.role || currentItem.role || "viewer";
+    const fallbackRole = (targetProfile?.role || currentItem.role || "viewer") as AppRole;
+    const role: AppRole = VALID_ROLES.has(body.role) ? body.role : fallbackRole;
+
+    if (
+      authCheck.callerRole !== "admin" &&
+      (targetProfile?.role === "admin" || role === "admin")
+    ) {
+      return NextResponse.json(
+        { message: "Hanya Admin utama yang diizinkan mengubah akun atau peran Admin." },
+        { status: 403 }
+      );
+    }
+
     const status: "active" | "suspended" = body.status === "suspended" ? "suspended" : "active";
     const halaqoh_kelas = body.halaqoh_kelas !== undefined ? (body.halaqoh_kelas ? Number(body.halaqoh_kelas) : null) : undefined;
     const halaqoh_bagian = body.halaqoh_bagian !== undefined ? body.halaqoh_bagian : undefined;
     const permissions = normalizePermissions(body.permissions || currentItem.permissions, role);
 
-    // Update password jika diberikan
+    // Update app_metadata, user_metadata, ban_duration, dan password jika diberikan
     const authUpdatePayload: any = {
+      app_metadata: {
+        role,
+        status,
+      },
       user_metadata: {
         username,
         nama,
         status,
       },
+      ban_duration: status === "suspended" ? "876000h" : "none",
     };
 
     if (body.password && typeof body.password === "string" && body.password.trim().length >= 6) {
@@ -143,7 +189,7 @@ export async function PUT(
         user_id: authCheck.callerUser.id,
         username: authCheck.callerUser.user_metadata?.username || authCheck.callerUser.email?.split("@")[0] || "admin",
         nama: authCheck.callerUser.user_metadata?.nama || "Administrator",
-        role: "admin",
+        role: authCheck.callerRole,
         kategori: "user",
         aksi: "Perbarui Pengguna",
         deskripsi: `Memperbarui data dan otoritas pengguna "${nama}" (@${username}).`,
@@ -168,15 +214,20 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const csrf = verifyCsrfOrigin(request);
+  if (!csrf.valid) {
+    return NextResponse.json({ message: csrf.error }, { status: 403 });
+  }
+
   try {
     const authCheck = await verifyAdminAuth();
-    if (!authCheck.authorized || !authCheck.adminClient || !authCheck.callerUser) {
+    if (!authCheck.authorized) {
       return NextResponse.json({ message: authCheck.error }, { status: authCheck.status });
     }
 
-    const targetUserId = params.id;
+    const { id: targetUserId } = await params;
     if (targetUserId === authCheck.callerUser.id) {
       return NextResponse.json(
         { message: "Anda tidak dapat menghapus akun Anda sendiri yang sedang aktif digunakan." },
@@ -185,6 +236,18 @@ export async function DELETE(
     }
 
     const adminClient = authCheck.adminClient;
+    const { data: targetProfile } = await adminClient
+      .from("profiles")
+      .select("role")
+      .eq("user_id", targetUserId)
+      .maybeSingle();
+
+    if (authCheck.callerRole !== "admin" && targetProfile?.role === "admin") {
+      return NextResponse.json(
+        { message: "Hanya Admin utama yang dapat menghapus akun Admin." },
+        { status: 403 }
+      );
+    }
 
     // Hapus dari auth users
     await adminClient.auth.admin.deleteUser(targetUserId);
@@ -218,7 +281,7 @@ export async function DELETE(
         user_id: authCheck.callerUser.id,
         username: authCheck.callerUser.user_metadata?.username || authCheck.callerUser.email?.split("@")[0] || "admin",
         nama: authCheck.callerUser.user_metadata?.nama || "Administrator",
-        role: "admin",
+        role: authCheck.callerRole,
         kategori: "user",
         aksi: "Hapus Pengguna",
         deskripsi: `Menghapus akun pengguna (ID: ${targetUserId}) dari sistem.`,

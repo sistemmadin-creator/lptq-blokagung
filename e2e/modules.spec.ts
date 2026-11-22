@@ -3,8 +3,9 @@ import { loginAsAdmin } from './helpers/auth';
 
 test.describe('Pembaruan Modul Flyer Khataman & WhatsApp Gateway', () => {
   test.describe('1. API Proxy WhatsApp Gateway (/api/waha)', () => {
-    test('GET /api/waha/sessions/default merespons kontrak gateway secara valid', async ({ request }) => {
-      const res = await request.get('/api/waha/sessions/default');
+    test('GET /api/waha/sessions/default dengan sesi admin merespons kontrak gateway secara valid', async ({ page }) => {
+      await loginAsAdmin(page);
+      const res = await page.request.get('/api/waha/sessions/default');
       // Berhasil proxy (200) atau respons fallback jika gateway lokal belum berjalan (502)
       expect([200, 502]).toContain(res.status());
 

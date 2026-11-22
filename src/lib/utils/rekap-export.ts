@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { toJpeg } from "html-to-image";
+import { sanitizeSpreadsheetCell } from "@/lib/utils/excel";
 import type { SesiAbsen } from "@/types/database";
 
 export interface RekapSantriRow {
@@ -201,8 +202,8 @@ export async function exportRekapKeseluruhanExcel(
       const row = ws.getRow(currentRow);
       row.values = [
         idx + 1,
-        s.nama_lengkap,
-        s.kamar,
+        sanitizeSpreadsheetCell(s.nama_lengkap),
+        sanitizeSpreadsheetCell(s.kamar),
         s.hadir,
         s.alfa,
         s.izin,

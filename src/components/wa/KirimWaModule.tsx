@@ -494,7 +494,7 @@ export function KirimWaModule() {
       status: "manual",
     });
 
-    window.open(link, "_blank");
+    window.open(link, "_blank", "noopener,noreferrer");
 
     // Tampilkan panduan Ctrl + V jika berhasil disalin
     setWaWebModalInfo({
